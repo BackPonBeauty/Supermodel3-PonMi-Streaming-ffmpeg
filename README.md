@@ -81,8 +81,9 @@ Spikeofe_4links_Sample.zip
 | Item | Requirement |
 |------|-------------|
 | OS | Windows 10/11 64-bit |
-| GPU | NVIDIA RTX 20 series or later (NVENC required) |
-| Driver | CUDA 13.0 compatible or later |
+| CPU | Intel Core i7 or higher, or AMD Ryzen 7 or higher (fast single-thread performance is crucial) |
+| GPU | NVIDIA GeForce GTX 900 series or later, or AMD Radeon RX 400 series or later |
+| Encoder | FFMPEG software encoding |
 | Other | ViGEmBus |
 | Router | UPnP enabled (or manual port forwarding) |
 | Network | 20 Mbps upload or faster recommended |
@@ -425,8 +426,9 @@ Spikeofe_4links_Sample.zip
 | 項目 | 要件 |
 |------|------|
 | OS | Windows 10/11 64bit |
-| GPU | NVIDIA RTX 20系以降（NVENC必須） |
-| ドライバ | CUDA 13.0 対応以降 |
+| CPU | Intel Core i7以上またはAMD Ryzen 7以上 (高速なシングルスレッド性能が重要) |
+| GPU | NVIDIA GeForce GTX 900シリーズ以降、またはAMD Radeon RX 400シリーズ以降 |
+| Encoder | FFMPEG software encoding |
 | その他 | ViGEmBus |
 | ルーター | UPnP有効（または手動ポート開放） |
 | 回線 | アップロード 20Mbps 以上推奨 |
