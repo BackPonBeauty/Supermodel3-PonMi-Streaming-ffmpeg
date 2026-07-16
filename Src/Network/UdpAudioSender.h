@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <atomic>
 #include <winsock2.h>
 #include <opus/opus.h>
 #include <utility>
@@ -22,11 +23,16 @@ public:
     void SetDestPort(int port);
 
 private:
+    void HelloRecvLoop();
+    static unsigned long __stdcall HelloRecvThreadProc(void *param);
+
     SOCKET m_socket = INVALID_SOCKET;
     std::vector<sockaddr_in> m_dests;
     std::mutex m_destsMutex;
     int m_destPort = 0;
     uint32_t m_timestamp = 0;
+    HANDLE m_helloThread = nullptr;
+    std::atomic<bool> m_helloRunning{false};
 
     // Opusエンコーダー
     OpusEncoder *m_encoder = nullptr;

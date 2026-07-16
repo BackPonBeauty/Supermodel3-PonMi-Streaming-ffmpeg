@@ -12,6 +12,8 @@ public:
         std::string ip;
         int port;
         uint32_t lastHeartbeat;
+        std::string discordNick;
+        std::string sessionId;
     };
 
     // クライアントリストが変更された時のコールバック
@@ -31,6 +33,7 @@ public:
     std::string GetControllerIP();
     int GetControllerPort();
     std::vector<std::string> GetClientIPs();
+    std::string GetDiscordNick(const std::string &ip = "");
 
     float GetLatestLossRate() const { return m_latestLossRate.load(); }
     uint32_t GetLastStatusTime() const { return m_lastStatusTime.load(); }

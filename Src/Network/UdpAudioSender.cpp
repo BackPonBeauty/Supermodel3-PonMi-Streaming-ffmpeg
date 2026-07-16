@@ -22,10 +22,20 @@ bool UdpAudioSender::Init(const char *destIP, int destPort)
              NULL, 0, &dwBytesReturned, NULL, NULL);
 
     m_destPort = destPort;
-    if (destIP && strlen(destIP) > 0)
-    {
-        SetDestIP(destIP);
-    }
+
+    // ローカルポートにbind（HELLOホールパンチを受信するため）
+    sockaddr_in localAddr = {};
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons((u_short)destPort);
+    localAddr.sin_addr.s_addr = INADDR_ANY;
+    bind(m_socket, (sockaddr *)&localAddr, sizeof(localAddr));
+
+    int timeout = 500;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+
+    // HELLOパケット受信スレッド起動
+    m_helloRunning.store(true);
+    m_helloThread = CreateThread(nullptr, 0, HelloRecvThreadProc, this, 0, nullptr);
 
     // Opusエンコーダー初期化
     int err;
@@ -47,8 +57,56 @@ bool UdpAudioSender::Init(const char *destIP, int destPort)
     m_floatBuf.resize(OPUS_FRAME_SIZE * OPUS_CHANNELS);
     m_inputAccum.clear();
 
-    printf("[AudioUDP] Ready -> %s:%d (Opus 128kbps)\n", destIP, destPort);
+    printf("[AudioUDP] Ready (listening on port %d, no dest until HELLO)\n", destPort);
     return true;
+}
+
+unsigned long __stdcall UdpAudioSender::HelloRecvThreadProc(void *param)
+{
+    static_cast<UdpAudioSender *>(param)->HelloRecvLoop();
+    return 0;
+}
+
+void UdpAudioSender::HelloRecvLoop()
+{
+    char buf[256];
+    sockaddr_in from = {};
+    int fromLen = sizeof(from);
+
+    while (m_helloRunning.load())
+    {
+        int received = recvfrom(m_socket, buf, sizeof(buf) - 1, 0,
+                                (sockaddr *)&from, &fromLen);
+        if (received <= 0)
+            continue;
+
+        buf[received] = '\0';
+
+        if (strncmp(buf, "HELLO", 5) == 0)
+        {
+            std::string fromIP = inet_ntoa(from.sin_addr);
+            int fromPort = ntohs(from.sin_port);
+            printf("[AudioUDP] HELLO from %s:%d -> learning dest\n", fromIP.c_str(), fromPort);
+
+            std::lock_guard<std::mutex> lock(m_destsMutex);
+            bool found = false;
+            for (auto &dest : m_dests)
+            {
+                if (dest.sin_addr.s_addr == from.sin_addr.s_addr)
+                {
+                    dest.sin_port = from.sin_port;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+            sockaddr_in newDest = {};
+            newDest.sin_family = AF_INET;
+            newDest.sin_addr = from.sin_addr;
+            newDest.sin_port = from.sin_port;
+            m_dests.push_back(newDest);
+        }
+    }
 }
 
 void UdpAudioSender::SendWithTimestamp(const int16_t *pcm, int samples, int ch)
@@ -168,6 +226,7 @@ void UdpAudioSender::SetDestPort(int port)
 
 void UdpAudioSender::Shutdown()
 {
+    m_helloRunning.store(false);
     if (m_encoder)
     {
         opus_encoder_destroy(m_encoder);
@@ -177,8 +236,14 @@ void UdpAudioSender::Shutdown()
     {
         closesocket(m_socket);
         m_socket = INVALID_SOCKET;
-        printf("[AudioUDP] Shutdown\n");
+    }
+    if (m_helloThread)
+    {
+        WaitForSingleObject(m_helloThread, 2000);
+        CloseHandle(m_helloThread);
+        m_helloThread = nullptr;
     }
     std::lock_guard<std::mutex> lock(m_destsMutex);
     m_dests.clear();
+    printf("[AudioUDP] Shutdown\n");
 }

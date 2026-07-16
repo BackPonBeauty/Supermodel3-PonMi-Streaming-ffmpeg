@@ -37,6 +37,8 @@ struct SlotState
 
 using SlotChangedCallback = std::function<void(int slot, const SlotState &state)>;
 using StatusCallback = std::function<void(const std::string &message)>;
+// Called when metaKeys bits change; args = (newBits, prevBits)
+using MetaKeyCallback = std::function<void(WORD newKeys, WORD prevKeys)>;
 
 class RemoteSlotManager
 {
@@ -86,6 +88,10 @@ public:
 
     void SetSlotOccupied();
     void SetSlotAvailable();
+    void SetSlotPlayer(int slot, const std::string &player);
+    void SetSlotSpectator(int slot, const std::string &spectator);
+    void SetSlotClientCount(int slot, int count);
+    void SetMetaKeyCallback(MetaKeyCallback cb) { m_metaKeyCb = cb; }
 
     
 
@@ -105,6 +111,7 @@ private:
 
     SlotChangedCallback m_slotCb;
     StatusCallback m_statusCb;
+    MetaKeyCallback m_metaKeyCb;
 
     // Whether the virtual controller has been added (fixed to Slot 1)
     bool m_virtualControllerAdded = false;

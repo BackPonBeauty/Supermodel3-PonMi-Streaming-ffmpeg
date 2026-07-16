@@ -83,59 +83,93 @@ void HandshakeServer::ListenLoop()
         std::string clientIP = inet_ntoa(client.sin_addr);
         int clientPort = ntohs(client.sin_port);
 
-        if (strcmp(buf, "HELLO") == 0)
+        if (strncmp(buf, "HELLO", 5) == 0 && (buf[5] == '\0' || buf[5] == ':'))
         {
-            printf("[Handshake] HELLO from %s:%d\n", clientIP.c_str(), clientPort);
+            std::string discordNick = "guest";
+            std::string chosenCodec = m_codec;
+            std::string sessionId = "";
 
-            bool alreadyConnected = false;
+            if (buf[5] == ':' && buf[6] != '\0')
+            {
+                std::string payload = std::string(buf + 6);
+                // format: <nick>:<codec1>,<codec2>,...:<sessionId>
+                auto colonPos = payload.find(':');
+                if (colonPos != std::string::npos)
+                {
+                    discordNick = payload.substr(0, colonPos);
+                    std::string rest = payload.substr(colonPos + 1);
+
+                    // sessionId は末尾コロンの後
+                    auto lastColon = rest.rfind(':');
+                    std::string codecList;
+                    if (lastColon != std::string::npos)
+                    {
+                        codecList = rest.substr(0, lastColon);
+                        sessionId = rest.substr(lastColon + 1);
+                    }
+                    else
+                    {
+                        codecList = rest;
+                    }
+
+                    if (!codecList.empty())
+                    {
+                        // prefer h264 if available
+                        bool hasH264 = codecList.find("h264") != std::string::npos;
+                        bool hasHevc = codecList.find("hevc") != std::string::npos;
+                        if (hasH264)
+                            chosenCodec = "h264";
+                        else if (hasHevc)
+                            chosenCodec = "hevc";
+                    }
+                }
+                else
+                {
+                    discordNick = payload;
+                }
+            }
+
+            printf("[Handshake] HELLO from %s:%d nick=%s codec=%s sid=%s\n",
+                   clientIP.c_str(), clientPort, discordNick.c_str(), chosenCodec.c_str(), sessionId.c_str());
+
             bool allowed = false;
             bool listChanged = false;
             std::vector<std::string> currentIPs;
 
             {
                 std::lock_guard<std::mutex> lock(m_clientsMutex);
-                
-                // 同じIPアドレスの接続がすでにあれば、ポートとハートビートを更新して上書き許可する（再接続対策）
+
+                // 同じsessionIdが既に登録済み → 重複HELLOなのでOKを返すだけ
                 auto it = std::find_if(m_clients.begin(), m_clients.end(),
-                                       [&clientIP](const ClientInfo &c) { return c.ip == clientIP; });
+                                       [&sessionId](const ClientInfo &c) { return !c.sessionId.empty() && c.sessionId == sessionId; });
                 if (it != m_clients.end())
                 {
-                    if (it->port != clientPort)
-                    {
-                        printf("[Handshake] Re-connection from %s (port updated from %d to %d)\n", clientIP.c_str(), it->port, clientPort);
-                        it->port = clientPort;
-                    }
-                    it->lastHeartbeat = GetTickCount();
-                    alreadyConnected = true;
                     allowed = true;
                 }
-                else
+                else if (m_clients.size() < 2)
                 {
-                    if (m_clients.size() < 2)
-                    {
-                        ClientInfo newClient;
-                        newClient.ip = clientIP;
-                        newClient.port = clientPort;
-                        newClient.lastHeartbeat = GetTickCount();
-                        m_clients.push_back(newClient);
-                        allowed = true;
-                        listChanged = true;
+                    ClientInfo newClient;
+                    newClient.ip = clientIP;
+                    newClient.port = clientPort;
+                    newClient.lastHeartbeat = GetTickCount();
+                    newClient.discordNick = discordNick;
+                    newClient.sessionId = sessionId;
+                    m_clients.push_back(newClient);
+                    allowed = true;
+                    listChanged = true;
 
-                        if (m_clients.size() == 1)
-                        {
-                            m_controllerLastInputTime.store(GetTickCount());
-                        }
-                    }
+                    if (m_clients.size() == 1)
+                        m_controllerLastInputTime.store(GetTickCount());
                 }
 
                 for (const auto &c : m_clients)
-                    currentIPs.push_back(c.ip);
+                    currentIPs.push_back(c.ip + ":" + c.discordNick);
             }
 
             if (allowed)
             {
                 char ok[64];
-                snprintf(ok, sizeof(ok), "OK %d %d %s", m_width, m_height, m_codec.c_str());
+                snprintf(ok, sizeof(ok), "OK %d %d %s", m_width, m_height, chosenCodec.c_str());
                 sendto(TO_SOCKET(m_socket), ok, (int)strlen(ok), 0,
                        (sockaddr *)&client, clientLen);
 
@@ -197,7 +231,7 @@ void HandshakeServer::ListenLoop()
             if (listChanged && m_onListChanged)
             {
                 for (const auto &c : m_clients)
-                    currentIPs.push_back(c.ip);
+                    currentIPs.push_back(c.ip + ":" + c.discordNick);
                 m_onListChanged(currentIPs);
             }
         }
@@ -278,7 +312,7 @@ void HandshakeServer::HeartbeatLoop()
             if (listChanged)
             {
                 for (const auto &c : m_clients)
-                    currentIPs.push_back(c.ip);
+                    currentIPs.push_back(c.ip + ":" + c.discordNick);
             }
         }
 
@@ -372,8 +406,20 @@ std::vector<std::string> HandshakeServer::GetClientIPs()
     std::lock_guard<std::mutex> lock(m_clientsMutex);
     std::vector<std::string> ips;
     for (const auto &c : m_clients)
-        ips.push_back(c.ip);
+        ips.push_back(c.ip + ":" + c.discordNick);
     return ips;
+}
+
+std::string HandshakeServer::GetDiscordNick(const std::string &ip)
+{
+    std::lock_guard<std::mutex> lock(m_clientsMutex);
+    if (ip.empty())
+        return m_clients.empty() ? "" : m_clients[0].discordNick;
+    std::string ipOnly = ip.substr(0, ip.find(':'));
+    for (const auto &c : m_clients)
+        if (c.ip == ipOnly)
+            return c.discordNick;
+    return "";
 }
 
 void HandshakeServer::Stop()

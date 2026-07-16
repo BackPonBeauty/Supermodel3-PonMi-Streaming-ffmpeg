@@ -136,7 +136,11 @@ bool GameLoader::MissingAttrib(const GameLoader &loader, const Util::Config::Nod
 
 GameLoader::File::ptr_t GameLoader::File::Create(const GameLoader &loader, const Util::Config::Node &file_node)
 {
-  if (GameLoader::MissingAttrib(loader, file_node, "name") | GameLoader::MissingAttrib(loader, file_node, "offset")) // no || to easier detect errors
+  // Evaluate separately (not in a single expression) to avoid short-circuit evaluation,
+  // ensuring all missing attributes are detected and reported.
+  bool missingName = GameLoader::MissingAttrib(loader, file_node, "name");
+  bool missingOffset = GameLoader::MissingAttrib(loader, file_node, "offset");
+  if (missingName || missingOffset)
     return ptr_t();
   ptr_t file = std::make_shared<File>();
   file->offset = file_node["offset"].ValueAs<uint32_t>();
@@ -160,7 +164,12 @@ bool GameLoader::File::operator==(const File &rhs) const
 
 GameLoader::Region::ptr_t GameLoader::Region::Create(const GameLoader &loader, const Util::Config::Node &region_node)
 {
-  if (GameLoader::MissingAttrib(loader, region_node, "name") | MissingAttrib(loader, region_node, "stride") | GameLoader::MissingAttrib(loader, region_node, "chunk_size")) // no || to easier detect errors
+  // Evaluate separately (not in a single expression) to avoid short-circuit evaluation,
+  // ensuring all missing attributes are detected and reported.
+  bool missingName = GameLoader::MissingAttrib(loader, region_node, "name");
+  bool missingStride = MissingAttrib(loader, region_node, "stride");
+  bool missingChunkSize = GameLoader::MissingAttrib(loader, region_node, "chunk_size");
+  if (missingName || missingStride || missingChunkSize)
     return ptr_t();
 
   if (region_node["byte_swap"].Exists() && region_node["byte_layout"].Exists())
@@ -263,8 +272,6 @@ static void PopulateGameInfo(Game *game, const Util::Config::Node &game_node)
   };
   std::string audio_type = game_node["hardware/audio"].ValueAsDefault<std::string>("");
   game->audio = audio_types[audio_type];
-  game->pci_bridge = game_node["hardware/pci_bridge"].ValueAsDefault<std::string>("");
-  game->real3d_pci_id = game_node["hardware/real3d_pci_id"].ValueAsDefault<uint32_t>(0);
   game->encryption_key = game_node["hardware/encryption_key"].ValueAsDefault<uint32_t>(0);
   game->netboard_present = game_node["hardware/netboard"].ValueAsDefault<bool>(false);
 

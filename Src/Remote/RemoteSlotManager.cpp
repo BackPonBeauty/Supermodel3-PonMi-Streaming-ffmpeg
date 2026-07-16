@@ -449,6 +449,10 @@ void RemoteSlotManager::OnXInputReceived(int slot, const XInputPacket &packet, c
                         (packet.sThumbRX != m_slots[slot].lastPacket.sThumbRX) ||
                         (packet.sThumbRY != m_slots[slot].lastPacket.sThumbRY);
 
+    // MetaKey rising-edge detection
+    if (m_metaKeyCb && packet.metaKeys != m_slots[slot].lastPacket.metaKeys)
+        m_metaKeyCb(packet.metaKeys, m_slots[slot].lastPacket.metaKeys);
+
     m_slots[slot].lastPacket = packet;
 
     // When LinkPlay=0, Slot 1 uses g_handshake and Slot 2 uses g_handshakeP2 to verify the IP
@@ -612,5 +616,32 @@ void RemoteSlotManager::SetSlotAvailable()
                 })
         .detach();
     printf("[RemoteSlotManager] SetSlotAvailable for linkplay=%d\n", m_linkplay);
+}
+
+void RemoteSlotManager::SetSlotPlayer(int slot, const std::string &player)
+{
+    if (!m_firebase.IsInitialized() || m_hostId.empty()) return;
+    std::string hostId = m_hostId;
+    std::thread([this, hostId, slot, player]() {
+        m_firebase.PatchSlotPlayer(hostId, slot, player);
+    }).detach();
+}
+
+void RemoteSlotManager::SetSlotSpectator(int slot, const std::string &spectator)
+{
+    if (!m_firebase.IsInitialized() || m_hostId.empty()) return;
+    std::string hostId = m_hostId;
+    std::thread([this, hostId, slot, spectator]() {
+        m_firebase.PatchSlotSpectator(hostId, slot, spectator);
+    }).detach();
+}
+
+void RemoteSlotManager::SetSlotClientCount(int slot, int count)
+{
+    if (!m_firebase.IsInitialized() || m_hostId.empty()) return;
+    std::string hostId = m_hostId;
+    std::thread([this, hostId, slot, count]() {
+        m_firebase.PatchSlotClientCount(hostId, slot, count);
+    }).detach();
 }
 #endif // SUPERMODEL_WIN32

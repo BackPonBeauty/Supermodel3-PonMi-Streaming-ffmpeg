@@ -21,4 +21,5 @@ public:
     virtual void SetDestEndpoints(const std::vector<std::pair<std::string, int>> &endpoints) = 0;
     virtual int GetWidth() const = 0;
     virtual int GetHeight() const = 0;
+    virtual float GetBitrateBps() = 0;
 };

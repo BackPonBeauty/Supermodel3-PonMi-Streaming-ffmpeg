@@ -29,6 +29,11 @@
 #include <array>
 #include <string>
 
+// Meta-key bits carried in XInputPacket::metaKeys
+#define METAKEY_ALT_D        (1 << 0)   // Toggle debug panel (Alt+D on client)
+#define METAKEY_BITRATE_UP   (1 << 1)   // Increase stream bitrate (cursor up)
+#define METAKEY_BITRATE_DOWN (1 << 2)   // Decrease stream bitrate (cursor down)
+
 // XInput state packet (structure sent/received via UDP, must match the VB.NET side)
 #pragma pack(push, 1)
 struct XInputPacket
@@ -40,6 +45,7 @@ struct XInputPacket
     SHORT sThumbLY;       // Left stick Y-axis
     SHORT sThumbRX;       // Right stick X-axis
     SHORT sThumbRY;       // Right stick Y-axis
+    WORD  metaKeys;       // Extra key flags (see METAKEY_* above)
 };
 #pragma pack(pop)
 

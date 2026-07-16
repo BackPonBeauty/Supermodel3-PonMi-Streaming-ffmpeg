@@ -30,6 +30,7 @@ public:
     void SetDestPort(int port) { m_rtpSender.SetDestPort(port); }
     virtual int GetWidth() const override { return m_width; }
     virtual int GetHeight() const override { return m_height; }
+    virtual float GetBitrateBps() override { return m_rtpSender.GetBitrateBps(); }
 
 private:
     bool LoadAmfDll();

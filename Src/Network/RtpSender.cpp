@@ -25,18 +25,77 @@ bool RtpSender::Init(const char *destIP, int destPort, bool useH265)
              NULL, 0, &dwBytesReturned, NULL, NULL);
 
     m_destPort = destPort;
-    if (destIP && strlen(destIP) > 0)
-    {
-        SetDestIP(destIP);
-    }
+
+    // ローカルポートにbind（HELLOホールパンチを受信するため）
+    sockaddr_in localAddr = {};
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons((u_short)destPort);
+    localAddr.sin_addr.s_addr = INADDR_ANY;
+    bind(m_socket, (sockaddr *)&localAddr, sizeof(localAddr));
+
+    int timeout = 500;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
 
     srand((unsigned)time(nullptr));
     m_ssrc = rand();
     m_seqNum = (uint16_t)rand();
     m_timestamp = rand();
 
-    printf("[RTP] Ready -> %s:%d\n", destIP, destPort);
+    // HELLOパケット受信スレッド起動（クライアントの一時ポートを動的学習）
+    m_helloRunning.store(true);
+    m_helloThread = CreateThread(nullptr, 0, HelloRecvThreadProc, this, 0, nullptr);
+
+    printf("[RTP] Ready (listening on port %d, no dest until HELLO)\n", destPort);
     return true;
+}
+
+unsigned long __stdcall RtpSender::HelloRecvThreadProc(void *param)
+{
+    static_cast<RtpSender *>(param)->HelloRecvLoop();
+    return 0;
+}
+
+void RtpSender::HelloRecvLoop()
+{
+    char buf[256];
+    sockaddr_in from = {};
+    int fromLen = sizeof(from);
+
+    while (m_helloRunning.load())
+    {
+        int received = recvfrom(m_socket, buf, sizeof(buf) - 1, 0,
+                                (sockaddr *)&from, &fromLen);
+        if (received <= 0)
+            continue;
+
+        buf[received] = '\0';
+
+        if (strncmp(buf, "HELLO", 5) == 0)
+        {
+            std::string fromIP = inet_ntoa(from.sin_addr);
+            int fromPort = ntohs(from.sin_port);
+            printf("[RTP] HELLO from %s:%d -> learning dest\n", fromIP.c_str(), fromPort);
+
+            std::lock_guard<std::mutex> lock(m_destsMutex);
+            // 同じIPのエントリがあればポートを更新、なければ追加
+            bool found = false;
+            for (auto &dest : m_dests)
+            {
+                if (dest.sin_addr.s_addr == from.sin_addr.s_addr)
+                {
+                    dest.sin_port = from.sin_port;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+            sockaddr_in newDest = {};
+            newDest.sin_family = AF_INET;
+            newDest.sin_addr = from.sin_addr;
+            newDest.sin_port = from.sin_port;
+            m_dests.push_back(newDest);
+        }
+    }
 }
 
 void RtpSender::Send(const uint8_t *nalData, int size)
@@ -144,26 +203,55 @@ void RtpSender::SendRtpPacket(const uint8_t *data, int size, bool marker)
 
     memcpy(buf + 12, data, size);
 
+    int sent = size + 12;
     std::lock_guard<std::mutex> lock(m_destsMutex);
     for (const auto &dest : m_dests)
     {
-        sendto(m_socket, (char *)buf, size + 12, 0,
+        sendto(m_socket, (char *)buf, sent, 0,
                (sockaddr *)&dest, sizeof(dest));
     }
+    if (!m_dests.empty())
+        m_bytesSentAcc.fetch_add((uint64_t)sent, std::memory_order_relaxed);
     m_seqNum++;
+}
+
+float RtpSender::GetBitrateBps()
+{
+    uint32_t now     = GetTickCount();
+    uint32_t last    = m_lastBitrateTime.load(std::memory_order_relaxed);
+    uint32_t elapsed = now - last;
+    if (elapsed >= 500 && last != 0)
+    {
+        uint64_t bytes = m_bytesSentAcc.exchange(0, std::memory_order_relaxed);
+        float bps = (float)bytes * 8.0f * 1000.0f / (float)elapsed;
+        m_bitrateBps.store(bps, std::memory_order_relaxed);
+        m_lastBitrateTime.store(now, std::memory_order_relaxed);
+    }
+    else if (last == 0)
+    {
+        m_lastBitrateTime.store(now, std::memory_order_relaxed);
+    }
+    return m_bitrateBps.load(std::memory_order_relaxed);
 }
 
 void RtpSender::Shutdown()
 {
+    m_helloRunning.store(false);
     if (m_socket != INVALID_SOCKET)
     {
         closesocket(m_socket);
         m_socket = INVALID_SOCKET;
         WSACleanup();
-        printf("[RTP] Shutdown\n");
+    }
+    if (m_helloThread)
+    {
+        WaitForSingleObject(m_helloThread, 2000);
+        CloseHandle(m_helloThread);
+        m_helloThread = nullptr;
     }
     std::lock_guard<std::mutex> lock(m_destsMutex);
     m_dests.clear();
+    printf("[RTP] Shutdown\n");
 }
 
 void RtpSender::SetDestPort(int port)

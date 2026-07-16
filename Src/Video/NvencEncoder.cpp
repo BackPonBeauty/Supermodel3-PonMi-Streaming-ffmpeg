@@ -6,6 +6,74 @@
 
 typedef NVENCSTATUS(NVENCAPI *PFN_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST *);
 
+// CUDA driver API (nvcuda.dll)
+typedef CUresult (CUDAAPI *PFN_cuInit)(unsigned int);
+typedef CUresult (CUDAAPI *PFN_cuDeviceGet)(CUdevice *, int);
+typedef CUresult (CUDAAPI *PFN_cuCtxCreate)(CUcontext *, unsigned int, CUdevice);
+
+// CUDA runtime API (cudart64_*.dll)
+typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsGLRegisterImage)(cudaGraphicsResource **, GLuint, GLenum, unsigned int);
+typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsUnregisterResource)(cudaGraphicsResource *);
+typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsMapResources)(int, cudaGraphicsResource **, cudaStream_t);
+typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsUnmapResources)(int, cudaGraphicsResource **, cudaStream_t);
+typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsSubResourceGetMappedArray)(cudaArray_t *, cudaGraphicsResource *, unsigned int, unsigned int);
+typedef cudaError_t (CUDARTAPI *PFN_cudaMemcpy2DFromArray)(void *, size_t, cudaArray_const_t, size_t, size_t, size_t, size_t, cudaMemcpyKind);
+
+static PFN_cuInit                              s_cuInit                              = nullptr;
+static PFN_cuDeviceGet                         s_cuDeviceGet                         = nullptr;
+static PFN_cuCtxCreate                         s_cuCtxCreate                         = nullptr;
+static PFN_cudaGraphicsGLRegisterImage         s_cudaGraphicsGLRegisterImage         = nullptr;
+static PFN_cudaGraphicsUnregisterResource      s_cudaGraphicsUnregisterResource      = nullptr;
+static PFN_cudaGraphicsMapResources            s_cudaGraphicsMapResources            = nullptr;
+static PFN_cudaGraphicsUnmapResources          s_cudaGraphicsUnmapResources          = nullptr;
+static PFN_cudaGraphicsSubResourceGetMappedArray s_cudaGraphicsSubResourceGetMappedArray = nullptr;
+static PFN_cudaMemcpy2DFromArray               s_cudaMemcpy2DFromArray               = nullptr;
+
+static HMODULE s_cudaDriverDll  = nullptr;
+static HMODULE s_cudaRuntimeDll = nullptr;
+
+static bool LoadCudaDlls()
+{
+    s_cudaDriverDll = LoadLibraryA("nvcuda.dll");
+    if (!s_cudaDriverDll)
+    {
+        printf("[NVENC] nvcuda.dll not found\n");
+        return false;
+    }
+    s_cuInit      = (PFN_cuInit)     GetProcAddress(s_cudaDriverDll, "cuInit");
+    s_cuDeviceGet = (PFN_cuDeviceGet)GetProcAddress(s_cudaDriverDll, "cuDeviceGet");
+    s_cuCtxCreate = (PFN_cuCtxCreate)GetProcAddress(s_cudaDriverDll, "cuCtxCreate_v2");
+    if (!s_cuInit || !s_cuDeviceGet || !s_cuCtxCreate)
+    {
+        printf("[NVENC] nvcuda.dll missing required symbols\n");
+        return false;
+    }
+
+    // Try cudart64_13.dll first, then fall back to any version
+    s_cudaRuntimeDll = LoadLibraryA("cudart64_13.dll");
+    if (!s_cudaRuntimeDll) s_cudaRuntimeDll = LoadLibraryA("cudart64_12.dll");
+    if (!s_cudaRuntimeDll) s_cudaRuntimeDll = LoadLibraryA("cudart64_11.dll");
+    if (!s_cudaRuntimeDll)
+    {
+        printf("[NVENC] cudart64 DLL not found\n");
+        return false;
+    }
+
+#define LOAD_CUDART(fn) s_##fn = (PFN_##fn)GetProcAddress(s_cudaRuntimeDll, #fn); \
+    if (!s_##fn) { printf("[NVENC] cudart missing: " #fn "\n"); return false; }
+
+    LOAD_CUDART(cudaGraphicsGLRegisterImage)
+    LOAD_CUDART(cudaGraphicsUnregisterResource)
+    LOAD_CUDART(cudaGraphicsMapResources)
+    LOAD_CUDART(cudaGraphicsUnmapResources)
+    LOAD_CUDART(cudaGraphicsSubResourceGetMappedArray)
+    LOAD_CUDART(cudaMemcpy2DFromArray)
+#undef LOAD_CUDART
+
+    printf("[NVENC] CUDA DLLs loaded\n");
+    return true;
+}
+
 // ============================================================
 bool NvencEncoder::LoadNvencDll()
 {
@@ -39,7 +107,10 @@ bool NvencEncoder::LoadNvencDll()
 // ============================================================
 bool NvencEncoder::InitCuda()
 {
-    CUresult res = cuInit(0);
+    if (!LoadCudaDlls())
+        return false;
+
+    CUresult res = s_cuInit(0);
     if (res != CUDA_SUCCESS)
     {
         printf("[NVENC] cuInit failed: %d\n", res);
@@ -47,17 +118,14 @@ bool NvencEncoder::InitCuda()
     }
 
     CUdevice device;
-    res = cuDeviceGet(&device, 0);
+    res = s_cuDeviceGet(&device, 0);
     if (res != CUDA_SUCCESS)
     {
         printf("[NVENC] cuDeviceGet failed: %d\n", res);
         return false;
     }
 
-    // CUDA 13.1 is now cuCtxCreate_v4, so explicitly use the older API
-    CUctxCreateParams params = {};
-    params.execAffinityParams = nullptr;
-    res = cuCtxCreate(&m_cuContext, &params, 0, device);
+    res = s_cuCtxCreate(&m_cuContext, 0, device);
     if (res != CUDA_SUCCESS)
     {
         printf("[NVENC] cuCtxCreate failed: %d\n", res);
@@ -235,10 +303,10 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     {
         if (m_cuResource)
         {
-            cudaGraphicsUnregisterResource(m_cuResource);
+            s_cudaGraphicsUnregisterResource(m_cuResource);
             m_cuResource = nullptr;
         }
-        cudaError_t err = cudaGraphicsGLRegisterImage(
+        cudaError_t err = s_cudaGraphicsGLRegisterImage(
             &m_cuResource,
             glTextureID,
             GL_TEXTURE_2D,
@@ -252,10 +320,10 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     }
 
     // Map OpenGL texture to CUDA
-    cudaGraphicsMapResources(1, &m_cuResource, 0);
+    s_cudaGraphicsMapResources(1, &m_cuResource, 0);
 
     cudaArray_t cuArray;
-    cudaGraphicsSubResourceGetMappedArray(&cuArray, m_cuResource, 0, 0);
+    s_cudaGraphicsSubResourceGetMappedArray(&cuArray, m_cuResource, 0, 0);
 
     // Lock NVENC input buffer
     NV_ENC_LOCK_INPUT_BUFFER lockParams = {};
@@ -265,12 +333,12 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     NVENCSTATUS st = m_nvenc.nvEncLockInputBuffer(m_encoder, &lockParams);
     if (st != NV_ENC_SUCCESS)
     {
-        cudaGraphicsUnmapResources(1, &m_cuResource, 0);
+        s_cudaGraphicsUnmapResources(1, &m_cuResource, 0);
         return;
     }
 
     // Copy from CUDAArray to NVENC input buffer on GPU
-    cudaMemcpy2DFromArray(
+    s_cudaMemcpy2DFromArray(
         lockParams.bufferDataPtr,  // dst
         lockParams.pitch,          // dst pitch
         cuArray,                   // src
@@ -280,7 +348,7 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
         cudaMemcpyDeviceToDevice); // GPU -> GPU
 
     m_nvenc.nvEncUnlockInputBuffer(m_encoder, m_inputBuffers[idx]);
-    cudaGraphicsUnmapResources(1, &m_cuResource, 0);
+    s_cudaGraphicsUnmapResources(1, &m_cuResource, 0);
 
     // Encode
     NV_ENC_PIC_PARAMS picParams = {};
@@ -360,7 +428,8 @@ void NvencEncoder::Shutdown()
 
     if (m_cuResource)
     {
-        cudaGraphicsUnregisterResource(m_cuResource);
+        if (s_cudaGraphicsUnregisterResource)
+            s_cudaGraphicsUnregisterResource(m_cuResource);
         m_cuResource = nullptr;
     }
 

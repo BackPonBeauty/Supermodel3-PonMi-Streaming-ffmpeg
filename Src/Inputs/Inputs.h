@@ -113,6 +113,7 @@ public:
   std::shared_ptr<CSwitchInput> uiClearNVRAM;
   std::shared_ptr<CSwitchInput> uiSelectCrosshairs;
   std::shared_ptr<CSwitchInput> uiToggleFrLimit;
+  std::shared_ptr<CSwitchInput> uiToggleMultiView;
   std::shared_ptr<CSwitchInput> uiDumpInpState;
   std::shared_ptr<CSwitchInput> uiDumpTimings;
   std::shared_ptr<CSwitchInput> uiScreenshot;
