@@ -59,6 +59,9 @@
 #include "Supermodel.h"
 #include "OSD/Audio.h"
 #include "Sound/SCSP.h"
+#include "Util/NewConfig.h"
+
+extern Util::Config::Node s_runtime_config;
 
 // DEBUG
 //#define SUPERMODEL_LOG_AUDIO	// define this to log all audio to sound.bin
@@ -370,7 +373,7 @@ bool CSoundBoard::RunFrame(void)
 
 	// Compute sound volume as 
 	float soundVol = (float)std::max(0,std::min(200,m_config["SoundVolume"].ValueAs<int>()));
-	soundVol = soundVol * (float)(1.0 / 100.0);
+	soundVol = soundVol * (float)(1.0 / 100.0); // 標準ベーススケールに戻す（ブーストは対象タイトルのみに適用）
 
 	// Apply sound volume setting to SCSP channels only
 	for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
@@ -389,6 +392,41 @@ bool CSoundBoard::RunFrame(void)
 			DSB->RunFrame(audioFL, audioFR);
 		else
 			DSB->RunFrame(audioRL, audioRR);
+	}
+
+	// Determine game name for volume adjustment
+	std::string gameName = m_gameName;
+	if (gameName.empty() && m_config.TryGet("GameName") && m_config["GameName"].Exists())
+	{
+		gameName = m_config["GameName"].ValueAs<std::string>();
+	}
+	if (gameName.empty() && s_runtime_config.TryGet("GameName") && s_runtime_config["GameName"].Exists())
+	{
+		gameName = s_runtime_config["GameName"].ValueAs<std::string>();
+	}
+
+	if (gameName == "oceanhun" || gameName == "oceanhuna" || gameName.find("ocean") != std::string::npos)
+	{
+		float boostFactor = 10.0f; // 音量を10.0倍に増幅
+		for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++)
+		{
+			audioFL[i] *= boostFactor;
+			audioFR[i] *= boostFactor;
+			audioRL[i] *= boostFactor;
+			audioRR[i] *= boostFactor;
+		}
+	}
+	else if (gameName == "scud" || gameName == "scudau" || gameName == "scuddx" || gameName == "scuddxo" ||
+	         gameName == "scudplus" || gameName == "scudplusa" || gameName.find("scud") != std::string::npos)
+	{
+		float reduceFactor = 0.1f; // 音量を10% (0.1倍) に抑える
+		for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++)
+		{
+			audioFL[i] *= reduceFactor;
+			audioFR[i] *= reduceFactor;
+			audioRL[i] *= reduceFactor;
+			audioRR[i] *= reduceFactor;
+		}
 	}
 
 	// Output the audio buffers

@@ -59,9 +59,9 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
     m_codecContext->max_b_frames = 0;
     
     // Default bitrate 2.5 Mbps
-    m_codecContext->bit_rate = 2500000;
-    m_codecContext->rc_max_rate = 3000000;
-    m_codecContext->rc_buffer_size = 1000000;
+    m_codecContext->bit_rate = 3000000;
+    m_codecContext->rc_max_rate = 4000000;
+    m_codecContext->rc_buffer_size = 3000000;
 
     // Set low-latency options for libx264 / libx265
     if (strcmp(m_ffmpegCodec->name, "libx264") == 0 || strcmp(m_ffmpegCodec->name, "libx265") == 0)

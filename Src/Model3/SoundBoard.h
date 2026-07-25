@@ -177,10 +177,14 @@ public:
 	 */
 	CSoundBoard(const Util::Config::Node &config);
 	~CSoundBoard(void);
-	
+
+	void SetGameName(const std::string &gameName) { m_gameName = gameName; }
+
 private:
 	// Private helper functions
 	void		UpdateROMBanks(void);
+
+	std::string	m_gameName;
 	
 	// Config
 	const Util::Config::Node &m_config;

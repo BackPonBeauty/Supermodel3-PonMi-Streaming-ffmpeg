@@ -2982,6 +2982,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     if (DSB && Result::OKAY != DSB->Init(dsbROM, mpegROM))
       return Result::FAIL;
   }
+  SoundBoard.SetGameName(game.name);
   SoundBoard.AttachDSB(DSB);
 
   // Drive board (if present)
