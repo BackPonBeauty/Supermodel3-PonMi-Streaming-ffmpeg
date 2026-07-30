@@ -3048,6 +3048,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   std::cout << std::endl;
 
   m_game = game;
+  SoundBoard.SetGameName(m_game.name);
   NetBoard->GetGame(m_game);
   if (Result::OKAY != NetBoard->Init(netRAM, netBuffer))
   {

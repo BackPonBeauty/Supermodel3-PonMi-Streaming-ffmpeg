@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include <winsock2.h>
 #include <opus/opus.h>
 #include <utility>
@@ -46,4 +47,8 @@ private:
     std::vector<float> m_floatBuf;
     std::vector<uint8_t> m_opusBuf;
     std::vector<int16_t> m_inputAccum; // 入力蓄積バッファ
+
+    // 実時間送出レート制御
+    std::chrono::steady_clock::time_point m_rtStartTime{};
+    bool m_rtStarted = false;
 };

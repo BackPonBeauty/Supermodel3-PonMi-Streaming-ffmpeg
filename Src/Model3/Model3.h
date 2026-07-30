@@ -37,6 +37,7 @@
 #include "MPC10x.h"
 #include "Real3D.h"
 #include "RTC72421.h"
+#include "CPU/Bus.h"
 #include "SoundBoard.h"
 #include "TileGen.h"
 #include "DriveBoard/DriveBoard.h"

@@ -602,10 +602,16 @@ bool OutputAudio(unsigned numSamples, const float *leftFrontBuffer, const float 
     INT16 mixBuffer[NUM_CHANNELS_M3 * (SAMPLE_RATE_M3 / MIN_SND_FREQ)];
     MixChannels(numSamples, leftFrontBuffer, rightFrontBuffer, leftRearBuffer, rightRearBuffer, mixBuffer, flipStereo);
 
-    // ストリーミング送信
+    // ストリーミング送信: SCSP1(front) + SCSP2(rear) をステレオミックス
     if (g_audioSenderReady)
     {
-        g_audioSender.SendWithTimestamp(mixBuffer, numSamples, 2);
+        static INT16 streamBuf[2 * (SAMPLE_RATE_M3 / MIN_SND_FREQ)];
+        for (unsigned i = 0; i < numSamples; i++)
+        {
+            streamBuf[i * 2 + 0] = MixINT16(leftFrontBuffer[i],  leftRearBuffer[i]);
+            streamBuf[i * 2 + 1] = MixINT16(rightFrontBuffer[i], rightRearBuffer[i]);
+        }
+        g_audioSender.SendWithTimestamp(streamBuf, numSamples, 2);
     }
     // Lock SDL audio callback so that it doesn't interfere with following code
     SDL_LockAudio();

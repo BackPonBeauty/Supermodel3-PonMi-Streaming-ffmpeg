@@ -22,193 +22,79 @@
 /*
  * SoundBoard.h
  * 
- * Header file defining the CSoundBoard class: Model 3 audio subsystem.
+ * Model 3 sound board. Header file for the CSoundBoard class.
  */
 
-#ifndef INCLUDED_SOUNDBOARD_H
-#define INCLUDED_SOUNDBOARD_H
+#ifndef _SOUNDBOARD_H_
+#define _SOUNDBOARD_H_
 
-#include "Types.h"
+#include "Supermodel.h"
 #include "CPU/Bus.h"
+#include "CPU/68K/68K.h"
 #include "Model3/DSB.h"
+#include "OSD/Audio.h"
+#include "Util/NewConfig.h"
+#include <string>
 
-/*
- * CSoundBoard:
- *
- * Model 3 sound board (68K CPU + 2 x SCSP).
- */
-class CSoundBoard: public IBus
+class CSoundBoard : public IBus
 {
 public:
-	/*
-	 * Read8(addr):
-	 * Read16(addr):
-	 * Read32(addr):
-	 * Read64(addr):
-	 *
-	 * Read a byte, 16-bit word, or 32-bit long word from the 68K address 
-	 * space. 
-	 *
-	 * Parameters:
-	 *		addr	Address to read.
-	 *
-	 * Returns:
-	 *		Data at the address.
-	 */
-	UINT8 Read8(UINT32 addr);
-	UINT16 Read16(UINT32 addr);
-	UINT32 Read32(UINT32 addr);
 
-	/*
-	 * Write8(addr, data):
-	 * Write16(addr, data):
-	 * Write32(addr, data):
-	 *
-	 * Write a byte, word, or long word to the 68K address space.
-	 *
-	 * Parameters:
-	 *		addr	Address to write.
-	 *		data	Data to write.
-	 */
-	void Write8(UINT32 addr, UINT8 data);
-	void Write16(UINT32 addr, UINT16 data);
-	void Write32(UINT32 addr, UINT32 data);
+	void AttachDSB(CDSB *DSBPtr);
 
-	/*
-	 * WriteMIDIPort(data):
-	 *
-	 * Writes to the sound board MIDI port.
-	 *
-	 * Parameters:
-	 *		data	Byte to write to MIDI port.
-	 */
+	/**************************************************************************
+	 68K Address Space Handlers
+	**************************************************************************/
+
+	void UpdateROMBanks(void);
+
+	UINT8 Read8(UINT32 a);
+	UINT16 Read16(UINT32 a);
+	UINT32 Read32(UINT32 a);
+	void Write8(unsigned int a,unsigned char d);
+	void Write16(unsigned int a,unsigned short d);
+	void Write32(unsigned int a,unsigned int d);
+
+	/**************************************************************************
+	 Sound Board Interface
+	**************************************************************************/
+
 	void WriteMIDIPort(UINT8 data);
-
-	/*
-	 * SaveState(SaveState):
-	 *
-	 * Saves an image of the current device state.
-	 *
-	 * Parameters:
-	 *		SaveState	Block file to save state information to.
-	 */
-	void SaveState(CBlockFile *SaveState);
-
-	/*
-	 * LoadState(SaveState):
-	 *
-	 * Loads and a state image.
-	 *
-	 * Parameters:
-	 *		SaveState	Block file to load state information from.
-	 */
-	void LoadState(CBlockFile *SaveState);
-
-	/*
-	 * RunFrame(void):
-	 *
-	 * Runs the sound board for one frame, updating sound in the process.
-	 */
 	bool RunFrame(void);
 
-	/*
-	 * Reset(void):
-	 *
-	 * Resets the sound board.
-	 */
 	void Reset(void);
 
-	/*
-	 * AttachDSB(CDSB *DSBPtr):
-	 *
-	 * Connects a Digital Sound Board. The sound board passes MIDI commands,
-	 * resets the board, and runs it each frame to generate audio. If there is
-	 * no DSB, this function does not need to be called.
-	 *
-	 * Parameters:
-	 *		DSBPtr	Pointer to DSB object.
-	 */
-	void AttachDSB(CDSB *DSBPtr);
-	
-	/*
-	 * GetMS68K(void):
-	 *
-	 * Returns a reference to the 68K CPU of the sound board.
-	 *
-	 * Returns:
-	 *		A pointer to the M68K context.
-	 */
-	M68KCtx *GetM68K(void);
+	void SaveState(CBlockFile *SaveState);
+	void LoadState(CBlockFile *SaveState);
 
-	/*
-	 * GetDSB(void):
-	 * 
-	 * Returns a reference the Digital Sound Board (if attached).
-	 *
-	 * Returns:
-	 *		A pointer to the DSB object or NULL if not attached.
-	 */
+	/**************************************************************************
+	 Configuration, Initialization, and Shutdown
+	**************************************************************************/
+
+	void SetGameName(const std::string &gameName) { m_gameName = gameName; }
+	Result Init(const UINT8 *soundROMPtr, const UINT8 *sampleROMPtr);
+	M68KCtx *GetM68K(void);
 	CDSB *GetDSB(void);
 
-	/*
-	 * Init(soundROMPtr, sampleROMPtr):
-	 *
-	 * One-time initialization. Must be called prior to all other members.
-	 *
-	 * Parameters:
-	 *		soundROMPtr		Pointer to sound ROM (68K program).
-	 *		sampleROMPtr	Pointer to sample ROM.
-	 *
-	 * Returns:
-	 *		OKAY if successful, FAIL if unable to allocate memory. Prints own
-	 *		error messages.
-	 */
-	Result Init(const UINT8 *soundROMPtr, const UINT8 *sampleROMPtr);
-
-	/*
-	 * CSoundBoard(config):
-	 * ~CSoundBoard(void):
-	 *
-	 * Constructor and destructor.
-	 *
-   * Paramters:
-   *    config  Run-time configuration. The reference should be held because
-   *            this changes at run-time.
-	 */
 	CSoundBoard(const Util::Config::Node &config);
 	~CSoundBoard(void);
 
-	void SetGameName(const std::string &gameName) { m_gameName = gameName; }
-
 private:
-	// Private helper functions
-	void		UpdateROMBanks(void);
 
-	std::string	m_gameName;
-	
-	// Config
 	const Util::Config::Node &m_config;
+	std::string m_gameName;
 
-	// Digital Sound Board
-	CDSB		*DSB;
+	UINT8	*memoryPool;
+	UINT8	*ram1, *ram2;
+	float	*audioFL, *audioFR, *audioRL, *audioRR;
 	
-	// 68K context
-	M68KCtx		M68K;
+	const UINT8	*soundROM, *sampleROM;
+	const UINT8	*sampleBank;
+	UINT8		ctrlReg;
 	
-	// Sound board memory
-	const UINT8	*soundROM;		// 68K program ROM (passed in from parent object)
-	const UINT8	*sampleROM;		// 68K sample ROM (passed in from parent object)
-	const UINT8	*sampleBank;	// sample ROM bank switching (points to high or low 8MB)
-	UINT8		*memoryPool;	// single allocated region for all sound board RAM
-	UINT8		*ram1, *ram2;	// SCSP1 and SCSP2 RAM
-	
-	// Registers
-	UINT8	ctrlReg;			// control register: ROM banking
-	
-	// Audio
-	float* audioFL, * audioFR;	// left and right front audio channels (1/60th second, 44.1 KHz)
-	float* audioRL, * audioRR;	// left and right rear audio channels (1/60th second, 44.1 KHz)
+	M68KCtx	M68K;
+
+	CDSB	*DSB;
 };
 
-
-#endif	// INCLUDED_SOUNDBOARD_H
+#endif // _SOUNDBOARD_H_

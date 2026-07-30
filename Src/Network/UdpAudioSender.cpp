@@ -117,17 +117,35 @@ void UdpAudioSender::SendWithTimestamp(const int16_t *pcm, int samples, int ch)
     for (int i = 0; i < samples * ch; i++)
         m_inputAccum.push_back(pcm[i]);
 
-    const int srcFrameSize = 882;
-    const int frameBytes = srcFrameSize * OPUS_CHANNELS;
+    // 蓄積バッファが 2秒分を超えたら古い分を破棄（エミュレーターが長時間爆速の場合）
+    const int maxAccum = 44100 * 2 * OPUS_CHANNELS;
+    if ((int)m_inputAccum.size() > maxAccum)
+        m_inputAccum.erase(m_inputAccum.begin(),
+                           m_inputAccum.begin() + ((int)m_inputAccum.size() - maxAccum));
 
-    // 次フレームの先頭1サンプルも見えるように +1 余裕を持って判定
-    while ((int)m_inputAccum.size() >= frameBytes + OPUS_CHANNELS)
+    // 実時間クロック初期化
+    if (!m_rtStarted)
     {
+        m_rtStartTime = std::chrono::steady_clock::now();
+        m_rtStarted = true;
+    }
+
+    // 44100Hz -> 48000Hz (882 samples -> 960 samples)
+    const float ratio = 44100.0f / 48000.0f;
+    while ((int)m_inputAccum.size() >= 882 * OPUS_CHANNELS + OPUS_CHANNELS)
+    {
+        // 実時間より 20ms 以上先行していたら、残データは次回呼び出しまで保持
+        int64_t expectedMs = (int64_t)m_timestamp * 1000 / OPUS_SAMPLE_RATE;
+        int64_t elapsedMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - m_rtStartTime).count();
+        if (expectedMs > elapsedMs + 20)
+            break;
+
         for (int i = 0; i < OPUS_FRAME_SIZE; i++)
         {
-            float srcPos = (float)i * srcFrameSize / OPUS_FRAME_SIZE;
+            float srcPos = (float)i * ratio;
             int s0 = (int)srcPos;
-            int s1 = s0 + 1;  // 次フレーム先頭を参照できるので clamp 不要
+            int s1 = s0 + 1;
             float f = srcPos - s0;
 
             m_resampleBuf[i * 2 + 0] = (int16_t)(m_inputAccum[s0 * 2 + 0] * (1.0f - f) +
@@ -136,18 +154,20 @@ void UdpAudioSender::SendWithTimestamp(const int16_t *pcm, int samples, int ch)
                                                   m_inputAccum[s1 * 2 + 1] * f);
         }
 
-        // 消費するのは882サンプル分のみ（+1は次フレームに残す）
         m_inputAccum.erase(m_inputAccum.begin(),
-                           m_inputAccum.begin() + frameBytes);
+                           m_inputAccum.begin() + 882 * OPUS_CHANNELS);
 
-        // 以降はエンコード・送信（変更なし）
+        // 以降はエンコード・送信
         int encoded = opus_encode(m_encoder,
                                   m_resampleBuf.data(),
                                   OPUS_FRAME_SIZE,
                                   m_opusBuf.data(),
                                   OPUS_MAX_PACKET);
         if (encoded < 0)
+        {
+            m_timestamp += OPUS_FRAME_SIZE;
             continue;
+        }
 
         std::vector<uint8_t> pkt(4 + encoded);
         pkt[0] = (m_timestamp >> 24) & 0xFF;
@@ -156,13 +176,14 @@ void UdpAudioSender::SendWithTimestamp(const int16_t *pcm, int samples, int ch)
         pkt[3] =  m_timestamp        & 0xFF;
         memcpy(pkt.data() + 4, m_opusBuf.data(), encoded);
 
-        std::lock_guard<std::mutex> lock(m_destsMutex);
-        for (const auto &dest : m_dests)
         {
-            sendto(m_socket, (const char *)pkt.data(), (int)pkt.size(), 0,
-                   (sockaddr *)&dest, sizeof(dest));
+            std::lock_guard<std::mutex> lock(m_destsMutex);
+            for (const auto &dest : m_dests)
+            {
+                sendto(m_socket, (const char *)pkt.data(), (int)pkt.size(), 0,
+                       (sockaddr *)&dest, sizeof(dest));
+            }
         }
-
         m_timestamp += OPUS_FRAME_SIZE;
     }
 }

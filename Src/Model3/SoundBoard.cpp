@@ -61,8 +61,6 @@
 #include "Sound/SCSP.h"
 #include "Util/NewConfig.h"
 
-extern Util::Config::Node s_runtime_config;
-
 // DEBUG
 //#define SUPERMODEL_LOG_AUDIO	// define this to log all audio to sound.bin
 #ifdef SUPERMODEL_LOG_AUDIO
@@ -371,11 +369,28 @@ bool CSoundBoard::RunFrame(void)
 		memset(audioRR, 0, LENGTH_CHANNEL_BUFFER);
 	}
 
-	// Compute sound volume as 
-	float soundVol = (float)std::max(0,std::min(200,m_config["SoundVolume"].ValueAs<int>()));
-	soundVol = soundVol * (float)(1.0 / 100.0); // 標準ベーススケールに戻す（ブーストは対象タイトルのみに適用）
+	// Base SCSP gain boost (SCSP outputs lower volume in updated core)
+	float baseScspGain = 2.5f;
 
-	// Apply sound volume setting to SCSP channels only
+	float titleScale = 1.0f;
+	if (!m_gameName.empty())
+	{
+		if (m_gameName == "oceanhun" || m_gameName == "oceanhuna" || m_gameName.find("ocean") != std::string::npos)
+		{
+			titleScale = 3.0f; // Ocean Hunter SCSP音量をさらに3倍補正
+		}
+		else if (m_gameName == "scud" || m_gameName == "scudau" || m_gameName == "scuddx" || m_gameName == "scuddxo" ||
+		         m_gameName == "scudplus" || m_gameName == "scudplusa" || m_gameName.find("scud") != std::string::npos)
+		{
+			titleScale = 0.6f; // Scud Race SCSP音量を少し抑える
+		}
+	}
+
+	// Compute sound volume
+	float soundVol = (float)std::max(0,std::min(200,m_config["SoundVolume"].ValueAs<int>()));
+	soundVol = (soundVol * 0.01f) * baseScspGain * titleScale;
+
+	// Apply sound volume & title specific scale to SCSP channels only
 	for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
 		audioFL[i] *= soundVol;
 		audioFR[i] *= soundVol;
@@ -383,50 +398,13 @@ bool CSoundBoard::RunFrame(void)
 		audioRR[i] *= soundVol;
 	}
 
-	// Run DSB and mix with existing audio, apply music volume
+	// Run DSB (BGM) and mix with SCSP audio
 	if (NULL != DSB) {
-		// Will need to mix with proper front, rear channels or both (game specific)
-		constexpr bool mixDSBWithFront = true; // Everything to front channels for now
-		// Case "both" not handled for now
+		constexpr bool mixDSBWithFront = true;
 		if (mixDSBWithFront)
 			DSB->RunFrame(audioFL, audioFR);
 		else
 			DSB->RunFrame(audioRL, audioRR);
-	}
-
-	// Determine game name for volume adjustment
-	std::string gameName = m_gameName;
-	if (gameName.empty() && m_config.TryGet("GameName") && m_config["GameName"].Exists())
-	{
-		gameName = m_config["GameName"].ValueAs<std::string>();
-	}
-	if (gameName.empty() && s_runtime_config.TryGet("GameName") && s_runtime_config["GameName"].Exists())
-	{
-		gameName = s_runtime_config["GameName"].ValueAs<std::string>();
-	}
-
-	if (gameName == "oceanhun" || gameName == "oceanhuna" || gameName.find("ocean") != std::string::npos)
-	{
-		float boostFactor = 10.0f; // 音量を10.0倍に増幅
-		for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++)
-		{
-			audioFL[i] *= boostFactor;
-			audioFR[i] *= boostFactor;
-			audioRL[i] *= boostFactor;
-			audioRR[i] *= boostFactor;
-		}
-	}
-	else if (gameName == "scud" || gameName == "scudau" || gameName == "scuddx" || gameName == "scuddxo" ||
-	         gameName == "scudplus" || gameName == "scudplusa" || gameName.find("scud") != std::string::npos)
-	{
-		float reduceFactor = 0.1f; // 音量を10% (0.1倍) に抑える
-		for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++)
-		{
-			audioFL[i] *= reduceFactor;
-			audioFR[i] *= reduceFactor;
-			audioRL[i] *= reduceFactor;
-			audioRR[i] *= reduceFactor;
-		}
 	}
 
 	// Output the audio buffers
