@@ -78,6 +78,7 @@
 #include "DirectInputSystem.h"
 #include "WinOutputs.h"
 #endif
+#include "NetOutputs.h"
 
 #include "Supermodel.h"
 #include "Util/Format.h"
@@ -88,7 +89,9 @@
 #include "SDLInputSystem.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
+#ifndef SUPERMODEL_OSX
 #include "Graphics/Legacy3D/Legacy3D.h"
+#endif
 #include "Graphics/New3D/New3D.h"
 #include "Model3/IEmulator.h"
 #include "Model3/Model3.h"
@@ -842,7 +845,7 @@ static void TestPolygonHeaderBits(IEmulator *Emu)
  Different subsystems output their own blocks.
 ******************************************************************************/
 
-static const int STATE_FILE_VERSION = 5; // save state file version
+static const int STATE_FILE_VERSION = 6; // save state file version
 static const int NVRAM_FILE_VERSION = 0; // NVRAM file version
 static unsigned s_saveSlot = 0;          // save state slot #
 
@@ -3299,13 +3302,23 @@ int main(int argc, char **argv)
     goto Exit;
 
   // Create outputs
-#ifdef SUPERMODEL_WIN32
   {
     std::string outputs = s_runtime_config["Outputs"].ValueAs<std::string>();
     if (outputs == "none")
       Outputs = NULL;
+    else if (outputs == "net")
+    {
+      CNetOutputs* netOutputs = new CNetOutputs();
+      if (s_runtime_config["OutputsWithLF"].ValueAs<bool>())
+        netOutputs->SetFrameEnding(std::string("\r\n"));
+      netOutputs->SetTcpPort(s_runtime_config["OutputsTCPPort"].ValueAs<unsigned int>());
+      netOutputs->SetUdpBroadcastPort(s_runtime_config["OutputsUDPBroadcastPort"].ValueAs<unsigned int>());
+      Outputs = (COutputs*)netOutputs;
+    }
+#ifdef SUPERMODEL_WIN32
     else if (outputs == "win")
       Outputs = new CWinOutputs();
+#endif // SUPERMODEL_WIN32
     else
     {
       ErrorLog("Unknown outputs: %s\n", outputs.c_str());
@@ -3313,7 +3326,6 @@ int main(int argc, char **argv)
       goto Exit;
     }
   }
-#endif // SUPERMODEL_WIN32
 
   // Initialize outputs
   if (Outputs != NULL && !Outputs->Initialize())

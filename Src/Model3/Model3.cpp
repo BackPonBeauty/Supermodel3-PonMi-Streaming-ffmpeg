@@ -1,8 +1,7 @@
 /**
  ** Supermodel
  ** A Sega Model 3 Arcade Emulator.
- ** Copyright 2011-2021 Bart Trzynadlowski, Nik Henson, Ian Curtis,
- **                     Harry Tuttle, and Spindizzi
+ ** Copyright 2003-2026 The Supermodel Team
  **
  ** This file is part of Supermodel.
  **
@@ -2982,7 +2981,6 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     if (DSB && Result::OKAY != DSB->Init(dsbROM, mpegROM))
       return Result::FAIL;
   }
-  SoundBoard.SetGameName(game.name);
   SoundBoard.AttachDSB(DSB);
 
   // Drive board (if present)
