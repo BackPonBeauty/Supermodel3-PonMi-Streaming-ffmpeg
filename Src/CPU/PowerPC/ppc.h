@@ -349,6 +349,12 @@ typedef struct
 ******************************************************************************/
 
 extern UINT32 ppc_get_pc(void);
+
+// Debug aid: record the most recent "bl" to g_ppcTraceCallTarget (caller address and r3-r6)
+extern UINT32 g_ppcTraceCallTarget;
+extern UINT32 g_ppcTraceCallInfo[5];
+extern UINT32 g_ppcTraceFrame;   // set by Model3 each frame, logged with trace-call entries
+extern bool g_ppcStateTrace;     // StateTrace: log bcctr jumps into the spikeofe state-handler range
 extern void ppc_set_irq_line(int irqline);
 extern int ppc_execute(int cycles);
 extern void ppc_reset(void);
@@ -360,6 +366,8 @@ extern int ppc_get_cycles_per_sec(void);
 extern int ppc_get_bus_freq_multipler(void);
 extern int ppc_get_timer_ratio(void);
 extern void ppc_set_timer_ratio(int ratio);
+extern void ppc_set_idle_skip(bool on);			// Spikeout frame-wait idle skip (ppc.cpp)
+extern UINT64 ppc_get_idle_skipped(void);		// total cycles skipped so far
 
 // These have been added to support the new Supermodel
 extern void ppc_attach_bus(class IBus *BusPtr);		// must be called first!

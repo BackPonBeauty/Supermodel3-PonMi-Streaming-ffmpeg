@@ -934,7 +934,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     float labelWidth = 150.0f * scale; // Align label widths
 
                     // --- Input Type ---
-                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput"};
+                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput","SDL"};
                     // static int selectedInputType = 0; // Link with config
                     ImGui::Text("Input Type");
                     ImGui::SameLine(labelWidth);
@@ -1429,7 +1429,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::Text(title);
 
                     // --- 2. Center Version ---
-                    const char *ver = "ver. 2026.06.06";
+                    const char *ver = "ver. 2026.07.31";
                     float verWidth = ImGui::CalcTextSize(ver).x;
                     ImGui::SetCursorPosX((windowWidth - verWidth) * 0.5f);
                     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ver);
@@ -1526,8 +1526,6 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         {"All Supermodel Developers", "and Fellow Fork Developers"},
                         {"Many critical comments", "@5ch people"},
                         {"Barrel Effect Inspired by", "@ikarugaginkei5744"},
-                        // Supporters
-                        {"Network Tester", "Spikeout Community in Hong Kong"},
                         {"Special Shout-out to", "all the 'Anti-PonMi' folks"}};
 
                     for (const auto &item : thanksList)
@@ -1797,7 +1795,8 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     std::string inSys = config["InputSystem"].ValueAs<std::string>();
     int selectedInputType = (inSys == "xinput") ? 0 : (inSys == "dinput") ? 1
                                                   : (inSys == "rawinput") ? 2
-                                                                          : 2;
+                                                  : (inSys == "sdl" || inSys == "sdlgamepad") ? 3
+                                                                          : 2;   // 11/11: "sdl" was read as Rawinput
 
     int selectedCrosshair = (int)config["Crosshairs"].ValueAs<int64_t>();
 
@@ -2098,6 +2097,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
 
         // --- Control / Network ---
         u["InputSystem"] = (selectedInputType == 0) ? "xinput" : (selectedInputType == 1) ? "dinput"
+                         : (selectedInputType == 3) ? (inSys == "sdlgamepad" ? "sdlgamepad" : "sdl")   // 11/11: SDL was saved as rawinput
                                                                                           : "rawinput";
 
         u["Crosshairs"] = std::to_string(selectedCrosshair);

@@ -46,6 +46,8 @@
 #include "Util/NewConfig.h"
 #include "Graphics/SuperAA.h"
 #include "OSD/Thread.h"
+#include <string>
+#include <vector>
 
 /*
  * FrameTimings
@@ -224,6 +226,22 @@ private:
   int     RunSoundBoardThread(void);                  // Runs sound board thread (not sync'd in step with render thread, ie running at full speed)
   int     RunSoundBoardThreadSyncd(void);             // Runs sound board thread (sync'd in step with render thread)
   int     RunDriveBoardThread(void);                  // Runs drive board thread (sync'd in step with render thread)
+
+  // Scripted test inputs (TestInputScript config option, for automated testing)
+  struct TestInputEvent
+  {
+    uint32_t startFrame;
+    uint32_t endFrame;
+    unsigned reg;     // 0x04 = system inputs (bank 0), 0x08 = game inputs
+    UINT8 mask;       // bits forced to "pressed" (active low)
+  };
+  std::vector<TestInputEvent> m_testInputs;
+  std::vector<TestInputEvent> m_testPokes;  // "poke" lines: reg = RAM address, mask = byte to write
+  uint32_t m_testFrame = 0;
+  bool m_traceEnemyCreate = false;  // TraceEnemyCreate config option (spikeofe analysis)
+  uint32_t m_watchStart = 0, m_watchEnd = 0;  // WatchWrite config option ("start,length" in hex): log RAM writes
+  void LoadTestInputScript(const std::string &path);
+  UINT8 ApplyTestInputs(unsigned reg, UINT8 data) const;
 
   // Runtime configuration
   Util::Config::Node &m_config;

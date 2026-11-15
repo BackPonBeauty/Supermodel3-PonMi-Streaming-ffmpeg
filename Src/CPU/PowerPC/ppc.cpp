@@ -653,6 +653,44 @@ static void (* optable59[1024])(UINT32);
 static void (* optable63[1024])(UINT32);
 static void (* optable[64])(UINT32);
 
+/*
+ * Idle skip (11/13, Spikeout 8 players): the game waits for the next frame in tight polling loops
+ *   lbz r4,d(r13) ; cmpw r4,r3   ; beq -8      (wait until an IRQ handler changes a counter byte)
+ *   lwz r3,d(r13) ; cmplwi r3,0  ; beq -8      (wait until an IRQ handler sets a word)
+ * Inside one ppc_execute() slice nothing but the PPC itself can change that RAM, and the only
+ * interrupt that can fire mid-slice is the decrementer. So when the loop is at its head and the
+ * value has not changed, the rest of the slice (up to the decrementer trigger) is spent at once:
+ * the game sees exactly the same timebase/decrementer as if it had spun, the host does no work.
+ * This lets PowerPCFrequency be raised (more cycles for heavy frames) without paying for idle ones.
+ */
+static bool   s_idleSkipOn = false;
+static UINT64 s_idleSkipped = 0;
+
+void ppc_set_idle_skip(bool on) { s_idleSkipOn = on; }
+UINT64 ppc_get_idle_skipped(void) { return s_idleSkipped; }
+
+static inline void ppc_idle_check(UINT32 opcode)
+{
+	// ppc.op already points at pc+4 (opcodes are stored native-endian, see ppc_execute)
+	if (ppc.op[1] != 0x41A2FFF8) return;				// beq -8
+	INT32 d = (INT16)(opcode & 0xFFFF);
+	UINT32 ea = REG(13) + d;
+	if ((opcode & 0xFFFF0000) == 0x888D0000) {			// lbz r4,d(r13)
+		if (ppc.op[0] != 0x7C041800) return;			// cmpw r4,r3
+		if (READ8(ea) != REG(3)) return;				// about to leave the loop
+	} else if ((opcode & 0xFFFF0000) == 0x806D0000) {	// lwz r3,d(r13)
+		if (ppc.op[0] != 0x28030000) return;			// cmplwi r3,0
+		if (READ32(ea) != 0) return;
+	} else return;
+	// keep 1 cycle for this instruction; stop just before the decrementer trigger so it still fires on time
+	int target = 1;
+	if (ppc.dec_trigger_cycle >= 0 && ppc.dec_trigger_cycle < ppc.icount) target = ppc.dec_trigger_cycle + 1;
+	if (target < ppc.icount) {
+		s_idleSkipped += (UINT64)(ppc.icount - target);
+		ppc.icount = target;
+	}
+}
+
 #include "ppc603.c"
 
 /********************************************************************/

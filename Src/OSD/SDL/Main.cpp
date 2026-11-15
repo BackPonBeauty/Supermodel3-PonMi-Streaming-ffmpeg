@@ -994,11 +994,177 @@ bool BeginFrameVideo()
   return true;
 }
 
+/*
+ * 11/15 Spikeout AITargetMarker (Model3.cpp fills g_spkMarker; New3D.cpp g_spkMainVp): on a bot cabinet, a ball in
+ * the bot's own colour above the enemy it is after, and a thin line to it from above its own head. Drawn over the
+ * finished picture (no depth test), with the game camera (fa_camera pos +0x10, interest +0x404) and the frustum of
+ * New3D's full-screen viewport. Camera right = (-fz, 0, fx) - the same axes the bot's lever uses (calibrated).
+ */
+struct SpikeoutMarker { uint32_t f; int on; float cam[3], itr[3], me[3], tg[3]; unsigned colour; };
+extern SpikeoutMarker g_spkMarker;
+namespace New3D { extern float g_spkMainVp[9]; }
+using New3D::g_spkMainVp;
+
+static void SpikeoutDrawMarker()
+{
+  static uint32_t lastF = 0; static int still = 0;
+  const SpikeoutMarker mk = g_spkMarker;
+  if (mk.f == lastF) still++; else { still = 0; lastF = mk.f; }
+  if (!mk.on || still > 3 || g_spkMainVp[8] == 0.0f) return;
+  const float L = g_spkMainVp[0], R = g_spkMainVp[1], B = g_spkMainVp[2], T = g_spkMainVp[3];
+  const int vx = (int) g_spkMainVp[4], vy = (int) g_spkMainVp[5], vw = (int) g_spkMainVp[6], vh = (int) g_spkMainVp[7];
+  if (vw <= 0 || vh <= 0 || R == L || T == B) return;
+
+  // camera axes
+  float f[3] = { mk.itr[0] - mk.cam[0], mk.itr[1] - mk.cam[1], mk.itr[2] - mk.cam[2] };
+  float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  if (fl < 1e-4f) return;
+  for (float &c : f) c /= fl;
+  float r[3] = { -f[2], 0.0f, f[0] };
+  float rl = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+  if (rl < 1e-4f) return;
+  r[0] /= rl; r[2] /= rl;
+  float u[3] = { r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0] };
+  if (u[1] < 0) { u[0] = -u[0]; u[1] = -u[1]; u[2] = -u[2]; }
+  auto toView = [&](const float *p, float *v) {
+    float d[3] = { p[0] - mk.cam[0], p[1] - mk.cam[1], p[2] - mk.cam[2] };
+    v[0] = d[0] * r[0] + d[1] * r[1] + d[2] * r[2];
+    v[1] = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+    v[2] = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+  };
+  auto toNdc = [&](const float *v, float *n) {
+    n[0] = (2.0f * (v[0] / v[2]) - (R + L)) / (R - L);
+    n[1] = (2.0f * (v[1] / v[2]) - (T + B)) / (T - B);
+  };
+  const float NEARZ = 0.2f;
+
+  static const float pal[8][3] = {
+    { 0.86f, 0.16f, 0.16f }, { 0.16f, 0.36f, 0.92f }, { 0.16f, 0.72f, 0.24f }, { 0.98f, 0.55f, 0.08f },
+    { 1.00f, 0.43f, 0.71f }, { 0.60f, 0.28f, 0.84f }, { 0.12f, 0.12f, 0.12f }, { 0.96f, 0.96f, 0.96f },
+  };
+  const float *col = pal[mk.colour & 7];
+
+  // vertices: x, y (NDC), r, g, b, a
+  std::vector<float> vb;
+  auto vert = [&](float x, float y, float cr, float cg, float cb, float ca) { vb.insert(vb.end(), { x, y, cr, cg, cb, ca }); };
+  const float pxX = 2.0f / vw, pxY = 2.0f / vh;   // one pixel in NDC
+
+  // line: own head -> target head, clipped to the near plane
+  float a[3], b[3];
+  toView(mk.me, a); toView(mk.tg, b);
+  if (a[2] >= NEARZ || b[2] >= NEARZ)
+  {
+    if (a[2] < NEARZ) { float t = (NEARZ - a[2]) / (b[2] - a[2]); for (int k = 0; k < 3; k++) a[k] += (b[k] - a[k]) * t; }
+    if (b[2] < NEARZ) { float t = (NEARZ - b[2]) / (a[2] - b[2]); for (int k = 0; k < 3; k++) b[k] += (a[k] - b[k]) * t; }
+    float na[2], nb[2]; toNdc(a, na); toNdc(b, nb);
+    float dx = (nb[0] - na[0]) / pxX, dy = (nb[1] - na[1]) / pxY, dl = std::sqrt(dx * dx + dy * dy);
+    if (dl > 0.5f)
+    {
+      const float hw = 1.0f;   // half width in pixels
+      float ox = -dy / dl * hw * pxX, oy = dx / dl * hw * pxY;
+      vert(na[0] + ox, na[1] + oy, col[0], col[1], col[2], 0.9f); vert(na[0] - ox, na[1] - oy, col[0], col[1], col[2], 0.9f);
+      vert(nb[0] + ox, nb[1] + oy, col[0], col[1], col[2], 0.9f);
+      vert(na[0] - ox, na[1] - oy, col[0], col[1], col[2], 0.9f); vert(nb[0] - ox, nb[1] - oy, col[0], col[1], col[2], 0.9f);
+      vert(nb[0] + ox, nb[1] + oy, col[0], col[1], col[2], 0.9f);
+    }
+  }
+
+  // ball above the target: world radius 0.25 (smaller further away), at least 3 px; outline, then a shaded disc
+  // with the highlight up-left so it reads as a sphere
+  float tv[3]; toView(mk.tg, tv);
+  if (tv[2] >= NEARZ)
+  {
+    float c[2]; toNdc(tv, c);
+    const float WR = 0.125f;   // 11/15: 0.25 -> 0.125 (user: half)
+    float rx = WR / tv[2] * 2.0f / (R - L), ry = WR / tv[2] * 2.0f / (T - B);
+    float rpx = rx / pxX; if (rpx < 2.0f) { float s = 2.0f / rpx; rx *= s; ry *= s; }
+    const int N = 32;
+    const float oc = (mk.colour & 7) == 6 ? 0.85f : 0.0f;   // black ball: light outline
+    float orx = rx + 1.5f * pxX, ory = ry + 1.5f * pxY;
+    for (int i = 0; i < N; i++)
+    {
+      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
+      vert(c[0], c[1], oc, oc, oc, 0.6f);
+      vert(c[0] + std::cos(a0) * orx, c[1] + std::sin(a0) * ory, oc, oc, oc, 0.6f);
+      vert(c[0] + std::cos(a1) * orx, c[1] + std::sin(a1) * ory, oc, oc, oc, 0.6f);
+    }
+    float hx = c[0] - rx * 0.35f, hy = c[1] + ry * 0.35f;   // highlight point
+    float hc[3] = { col[0] + (1.0f - col[0]) * 0.55f, col[1] + (1.0f - col[1]) * 0.55f, col[2] + (1.0f - col[2]) * 0.55f };
+    float ec[3] = { col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f };
+    if ((mk.colour & 7) == 6) { ec[0] = ec[1] = ec[2] = 0.02f; hc[0] = hc[1] = hc[2] = 0.45f; }
+    for (int i = 0; i < N; i++)
+    {
+      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
+      vert(hx, hy, hc[0], hc[1], hc[2], 1.0f);
+      vert(c[0] + std::cos(a0) * rx, c[1] + std::sin(a0) * ry, ec[0], ec[1], ec[2], 1.0f);
+      vert(c[0] + std::cos(a1) * rx, c[1] + std::sin(a1) * ry, ec[0], ec[1], ec[2], 1.0f);
+    }
+  }
+  if (vb.empty()) return;
+
+  static GLuint prog = 0, vao = 0, vbo = 0; static bool failed = false;
+  if (failed) return;
+  if (!prog)
+  {
+    const char *vs = "#version 410 core\nlayout(location=0) in vec2 p; layout(location=1) in vec4 c; out vec4 vc;\n"
+                     "void main(){ gl_Position = vec4(p, 0.0, 1.0); vc = c; }\n";
+    const char *fs = "#version 410 core\nin vec4 vc; out vec4 o; void main(){ o = vc; }\n";
+    auto sh = [](GLenum type, const char *src) { GLuint s = glCreateShader(type); glShaderSource(s, 1, &src, NULL); glCompileShader(s);
+                                                 GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok); return ok ? s : 0u; };
+    GLuint v = sh(GL_VERTEX_SHADER, vs), fr = sh(GL_FRAGMENT_SHADER, fs);
+    if (!v || !fr) { failed = true; ErrorLog("AITargetMarker: shader compile failed\n"); return; }
+    prog = glCreateProgram(); glAttachShader(prog, v); glAttachShader(prog, fr); glLinkProgram(prog);
+    GLint ok = 0; glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) { failed = true; ErrorLog("AITargetMarker: shader link failed\n"); return; }
+    glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
+    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) 0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) (2 * sizeof(float)));
+    glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+    glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0);
+  }
+  // 11/15: keep the GL state as we found it - the scissor test left off let the next frames draw over the black
+  // frame round the picture (textures in the border). The scissor stays as it is (it also keeps the marker inside
+  // the picture).
+  GLint oldVp[4]; glGetIntegerv(GL_VIEWPORT, oldVp);
+  const GLboolean oldDepth = glIsEnabled(GL_DEPTH_TEST), oldCull = glIsEnabled(GL_CULL_FACE), oldStencil = glIsEnabled(GL_STENCIL_TEST), oldBlend = glIsEnabled(GL_BLEND);
+  GLint oldSrc = 0, oldDst = 0, oldProg = 0, oldVao = 0, oldBuf = 0;
+  glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrc); glGetIntegerv(GL_BLEND_DST_RGB, &oldDst);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &oldProg); glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao); glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &oldBuf);
+  glViewport(vx, vy, vw, vh);
+  glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_STENCIL_TEST);
+  glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glUseProgram(prog);
+  glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, vb.size() * sizeof(float), vb.data(), GL_STREAM_DRAW);
+  glDrawArrays(GL_TRIANGLES, 0, (GLsizei) (vb.size() / 6));
+  glBindVertexArray((GLuint) oldVao); glBindBuffer(GL_ARRAY_BUFFER, (GLuint) oldBuf); glUseProgram((GLuint) oldProg);
+  glViewport(oldVp[0], oldVp[1], oldVp[2], oldVp[3]);
+  if (oldDepth) glEnable(GL_DEPTH_TEST);
+  if (oldCull) glEnable(GL_CULL_FACE);
+  if (oldStencil) glEnable(GL_STENCIL_TEST);
+  glBlendFunc((GLenum) oldSrc, (GLenum) oldDst);
+  if (!oldBlend) glDisable(GL_BLEND);
+}
+
 void EndFrameVideo()
 {
   // Show crosshairs for light gun games
   if (videoInputs)
     s_crosshair->Update(currentInputs, videoInputs, xOffset, yOffset, xRes, yRes);
+
+  SpikeoutDrawMarker();   // 11/15 AITargetMarker (does nothing unless a bot filled g_spkMarker this frame)
+
+  // Debug: save the frame to shot_<frame>.bmp at the video frames listed in ScreenshotFrames
+  static unsigned s_videoFrame = 0;
+  ++s_videoFrame;
+  std::string shotFrames = s_runtime_config["ScreenshotFrames"].ValueAsDefault<std::string>("");
+  if (!shotFrames.empty())
+  {
+    std::string list = "," + shotFrames + ",";
+    if (list.find("," + std::to_string(s_videoFrame) + ",") != std::string::npos)
+      SaveFrameBuffer("shot_" + std::to_string(s_videoFrame) + ".bmp");
+  }
 
   // Swap the buffers
   SDL_GL_SwapWindow(s_window);
@@ -2259,6 +2425,16 @@ Util::Config::Node DefaultConfig()
   config.Set("VideoPort", 5002, "Network");
   config.Set("AudioPort", 5003, "Network");
   config.Set("XInputPort", 55000, "Network");
+  config.Set("Spikeout8Link", false, "Network");
+  config.Set("Spikeout8Players", false, "Network");
+  config.Set<std::string>("TestInputScript", "", "Misc", "", "");
+  config.Set("TraceEnemyCreate", false, "Misc");
+  config.Set<std::string>("WatchWrite", "", "Misc", "", "");
+  config.Set<std::string>("TraceCall", "", "Misc", "", "");
+  config.Set("TaskArrayLog", false, "Misc");
+  config.Set("StateTrace", false, "Misc");
+  config.Set<std::string>("ScreenshotFrames", "", "Misc", "", "");
+
 #ifdef SUPERMODEL_WIN32
   config.Set<std::string>("Outputs", "none", "Misc", "", "", {"none", "win", "net"});
 #else

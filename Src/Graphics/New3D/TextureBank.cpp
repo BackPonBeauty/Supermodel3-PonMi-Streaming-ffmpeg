@@ -51,6 +51,7 @@ void New3D::TextureBank::Bind()
 
 void New3D::TextureBank::UploadTextures(int level, int x, int y, int width, int height)
 {
+	if (!m_textureRam) return;	// ghost bank with no memory attached
 	glBindTexture(GL_TEXTURE_2D, m_texID);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
 

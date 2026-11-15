@@ -40,7 +40,7 @@ private:
 	GLuint m_fragmentShader;
 
 	// mesh uniform locations
-	GLint m_locTextureBank[2];		// 2 banks
+	GLint m_locTextureBank[4];		// 2 banks + 2 Spikeout ghost pages
 	GLint m_locTexture1Enabled;		// base texture
 	GLint m_locTexture2Enabled;		// micro texture
 	GLint m_locTexturePage;

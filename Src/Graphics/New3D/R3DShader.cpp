@@ -3,6 +3,29 @@
 #include "R3DShaderTriangles.h"
 #include "R3DShaderCommon.h"
 
+extern bool g_texGhost;   // Model3/Real3D.cpp: Spikeout ghost texture pages on
+
+// 11/15 TexLog=1 (set by Model3.cpp): every different texture a textured mesh uses inside the costume areas (page 1
+// y < 256 = slots 0-2, page 1/0 y >= 512 = slots 3-7) goes to texlog.txt once: page (after the ghost move), x, y with
+// the texture offset, size, format, wrap modes, alpha flags. To see what 05-08's see-through parts read.
+#include <cstdio>
+#include <set>
+#include <tuple>
+bool g_texLog = false;
+static void SpikeoutTexLog(const New3D::Mesh *m, int tx, int ty, int pg, bool ghost)
+{
+	static FILE *f = nullptr; static std::set<std::tuple<int, int, int, int, int, int, int>> seen;
+	const int py = ty & 1023;
+	if (!((pg & 1) == 1 && py < 256) && py < 512) return;
+	if (seen.size() > 5000) return;
+	if (!seen.insert(std::make_tuple(pg, tx, ty, m->width, m->height, m->format, (int) m->wrapModeU * 4 + (int) m->wrapModeV)).second) return;
+	if (!f) f = fopen("texlog.txt", "w");
+	if (!f) return;
+	fprintf(f, "pg=%d x=%d y=%d (py=%d) w=%d h=%d fmt=%d wrap=%d/%d texA=%d aTest=%d polyA=%d micro=%d inv=%d ghost=%d\n", pg, tx, ty, py, m->width, m->height,
+	        m->format, (int) m->wrapModeU, (int) m->wrapModeV, m->textureAlpha, m->alphaTest, m->polyAlpha, m->microTexture, m->inverted, ghost ? 1 : 0);
+	fflush(f);
+}
+
 // having 2 sets of shaders to maintain is really less than ideal
 // but hopefully not too many breaking changes at this point
 
@@ -105,6 +128,8 @@ bool R3DShader::LoadShader(const char* vertexShader, const char* fragmentShader)
 
 	m_locTextureBank[0]		= glGetUniformLocation(m_shaderProgram, "textureBank[0]");
 	m_locTextureBank[1]		= glGetUniformLocation(m_shaderProgram, "textureBank[1]");
+	m_locTextureBank[2]		= glGetUniformLocation(m_shaderProgram, "textureBank[2]");
+	m_locTextureBank[3]		= glGetUniformLocation(m_shaderProgram, "textureBank[3]");
 	m_locTexturePage		= glGetUniformLocation(m_shaderProgram, "texturePage");
 	m_locTexture1Enabled	= glGetUniformLocation(m_shaderProgram, "textureEnabled");
 	m_locTexture2Enabled	= glGetUniformLocation(m_shaderProgram, "microTexture");
@@ -212,6 +237,8 @@ void R3DShader::SetMeshUniforms(const Mesh* m)
 	if (m_dirtyMesh) {
 		glUniform1i(m_locTextureBank[0], 0);
 		glUniform1i(m_locTextureBank[1], 1);
+		glUniform1i(m_locTextureBank[2], 2);
+		glUniform1i(m_locTextureBank[3], 3);
 	}
 
 	if (m_dirtyMesh || m->textured != m_textured1) {
@@ -224,9 +251,16 @@ void R3DShader::SetMeshUniforms(const Mesh* m)
 		m_textured2 = m->microTexture;
 	}
 
-	if (m_dirtyMesh || (m->page ^ m_transPage) != m_texturePage) {
-		glUniform1i(m_locTexturePage, m->page ^ m_transPage);
-		m_texturePage = (m->page ^ m_transPage);
+	{
+		// Spikeout 8 players (11/12): a texture based in a page's mipmap quadrant (x >= 1024, y >= 512) is a
+		// slot 4-7 costume, stored in the ghost pages (banks 2-3) by Real3D - see CReal3D::UploadTexture.
+		int pg = m->page ^ m_transPage;
+		if (g_texGhost && m->textured && (m->x + m_transX) >= 1024 && ((m->y + m_transY) & 1023) >= 512) pg += 2;
+		if (g_texLog && m->textured) SpikeoutTexLog(m, m->x + m_transX, m->y + m_transY, pg, pg >= 2);
+		if (m_dirtyMesh || pg != m_texturePage) {
+			glUniform1i(m_locTexturePage, pg);
+			m_texturePage = pg;
+		}
 	}
 
 	if (m_dirtyMesh || m->microTextureMinLOD != m_microTexMinLOD) {

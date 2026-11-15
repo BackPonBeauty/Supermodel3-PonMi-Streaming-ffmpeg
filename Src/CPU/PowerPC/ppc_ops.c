@@ -241,6 +241,18 @@ static void ppc_andis_rc(UINT32 op)
 	SET_CR0(REG(RA));
 }
 
+static void ppc_check_indirect_target(const char *kind, UINT32 target);
+
+UINT32 g_ppcTraceCallTarget = 0;
+UINT32 g_ppcTraceCallInfo[5];
+UINT32 g_ppcTraceFrame = 0;
+static FILE *g_ppcCallFile = NULL;  /* logs every bl to the trace target (TraceCall) into calls.txt */
+
+/* StateTrace: logs every bcctr jump into the spikeofe state-handler range into state.txt.
+   Used to compare the area-transition state machine between 4p (works) and 8p (gate vanish). */
+bool g_ppcStateTrace = false;
+static FILE *g_ppcStateFile = NULL;
+
 static void ppc_bx(UINT32 op)
 {
 	INT32 li = op & 0x3fffffc;
@@ -255,8 +267,24 @@ static void ppc_bx(UINT32 op)
 
 	if( LKBIT ) {
 		LR = ppc.pc + 4;
+		if (ppc.npc == g_ppcTraceCallTarget)
+		{
+			g_ppcTraceCallInfo[0] = ppc.pc;
+			g_ppcTraceCallInfo[1] = REG(3);
+			g_ppcTraceCallInfo[2] = REG(4);
+			g_ppcTraceCallInfo[3] = REG(5);
+			g_ppcTraceCallInfo[4] = REG(6);
+			if (!g_ppcCallFile) g_ppcCallFile = fopen("calls.txt", "w");
+			if (g_ppcCallFile)
+			{
+				fprintf(g_ppcCallFile, "f=%u from=%08X r3=%08X r4=%08X r5=%08X r6=%08X r14=%08X\n",
+					g_ppcTraceFrame, ppc.pc, REG(3), REG(4), REG(5), REG(6), REG(14));
+				fflush(g_ppcCallFile);
+			}
+		}
 	}
 
+	ppc_check_indirect_target("b", ppc.npc);
 	ppc_change_pc(ppc.npc);
 }
 
@@ -277,12 +305,38 @@ static void ppc_bcx(UINT32 op)
 	}
 }
 
+// Debug aid: report indirect branches that leave program code (RAM 0-1MB, CROM)
+static void ppc_check_indirect_target(const char *kind, UINT32 target)
+{
+	static bool s_reportedSP = false;
+	if (target == 0x00004000)
+		printf("[FATAL] %s at PC=%08X to 00004000 (LR=%08X SP=%08X)\n", kind, ppc.pc, LR, REG(1));
+	if ((target >= 0x00100000 && target < 0xFF800000) || target == 0xFFFFFFFC)
+		printf("[BADJUMP] %s at PC=%08X to %08X (LR=%08X CTR=%08X SP=%08X)\n", kind, ppc.pc, target, LR, CTR, REG(1));
+	if (!s_reportedSP && REG(1) >= 0x00800000)
+	{
+		s_reportedSP = true;
+		printf("[BADSP] first seen at %s PC=%08X to %08X (LR=%08X SP=%08X r3=%08X r4=%08X r5=%08X)\n", kind, ppc.pc, target, LR, REG(1), REG(3), REG(4), REG(5));
+	}
+}
+
 static void ppc_bcctrx(UINT32 op)
 {
 	int condition = check_condition_code(BO, BI);
 
 	if( condition ) {
 		ppc.npc = CTR & ~0x3;
+		if (g_ppcStateTrace && ppc.npc >= 0x0005A000 && ppc.npc < 0x0005F000)
+		{
+			if (!g_ppcStateFile) g_ppcStateFile = fopen("state.txt", "w");
+			if (g_ppcStateFile)
+			{
+				fprintf(g_ppcStateFile, "f=%u h=%08X from=%08X r3=%08X r4=%08X r31=%08X\n",
+					g_ppcTraceFrame, ppc.npc, ppc.pc, REG(3), REG(4), REG(31));
+				fflush(g_ppcStateFile);
+			}
+		}
+		ppc_check_indirect_target("bctr", ppc.npc);
 		ppc_change_pc(ppc.npc);
 	}
 
@@ -295,8 +349,22 @@ static void ppc_bclrx(UINT32 op)
 {
 	int condition = check_condition_code(BO, BI);
 
+	/* StateTrace probe: log every bclr inside the gate-readiness conditional 0x5C36C,
+	   with the live operands, so we can see which sub-check fails for 8 players. */
+	if (g_ppcStateTrace && ppc.pc >= 0x0005C36C && ppc.pc <= 0x0005C3F4)
+	{
+		if (!g_ppcStateFile) g_ppcStateFile = fopen("state.txt", "w");
+		if (g_ppcStateFile)
+		{
+			fprintf(g_ppcStateFile, "COND pc=%08X take=%d cr0eq=%d r3=%08X r17=%08X r20=%08X r29=%08X r30=%08X\n",
+				ppc.pc, condition, (int)((ppc.cr[0]>>1)&1), REG(3), REG(17), REG(20), REG(29), REG(30));
+			fflush(g_ppcStateFile);
+		}
+	}
+
 	if( condition ) {
 		ppc.npc = LR & ~0x3;
+		ppc_check_indirect_target("blr", ppc.npc);
 		ppc_change_pc(ppc.npc);
 	}
 
@@ -1532,7 +1600,7 @@ static void ppc_xoris(UINT32 op)
 
 static void ppc_invalid(UINT32 op)
 {
-	ErrorLog("PowerPC hit an invalid instruction. Halting emulation until reset.");
+	ErrorLog("PowerPC hit an invalid instruction (%08X at PC=%08X, LR=%08X). Halting emulation until reset.", op, ppc.pc, ppc.lr);
 	DebugLog("ppc: Invalid opcode %08X PC : %X, %08X\n", op, ppc.pc, ppc.npc);
 	ppc.fatalError = true;
 }

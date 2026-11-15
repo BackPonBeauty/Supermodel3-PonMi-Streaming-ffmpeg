@@ -78,6 +78,9 @@ public:
     // Unregister host
     bool UnregisterHost(const std::string &hostId);
     bool PatchSlotAvailable(const std::string &hostId, int linkplay, bool available);
+    bool PatchSlotClientCount(const std::string &hostId, int slot, int count);
+    bool PatchSlotPlayer(const std::string &hostId, int slot, const std::string &player);
+    bool PatchSlotSpectator(const std::string &hostId, int slot, const std::string &spectator);
 
     // Clean up stale host entries (no updates for 10+ minutes)
     bool CleanupStaleHosts();
