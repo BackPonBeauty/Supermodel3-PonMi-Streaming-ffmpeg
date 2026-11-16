@@ -187,6 +187,25 @@ bool SessionServer::ValidateMediaHello(const char *buf, int len, const sockaddr_
   return FromClient(from, h.key);
 }
 
+void SessionServer::Kick()
+{
+  if (!m_connected.load())
+    return;
+  Notice notice = {};
+  Header bye;
+  sockaddr_in to;
+  {
+    std::lock_guard<std::mutex> lock(m_lock);
+    FillHeader(notice.h, T_NOTICE, m_key);
+    FillHeader(bye, T_BYE, m_key);
+    to = m_clientAddr;
+  }
+  snprintf(notice.text, sizeof(notice.text), "You were removed from the slot by the host.");
+  SendTo(&notice, sizeof(notice), to);
+  SendTo(&bye, sizeof(bye), to);
+  Disconnect("kicked by the host");
+}
+
 void SessionServer::Disconnect(const char *why)
 {
   {
@@ -367,6 +386,13 @@ void SessionServer::SessionLoop()
     if (h.type == T_HELLO)
     {
       HandleHello(buf, n, from);
+      continue;
+    }
+    if (h.type == T_KICK)
+    {
+      // P7: the launcher on this PC removes the player of this slot
+      if (h.version == kVersion && from.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
+        Kick();
       continue;
     }
 

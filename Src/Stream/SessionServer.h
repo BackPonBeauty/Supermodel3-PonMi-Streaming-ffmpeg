@@ -58,6 +58,7 @@ private:
   void InputLoop();
   void HandleHello(const char *buf, int len, const sockaddr_in &from);
   void Disconnect(const char *why);
+  void Kick();   // P7: T_KICK from the launcher on this PC
   void SendTo(const void *data, int len, const sockaddr_in &to);
   bool FromClient(const sockaddr_in &from, uint32_t key);
   bool ValidateMediaHello(const char *buf, int len, const sockaddr_in &from);

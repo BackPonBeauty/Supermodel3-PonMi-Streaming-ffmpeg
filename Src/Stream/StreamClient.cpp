@@ -100,6 +100,7 @@ namespace
   {
     std::atomic<bool> running{true};
     std::string stopMessage;
+    std::string serverNotice;   // last NOTICE text (shown when the server ends the session)
     std::mutex stopLock;
 
     SOCKET sessSock = INVALID_SOCKET, videoSock = INVALID_SOCKET, audioSock = INVALID_SOCKET;
@@ -237,9 +238,16 @@ namespace
         memcpy(&p, buf, sizeof(p));
         c->rttUs.store((int) (NowUs() - p.clientTime));
       }
+      else if (h.type == T_NOTICE && n >= (int) sizeof(Notice))
+      {
+        Notice nt;
+        memcpy(&nt, buf, sizeof(nt));
+        nt.text[sizeof(nt.text) - 1] = '\0';
+        c->serverNotice = nt.text;
+      }
       else if (h.type == T_BYE)
       {
-        c->Stop("The server ended the session.");
+        c->Stop(c->serverNotice.empty() ? "The server ended the session." : c->serverNotice);
         break;
       }
     }

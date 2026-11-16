@@ -45,6 +45,7 @@ namespace StreamProto
     T_INPUT = 10,       // C->S (input port)
     T_MEDIA_HELLO = 11, // C->S (video / audio port)
     T_STATUS = 12,      // C->S (video loss rate, for the adaptive bitrate)
+    T_KICK = 13,        // launcher -> S, only from 127.0.0.1 (P7): disconnect the client of this slot
   };
 
   enum RejectReason : uint8_t
