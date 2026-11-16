@@ -192,7 +192,7 @@ static const char* fragmentShaderR3DQuads = R"glsl(
 
 #version 450 core
 
-uniform usampler2D textureBank[2];			// entire texture sheet
+uniform usampler2D textureBank[4];			// entire texture sheet
 
 // texturing
 uniform bool	textureEnabled;

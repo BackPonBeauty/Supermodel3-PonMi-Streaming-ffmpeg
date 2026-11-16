@@ -119,6 +119,7 @@ public:
 	*             0x21 for Step 2.1. Anything else defaults to 1.0.
 	*/
 	void SetStepping(int stepping);
+	void AttachGhostMemory(const UINT16 *ghostRAMPtr);	// Spikeout ghost texture pages -> banks 2-3
 
 	/*
 	* Init(xOffset, yOffset, xRes, yRes, totalXRes, totalYRes):
@@ -286,7 +287,7 @@ private:
 	std::vector<FVertex> m_polyBufferRam;		// dynamic polys
 	std::vector<FVertex> m_polyBufferRom;		// rom polys
 	std::unordered_map<UINT32, std::shared_ptr<std::vector<Mesh>>> m_romMap;	// a hash table for all the ROM models. The meshes don't have model matrices or tex offsets yet
-	TextureBank			m_textureBank[2];
+	TextureBank			m_textureBank[4];	// 0-1 texture RAM pages, 2-3 Spikeout ghost pages
 
 	GLuint m_vao;
 	VBO m_vbo;								// large VBO to hold our poly data, start of VBO is ROM data, ram polys follow

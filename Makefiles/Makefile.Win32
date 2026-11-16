@@ -41,6 +41,13 @@
 #
 include Makefiles/Options.inc
 
+# 11/16: embed the keys (Config/StreamingKeys.ini, not in git) into Src/Stream/EmbeddedKeys.h (not in git). The script
+# rewrites the header only when the keys change, so this costs nothing on an ordinary build.
+EMBEDDED_KEYS_RESULT := $(shell powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/gen_keys.ps1 -CppOnly)
+# 11/17: embed the 8-player costume pictures (Config/costume, not in git) deflate-compressed into
+# Src/Model3/EmbeddedCostume.h (not in git); rewritten only when a picture changes.
+EMBEDDED_COSTUME_RESULT := $(shell powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/gen_costume.ps1)
+
 
 ###############################################################################
 # Release Package Options
@@ -106,12 +113,22 @@ CUDA_INC_DIR = C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/include
 
 PLATFORM_INCLUDE_DIR = $(SDL2_INCLUDE_DIR)
 PLATFORM_LIB_DIR = $(SDL2_LIB_DIR)
-FFMPEG_STATIC_DIR = C:/msys64/opt/ffmpeg-static
-PLATFORM_LIBS = -ldxerr8 -ldinput8 -lglu32 -lole32 -loleaut32 -lopengl32 -lwbemuuid -lz -lcuda -lcudart -lopus -L$(FFMPEG_STATIC_DIR)/lib -Wl,--start-group -lavcodec -lavutil -lswscale -lx264 -lx265 -Wl,--end-group -liconv -lbcrypt -LLibraries/ViGEm/lib -lViGEmClient -lwinhttp -lminiupnpc -lws2_32 -liphlpapi
+# FFmpeg (P2, 2026-11-16): a minimal static ffmpeg built from C:/msys64/home/vf2_c/ffmpeg-src (8.0.git)
+# into C:/msys64/opt/ffmpeg-static-dec, linked statically (no DLLs). Same configure as the old
+# /opt/ffmpeg-static (07/16, encoders only) plus the H.264/H.265 decoders and parsers for the client:
+#   ./configure --prefix=/opt/ffmpeg-static-dec --enable-static --disable-shared --disable-everything
+#     --disable-autodetect --enable-gpl --enable-encoder=libx264 --enable-encoder=libx265
+#     --enable-decoder=h264 --enable-decoder=hevc --enable-parser=h264 --enable-parser=hevc
+#     --enable-swscale --enable-protocol=file --enable-libx264 --enable-libx265 --disable-programs
+#     --disable-doc --pkg-config-flags=--static --extra-cflags=-I/mingw64/include
+#     --extra-ldflags='-L/mingw64/lib -static'
+# (run from the MSYS2 MinGW64 shell, then make -j16 && make install). MSYS2's own shared ffmpeg was
+# tried first but pulls in 82 DLLs / 129 MB.
+FFMPEG_STATIC_DIR = C:/msys64/opt/ffmpeg-static-dec
+PLATFORM_LIBS = -ldxerr8 -ldinput8 -lglu32 -lole32 -loleaut32 -lopengl32 -lwbemuuid -lz -lopus -L$(FFMPEG_STATIC_DIR)/lib -Wl,--start-group -lavcodec -lavutil -lswscale -lx264 -lx265 -Wl,--end-group -liconv -lbcrypt -lcrypt32 -lwinhttp -lminiupnpc -lws2_32 -liphlpapi
 PLATFORM_CXXFLAGS = $(SDL2_CFLAGS) -DSUPERMODEL_WIN32 \
     -I"$(CUDA_INC_DIR)" \
     -ISrc/Video \
-	-ILibraries/ViGEm/include \
     -I$(FFMPEG_STATIC_DIR)/include \
     $(addprefix -I,$(sort $(PLATFORM_INCLUDE_DIR)))
 PLATFORM_LDFLAGS = -static -L$(FFMPEG_STATIC_DIR)/lib -L$(sort $(PLATFORM_LIB_DIR)) \
@@ -127,12 +144,9 @@ PLATFORM_SRC_FILES = \
 	Src/OSD/Windows/DirectInputSystem.cpp \
 	Src/OSD/Windows/FileSystemPath.cpp \
 	Src/OSD/Windows/WinOutputs.cpp \
-	Src/Remote/ViGEmManager.cpp \
-	Src/Remote/XinputReceiver.cpp \
 	Src/Remote/FirebaseMatchingCpp.cpp \
 	Src/Remote/RemoteSlotManager.cpp \
 	Src/Remote/UPnPHelper.cpp \
-	Src/UI/XinputReceiverDialog.cpp \
 	Src/OSD/Windows/SupermodelResources.rc
 
 include Makefiles/Rules.inc

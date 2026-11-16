@@ -36,6 +36,8 @@
 
 #define NEAR_PLANE 1e-3f
 
+extern bool g_texLog;   // R3DShader.cpp (11/15 TexLog)
+
 namespace New3D {
 
 CNew3D::CNew3D(const Util::Config::Node &config, const std::string& gameName) : 
@@ -130,6 +132,13 @@ void CNew3D::AttachMemory(const UINT32 *cullingRAMLoPtr, const UINT32 *cullingRA
 	m_textureBank[1].AttachMemory(textureRAMPtr + (2048*1024));
 }
 
+void CNew3D::AttachGhostMemory(const UINT16 *ghostRAMPtr)
+{
+	if (!ghostRAMPtr) return;
+	m_textureBank[2].AttachMemory(ghostRAMPtr);
+	m_textureBank[3].AttachMemory(ghostRAMPtr + (2048*1024));
+}
+
 void CNew3D::SetStepping(int stepping)
 {
 	m_step = stepping;
@@ -179,8 +188,7 @@ void CNew3D::UploadTextures(unsigned level, unsigned x, unsigned y, unsigned wid
 		static constexpr int mipYBase[] = { 0, 512, 768, 896, 960, 992, 1008, 1016, 1020, 1022, 1023 };
 
 		for (int i = 0; i < m_textureBank[0].GetNumberOfLevels(); i++) {
-			m_textureBank[0].UploadTextures(i, mipXBase[i], mipYBase[i], width, height);
-			m_textureBank[1].UploadTextures(i, mipXBase[i], mipYBase[i], width, height);
+			for (auto &bank : m_textureBank) bank.UploadTextures(i, mipXBase[i], mipYBase[i], width, height);
 			width = (width > 1) ? width / 2 : 1;
 			height = (height > 1) ? height / 2 : 1;
 		}
@@ -191,7 +199,7 @@ void CNew3D::UploadTextures(unsigned level, unsigned x, unsigned y, unsigned wid
 	int page;
 	TranslateTexture(x, y, width, height, page);
 
-	m_textureBank[page].UploadTextures(level, x, y, width, height);
+	if (page >= 0 && page < 4) m_textureBank[page].UploadTextures(level, x, y, width, height);	// y 2048-4095: ghost pages
 }
 
 void CNew3D::DrawScrollFog()
@@ -350,6 +358,10 @@ bool CNew3D::RenderScene(int priority, bool renderOverlay, Layer layer)
 	m_textureBank[0].Bind();
 	glActiveTexture(GL_TEXTURE1);
 	m_textureBank[1].Bind();
+	glActiveTexture(GL_TEXTURE2);
+	m_textureBank[2].Bind();
+	glActiveTexture(GL_TEXTURE3);
+	m_textureBank[3].Bind();
 	glActiveTexture(GL_TEXTURE0);
 
 	bool hasOverlay = false;		// (high priority polys)
@@ -439,8 +451,34 @@ void CNew3D::DisableRenderStates()
 	glDisable(GL_STENCIL_TEST);
 }
 
+// 11/15 TexLog=1 (with texlog.txt): every 600 frames (6 times at most) one whole frame of the culling-node walk under
+// a node that sets a costume texture offset (a player model: page 1 y < 256 = slots 0-2, y >= 512 = slots 3-7) goes
+// to nodelog.txt - node address, its words 0 and 2, matrix, why it was skipped (discard bits / outside / LOD), and the
+// models drawn. To see which part of 05-08's models is not drawn (Linda's skirt flaps).
+static FILE *s_nodeLog = nullptr;
+static bool s_nodeLogOn = false;
+static unsigned s_nodeLogFrame = 0, s_nodeLogDone = 0;
+static int s_nodeDepth = 0;
+static bool NodeLogSlotOffset(int tx, int ty, int page)
+{
+	(void) tx;
+	return (page == 1 && ty < 256) || ty >= 512;
+}
+
 void CNew3D::RenderFrame(void)
 {
+	{
+
+		s_nodeLogFrame++;
+		s_nodeLogOn = ::g_texLog && s_nodeLogDone < 6 && (s_nodeLogFrame % 600) == 300;
+		if (s_nodeLogOn)
+		{
+			if (!s_nodeLog) s_nodeLog = fopen("nodelog.txt", "w");
+			if (!s_nodeLog) s_nodeLogOn = false;
+			else { fprintf(s_nodeLog, "=== frame %u\n", s_nodeLogFrame); s_nodeLogDone++; }
+		}
+		s_nodeDepth = 0;
+	}
 	{
 		std::lock_guard<std::mutex> guard(m_losMutex);
 		std::swap(m_losBack, m_losFront);
@@ -645,6 +683,10 @@ bool CNew3D::DrawModel(UINT32 modelAddr)
 	m->page				= m_nodeAttribs.currentPage;
 	m->scale			= m_nodeAttribs.currentModelScale;
 	m->alpha			= m_nodeAttribs.currentModelAlpha;
+	if (s_nodeLogOn && NodeLogSlotOffset(m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage))
+		fprintf(s_nodeLog, "%*sMODEL %06X off=%d,%d p%d alpha=%.2f scale=%.3f pos=(%.2f,%.2f,%.2f)\n", s_nodeDepth * 2, "", modelAddr,
+		        m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage, m->alpha, m->scale,
+		        m->modelMat[12], m->modelMat[13], m->modelMat[14]);
 
 	if (!cached) {
 		CacheModel(m, modelAddress);
@@ -747,6 +789,9 @@ void CNew3D::DescendCullingNode(UINT32 addr)
 
 	// node discard
 	if ((0x300 & node[0]) == 0x300) {						// This allows to set node transparency. If both bits are set object is completely invisible.
+		if (s_nodeLogOn && NodeLogSlotOffset(m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage))
+			fprintf(s_nodeLog, "%*sDISCARD %06X n0=%08X n2=%08X off=%d,%d p%d\n", s_nodeDepth * 2, "", addr, node[0], m_offset ? 0u : node[2],
+			        m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage);
 		return;
 	}
 
@@ -825,6 +870,14 @@ void CNew3D::DescendCullingNode(UINT32 addr)
 
 	LODscale = std::clamp(LODscale, 0.0f, std::numeric_limits<float>::max());
 
+	const bool nlog = s_nodeLogOn && NodeLogSlotOffset(m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage);
+	if (nlog)
+		fprintf(s_nodeLog, "%*sNODE %06X n0=%08X n2=%08X mat=%03X child=%07X sib=%07X off=%d,%d p%d out=%d lod=%.3f del=%.3f alpha=%.2f%s\n", s_nodeDepth * 2, "",
+		        addr, node[0], m_offset ? 0u : node[2], matrixOffset, child1Ptr, sibling2Ptr, m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY,
+		        m_nodeAttribs.currentPage, outsideFrustum ? 1 : 0, LODscale, lod[3].deleteSize, m_nodeAttribs.currentModelAlpha,
+		        (m_nodeAttribs.currentDisableCulling || (!outsideFrustum && LODscale >= lod[3].deleteSize)) ? "" : "  SKIPPED");
+	s_nodeDepth++;
+
 	if (m_nodeAttribs.currentDisableCulling || (!outsideFrustum && LODscale >= lod[3].deleteSize)) {
 
 		// Descend down first link
@@ -882,6 +935,7 @@ void CNew3D::DescendCullingNode(UINT32 addr)
 
 	}
 
+	s_nodeDepth--;
 	m_modelMat.PopMatrix();
 
 	// Restore old texture offsets
@@ -1615,6 +1669,11 @@ bool CNew3D::IsVROMModel(UINT32 modelAddr) const
 	return modelAddr >= 0x100000;
 }
 
+// 11/15 Spikeout AITargetMarker: the full-screen 3D viewport of the last frame - frustum tangents (left, right,
+// bottom, top at distance 1, wide-screen correction applied) and its GL window rectangle (x, y, w, h) - for the
+// OSD overlay that marks a bot's target (Main.cpp). [8] = 1 once set.
+float g_spkMainVp[9] = { 0 };
+
 void CNew3D::CalcViewport(Viewport* vp)
 {
 	float l = vp->angle_left;	// we need to calc the shape of the projection frustum for culling
@@ -1660,6 +1719,8 @@ void CNew3D::CalcViewport(Viewport* vp)
 		vp->height = (int)(vp->vpHeight*m_yRatio);
 
 		vp->projectionMatrix.FrustumRZ(l*correction, r*correction, b, t, NEAR_PLANE);
+		float sv[9] = { l * correction, r * correction, b, t, (float) vp->x, (float) vp->y, (float) vp->width, (float) vp->height, 1.0f };
+		memcpy(g_spkMainVp, sv, sizeof(sv));
 	}
 	else {
 
@@ -1669,6 +1730,11 @@ void CNew3D::CalcViewport(Viewport* vp)
 		vp->height	= (int)(vp->vpHeight*m_yRatio);
 
 		vp->projectionMatrix.FrustumRZ(l, r, b, t, NEAR_PLANE);
+		if (vp->vpWidth >= 495 && vp->vpHeight >= 383)   // full screen (Spikeout's main 3D view)
+		{
+			float sv[9] = { l, r, b, t, (float) vp->x, (float) vp->y, (float) vp->width, (float) vp->height, 1.0f };
+			memcpy(g_spkMainVp, sv, sizeof(sv));
+		}
 	}
 }
 

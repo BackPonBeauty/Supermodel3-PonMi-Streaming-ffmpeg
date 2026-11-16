@@ -372,3 +372,58 @@ pkg/
 
 
 Src/Remote/FirebaseMatchingCpp.h
+
+# ROM dumps used for reverse engineering (do not commit)
+Docs/spikeofe_re/*.bin
+
+# Streaming keys (P6): real values stay local
+Config/StreamingKeys.ini
+**/Config/StreamingKeys.ini
+**/Config/DiscordLogin.ini
+**/Config/DiscordMessage.txt
+
+# local backups before edits (CLAUDE.md rule)
+*.bak_*
+
+# keys embedded at build time from Config/StreamingKeys.ini (Scripts/gen_keys.ps1)
+Src/Stream/EmbeddedKeys.h
+Launcher/PonLuncher/EmbeddedKeys.vb
+**/Config/FirebaseSlot*.dat
+
+# 11/16 (owner): private notes and the reverse-engineering folder are not published
+/CLAUDE.md
+/CLAUDE_HISTORY.md
+/Docs/spikeofe_re/
+
+# 11/16: the entry-ticket Worker private key (paste into the Worker secret, then delete)
+**/Config/TicketSigningKey.private.jwk
+
+# 11/17: costume pictures (ROM costumes recoloured) and their generated header: built into the exe, never in git
+/Config/costume/
+Src/Model3/EmbeddedCostume.h
+
+# 11/17 (owner): the launcher source is not published (kept on this PC only)
+/Launcher/
+
+# 11/17 (owner): tools of this PC only, not published (the files stay here)
+/Server/
+/Scripts/make_ticket_key.mjs
+/Scripts/stream_test_client.py
+/Scripts/stream_load_test.py
+/deploy.ps1
+/claude_build_deploy.bat
+/claude_build.log
+/costume_dump.py
+/costume_recolor.py
+/translate_gui*.ps1
+/translate_gui.py
+/jp_lines.csv
+/translations.txt
+/route_table.html
+
+# 11/17 (owner): design notes, requirements and 8-link notes are not published
+/Docs/firebase_rules.json
+/Docs/spikeofe_8link_*
+/Docs/spikeout_8link_fix_summary.txt
+/Docs/streaming_design.md
+/Docs/streaming_requirements*.md

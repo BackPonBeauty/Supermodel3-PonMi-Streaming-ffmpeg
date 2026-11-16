@@ -432,7 +432,11 @@ public:
    */
   CReal3D(const Util::Config::Node &config);
   ~CReal3D(void);
-  
+
+  // 11/13 Spikeout FloorDump: raw culling/polygon RAM (game side and the snapshot being drawn) as
+  // sections { char name[8]; uint32 len; data } in host order. Debug only, never read back.
+  void DumpRaw(FILE *f) const;
+
 private:
 
     struct UpdateBlock
@@ -517,6 +521,14 @@ private:
   uint8_t   *cullingRAMHiDirty = nullptr;
   uint8_t   *polyRAMDirty = nullptr;
   uint8_t   *textureRAMDirty = nullptr;
+
+  // Spikeout 8 players (11/12): "ghost" texture pages. Textures whose level-0 base lies in a page's mipmap
+  // quadrant (x >= 1024, y >= 512: costumes of slots 4-7) are stored here instead of texture RAM, so the
+  // stage's mipmaps and these textures no longer overwrite each other. Same layout as texture RAM (2 pages).
+  uint16_t  *ghostRAM = nullptr;
+  uint16_t  *ghostRAMRO = nullptr;
+  bool      ghostDirty = false;
+  bool      m_ghostUpload = false;
 
   // Queued texture uploads
   std::vector<QueuedUploadTextures> queuedUploadTextures;

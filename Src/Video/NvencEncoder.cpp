@@ -6,71 +6,58 @@
 
 typedef NVENCSTATUS(NVENCAPI *PFN_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST *);
 
-// CUDA driver API (nvcuda.dll)
+// CUDA driver API (nvcuda.dll, comes with the NVIDIA display driver).
+// 11/16: the GL interop and the copy use the driver API too (cuGraphics* / cuMemcpy2D), so the CUDA Toolkit's
+// runtime DLL (cudart64_*.dll) is no longer needed: an NVIDIA driver is enough for NVENC.
+#ifndef GL_TEXTURE_2D
+#define GL_TEXTURE_2D 0x0DE1
+#endif
 typedef CUresult (CUDAAPI *PFN_cuInit)(unsigned int);
 typedef CUresult (CUDAAPI *PFN_cuDeviceGet)(CUdevice *, int);
 typedef CUresult (CUDAAPI *PFN_cuCtxCreate)(CUcontext *, unsigned int, CUdevice);
-
-// CUDA runtime API (cudart64_*.dll)
-typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsGLRegisterImage)(cudaGraphicsResource **, GLuint, GLenum, unsigned int);
-typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsUnregisterResource)(cudaGraphicsResource *);
-typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsMapResources)(int, cudaGraphicsResource **, cudaStream_t);
-typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsUnmapResources)(int, cudaGraphicsResource **, cudaStream_t);
-typedef cudaError_t (CUDARTAPI *PFN_cudaGraphicsSubResourceGetMappedArray)(cudaArray_t *, cudaGraphicsResource *, unsigned int, unsigned int);
-typedef cudaError_t (CUDARTAPI *PFN_cudaMemcpy2DFromArray)(void *, size_t, cudaArray_const_t, size_t, size_t, size_t, size_t, cudaMemcpyKind);
+typedef CUresult (CUDAAPI *PFN_cuGraphicsGLRegisterImage)(CUgraphicsResource *, unsigned int /*GLuint*/, unsigned int /*GLenum*/, unsigned int);
+typedef CUresult (CUDAAPI *PFN_cuGraphicsUnregisterResource)(CUgraphicsResource);
+typedef CUresult (CUDAAPI *PFN_cuGraphicsMapResources)(unsigned int, CUgraphicsResource *, CUstream);
+typedef CUresult (CUDAAPI *PFN_cuGraphicsUnmapResources)(unsigned int, CUgraphicsResource *, CUstream);
+typedef CUresult (CUDAAPI *PFN_cuGraphicsSubResourceGetMappedArray)(CUarray *, CUgraphicsResource, unsigned int, unsigned int);
+typedef CUresult (CUDAAPI *PFN_cuMemcpy2D)(const CUDA_MEMCPY2D *);
 
 static PFN_cuInit                              s_cuInit                              = nullptr;
 static PFN_cuDeviceGet                         s_cuDeviceGet                         = nullptr;
 static PFN_cuCtxCreate                         s_cuCtxCreate                         = nullptr;
-static PFN_cudaGraphicsGLRegisterImage         s_cudaGraphicsGLRegisterImage         = nullptr;
-static PFN_cudaGraphicsUnregisterResource      s_cudaGraphicsUnregisterResource      = nullptr;
-static PFN_cudaGraphicsMapResources            s_cudaGraphicsMapResources            = nullptr;
-static PFN_cudaGraphicsUnmapResources          s_cudaGraphicsUnmapResources          = nullptr;
-static PFN_cudaGraphicsSubResourceGetMappedArray s_cudaGraphicsSubResourceGetMappedArray = nullptr;
-static PFN_cudaMemcpy2DFromArray               s_cudaMemcpy2DFromArray               = nullptr;
+static PFN_cuGraphicsGLRegisterImage           s_cuGraphicsGLRegisterImage           = nullptr;
+static PFN_cuGraphicsUnregisterResource        s_cuGraphicsUnregisterResource        = nullptr;
+static PFN_cuGraphicsMapResources              s_cuGraphicsMapResources              = nullptr;
+static PFN_cuGraphicsUnmapResources            s_cuGraphicsUnmapResources            = nullptr;
+static PFN_cuGraphicsSubResourceGetMappedArray s_cuGraphicsSubResourceGetMappedArray = nullptr;
+static PFN_cuMemcpy2D                          s_cuMemcpy2D                          = nullptr;
 
 static HMODULE s_cudaDriverDll  = nullptr;
-static HMODULE s_cudaRuntimeDll = nullptr;
 
 static bool LoadCudaDlls()
 {
     s_cudaDriverDll = LoadLibraryA("nvcuda.dll");
     if (!s_cudaDriverDll)
     {
-        printf("[NVENC] nvcuda.dll not found\n");
-        return false;
-    }
-    s_cuInit      = (PFN_cuInit)     GetProcAddress(s_cudaDriverDll, "cuInit");
-    s_cuDeviceGet = (PFN_cuDeviceGet)GetProcAddress(s_cudaDriverDll, "cuDeviceGet");
-    s_cuCtxCreate = (PFN_cuCtxCreate)GetProcAddress(s_cudaDriverDll, "cuCtxCreate_v2");
-    if (!s_cuInit || !s_cuDeviceGet || !s_cuCtxCreate)
-    {
-        printf("[NVENC] nvcuda.dll missing required symbols\n");
+        printf("[NVENC] nvcuda.dll not found (no NVIDIA driver)\n");
         return false;
     }
 
-    // Try cudart64_13.dll first, then fall back to any version
-    s_cudaRuntimeDll = LoadLibraryA("cudart64_13.dll");
-    if (!s_cudaRuntimeDll) s_cudaRuntimeDll = LoadLibraryA("cudart64_12.dll");
-    if (!s_cudaRuntimeDll) s_cudaRuntimeDll = LoadLibraryA("cudart64_11.dll");
-    if (!s_cudaRuntimeDll)
-    {
-        printf("[NVENC] cudart64 DLL not found\n");
-        return false;
-    }
+#define LOAD_CU(var, name) var = (decltype(var)) GetProcAddress(s_cudaDriverDll, name); \
+    if (!var) { printf("[NVENC] nvcuda.dll missing: %s\n", name); return false; }
 
-#define LOAD_CUDART(fn) s_##fn = (PFN_##fn)GetProcAddress(s_cudaRuntimeDll, #fn); \
-    if (!s_##fn) { printf("[NVENC] cudart missing: " #fn "\n"); return false; }
+    LOAD_CU(s_cuInit, "cuInit")
+    LOAD_CU(s_cuDeviceGet, "cuDeviceGet")
+    LOAD_CU(s_cuCtxCreate, "cuCtxCreate_v2")
+    LOAD_CU(s_cuGraphicsGLRegisterImage, "cuGraphicsGLRegisterImage")
+    LOAD_CU(s_cuGraphicsUnregisterResource, "cuGraphicsUnregisterResource")
+    LOAD_CU(s_cuGraphicsMapResources, "cuGraphicsMapResources")
+    LOAD_CU(s_cuGraphicsUnmapResources, "cuGraphicsUnmapResources")
+    LOAD_CU(s_cuGraphicsSubResourceGetMappedArray, "cuGraphicsSubResourceGetMappedArray")
+    LOAD_CU(s_cuMemcpy2D, "cuMemcpy2D_v2")
+#undef LOAD_CU
 
-    LOAD_CUDART(cudaGraphicsGLRegisterImage)
-    LOAD_CUDART(cudaGraphicsUnregisterResource)
-    LOAD_CUDART(cudaGraphicsMapResources)
-    LOAD_CUDART(cudaGraphicsUnmapResources)
-    LOAD_CUDART(cudaGraphicsSubResourceGetMappedArray)
-    LOAD_CUDART(cudaMemcpy2DFromArray)
-#undef LOAD_CUDART
-
-    printf("[NVENC] CUDA DLLs loaded\n");
+    printf("[NVENC] CUDA driver API loaded (nvcuda.dll, no CUDA Toolkit needed)\n");
     return true;
 }
 
@@ -176,7 +163,7 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.vbvBufferSize = 0;
     encConfig.rcParams.vbvInitialDelay = 0;
     encConfig.frameIntervalP = 1; // No B-frames
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 */
     // Low-latency VBR configuration
     encConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
@@ -185,7 +172,7 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.vbvBufferSize = 3000000;  // averageと同値推奨
     encConfig.rcParams.vbvInitialDelay = 1500000;
     encConfig.frameIntervalP = 1;    // No B-frames (低遅延維持)
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 
     // 追加推奨
     encConfig.rcParams.enableAQ = 1;         // Adaptive Quantization ON (静止部分を綺麗に)
@@ -193,13 +180,13 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.enableTemporalAQ = 1; // 時間方向AQも有効
     if (useH265)
     {
-        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.hevcConfig.sliceMode = 0;
         encConfig.encodeCodecConfig.hevcConfig.sliceModeData = 0;
     }
     else
     {
-        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.h264Config.sliceMode = 0;
         encConfig.encodeCodecConfig.h264Config.sliceModeData = 0;
     }
@@ -303,27 +290,27 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     {
         if (m_cuResource)
         {
-            s_cudaGraphicsUnregisterResource(m_cuResource);
+            s_cuGraphicsUnregisterResource(m_cuResource);
             m_cuResource = nullptr;
         }
-        cudaError_t err = s_cudaGraphicsGLRegisterImage(
+        CUresult err = s_cuGraphicsGLRegisterImage(
             &m_cuResource,
             glTextureID,
             GL_TEXTURE_2D,
-            cudaGraphicsRegisterFlagsReadOnly);
-        if (err != cudaSuccess)
+            CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
+        if (err != CUDA_SUCCESS)
         {
-            printf("[NVENC] cudaGraphicsGLRegisterImage failed: %d\n", err);
+            printf("[NVENC] cuGraphicsGLRegisterImage failed: %d\n", (int) err);
             return;
         }
         m_glTexID = glTextureID;
     }
 
     // Map OpenGL texture to CUDA
-    s_cudaGraphicsMapResources(1, &m_cuResource, 0);
+    s_cuGraphicsMapResources(1, &m_cuResource, 0);
 
-    cudaArray_t cuArray;
-    s_cudaGraphicsSubResourceGetMappedArray(&cuArray, m_cuResource, 0, 0);
+    CUarray cuArray = nullptr;
+    s_cuGraphicsSubResourceGetMappedArray(&cuArray, m_cuResource, 0, 0);
 
     // Lock NVENC input buffer
     NV_ENC_LOCK_INPUT_BUFFER lockParams = {};
@@ -333,22 +320,30 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     NVENCSTATUS st = m_nvenc.nvEncLockInputBuffer(m_encoder, &lockParams);
     if (st != NV_ENC_SUCCESS)
     {
-        s_cudaGraphicsUnmapResources(1, &m_cuResource, 0);
+        s_cuGraphicsUnmapResources(1, &m_cuResource, 0);
         return;
     }
 
-    // Copy from CUDAArray to NVENC input buffer on GPU
-    s_cudaMemcpy2DFromArray(
-        lockParams.bufferDataPtr,  // dst
-        lockParams.pitch,          // dst pitch
-        cuArray,                   // src
-        0, 0,                      // src offset
-        m_width * 4,               // width bytes (RGBA)
-        m_height,                  // height
-        cudaMemcpyDeviceToDevice); // GPU -> GPU
+    // Copy from the CUDA array to the locked NVENC input buffer. UNIFIED lets the driver tell what kind of
+    // memory the destination is (as the runtime's cudaMemcpy2DFromArray did before).
+    CUDA_MEMCPY2D cp = {};
+    cp.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+    cp.srcArray      = cuArray;
+    cp.dstMemoryType = CU_MEMORYTYPE_UNIFIED;
+    cp.dstDevice     = (CUdeviceptr) lockParams.bufferDataPtr;
+    cp.dstPitch      = lockParams.pitch;
+    cp.WidthInBytes  = (size_t) m_width * 4;   // RGBA
+    cp.Height        = (size_t) m_height;
+    CUresult cr = s_cuMemcpy2D(&cp);
+    if (cr != CUDA_SUCCESS)
+    {
+        static int reported = 0;
+        if (reported++ < 3)
+            printf("[NVENC] cuMemcpy2D failed: %d\n", (int) cr);
+    }
 
     m_nvenc.nvEncUnlockInputBuffer(m_encoder, m_inputBuffers[idx]);
-    s_cudaGraphicsUnmapResources(1, &m_cuResource, 0);
+    s_cuGraphicsUnmapResources(1, &m_cuResource, 0);
 
     // Encode
     NV_ENC_PIC_PARAMS picParams = {};
@@ -360,8 +355,9 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     picParams.inputHeight = m_height;
     picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
 
-    // Force IDR frame for the first few frames
-    if (m_bufferIndex < 3)
+    // Force IDR frame for the first few frames, or when a client asked for one (RequestKeyframe)
+    bool forceIdr = m_keyframeRequested.exchange(false);
+    if (m_bufferIndex < 3 || forceIdr)
         picParams.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
     else
         picParams.encodePicFlags = NV_ENC_PIC_FLAG_OUTPUT_SPSPPS; // Attach SPS/PPS to every frame
@@ -428,8 +424,8 @@ void NvencEncoder::Shutdown()
 
     if (m_cuResource)
     {
-        if (s_cudaGraphicsUnregisterResource)
-            s_cudaGraphicsUnregisterResource(m_cuResource);
+        if (s_cuGraphicsUnregisterResource)
+            s_cuGraphicsUnregisterResource(m_cuResource);
         m_cuResource = nullptr;
     }
 
@@ -508,20 +504,20 @@ bool NvencEncoder::ReconfigureBitrate(int avgBitrate, int maxBitrate)
     encConfig.rcParams.vbvBufferSize = avgBitrate;
     encConfig.rcParams.vbvInitialDelay = avgBitrate / 2;
     encConfig.frameIntervalP = 1;
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 
     encConfig.rcParams.enableAQ = 1;
     encConfig.rcParams.aqStrength = 8;
     encConfig.rcParams.enableTemporalAQ = 1;
     if (useH265)
     {
-        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.hevcConfig.sliceMode = 0;
         encConfig.encodeCodecConfig.hevcConfig.sliceModeData = 0;
     }
     else
     {
-        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.h264Config.sliceMode = 0;
         encConfig.encodeCodecConfig.h264Config.sliceModeData = 0;
     }

@@ -18,6 +18,7 @@
 #include "../Src/OSD/SDL/SDLInputSystem.h"
 #include "../Src/Inputs/Inputs.h"
 #include "Main.h"
+#include "Stream/Lobby.h"
 #include "Font01.h"
 #include <ctime>   // for time, localtime, strftime
 #include <fstream> // for ofstream
@@ -41,9 +42,7 @@
 
 #ifdef _WIN32
 #include "../Src/OSD/Windows/DirectInputSystem.h"
-#include "../Src/Remote/RemoteSlotManager.h"
 #endif
-#include <RemoteSlotManager.h>
 
 static std::vector<std::string> resolutions;
 static int selectedResIndex = 0;
@@ -192,6 +191,19 @@ void ClosePreviewWindow()
 }
 
 // --- Startup Logic ---
+// Streaming (P5): name of the selected game (the lobby opens only for spikeofe)
+static std::string GetSelectedGameName(int selectedGame, const std::map<std::string, Game> &games)
+{
+    int index = 0;
+    for (auto &pair : games)
+    {
+        if (index == selectedGame)
+            return pair.second.name;
+        index++;
+    }
+    return "";
+}
+
 static std::string GetRomPath(int selectedGame, const std::map<std::string, Game> &games, Util::Config::Node &config)
 {
     if (selectedGame >= 0)
@@ -291,7 +303,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
          int &musicVol, int &sfxVol, int &balance, bool &vEmulateSound,
          bool &vEmulateDSB, bool &vFlipStereo, bool &vLegacySoundDSP,
          int &selectedInputType, int &selectedCrosshair, int &selectedStyle,
-          bool &vForceFeedback, bool &vNetwork, bool &vSimulateNet, bool &vStreaming, std::string &vCodec, RemoteSlotManager* pRemote)
+          bool &vForceFeedback, bool &vNetwork, bool &vSimulateNet, bool &vStreaming, std::string &vCodec)
 {
     // Calculate base scale
     float scale = io.DisplaySize.y / 600.0f;
@@ -934,7 +946,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     float labelWidth = 150.0f * scale; // Align label widths
 
                     // --- Input Type ---
-                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput"};
+                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput","SDL","NONE (streaming server)"};
                     // static int selectedInputType = 0; // Link with config
                     ImGui::Text("Input Type");
                     ImGui::SameLine(labelWidth);
@@ -1039,19 +1051,6 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     if (ImGui::Checkbox("Streaming", &vStreaming))
                     {
                         saveSettings = true;
-#ifdef SUPERMODEL_WIN32
-                        if (pRemote != nullptr)
-                        {
-                            if (vStreaming)
-                            {
-                                pRemote->AddVirtualController();
-                            }
-                            else
-                            {
-                                pRemote->RemoveVirtualController();
-                            }
-                        }
-#endif
                     }
 
                     ImGui::Spacing();
@@ -1429,7 +1428,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::Text(title);
 
                     // --- 2. Center Version ---
-                    const char *ver = "ver. 2026.06.06";
+                    const char *ver = "ver. 2026.07.31";
                     float verWidth = ImGui::CalcTextSize(ver).x;
                     ImGui::SetCursorPosX((windowWidth - verWidth) * 0.5f);
                     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ver);
@@ -1526,8 +1525,6 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         {"All Supermodel Developers", "and Fellow Fork Developers"},
                         {"Many critical comments", "@5ch people"},
                         {"Barrel Effect Inspired by", "@ikarugaginkei5744"},
-                        // Supporters
-                        {"Network Tester", "Spikeout Community in Hong Kong"},
                         {"Special Shout-out to", "all the 'Anti-PonMi' folks"}};
 
                     for (const auto &item : thanksList)
@@ -1574,9 +1571,17 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         {
             if (CheckRomExists(selectedGameIndex, games, config))
             {
-                exitLaunch = true;
-                exit = true;
                 saveSettings = true;
+                if (GetSelectedGameName(selectedGameIndex, games) == "spikeofe")
+                {
+                    // Streaming (P5, CL-02): Spikeout goes to the lobby first (connect / skip to play locally)
+                    Lobby::Open();
+                }
+                else
+                {
+                    exitLaunch = true;
+                    exit = true;
+                }
             }
             else
             {
@@ -1710,12 +1715,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 }
 
 // --- Entry Point ---
-#ifdef SUPERMODEL_WIN32
-std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Node &config, RemoteSlotManager* pRemote)
-#else
 std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Node &config)
-#define pRemote nullptr
-#endif
 {
     if (!resLoaded)
     {
@@ -1797,7 +1797,9 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     std::string inSys = config["InputSystem"].ValueAs<std::string>();
     int selectedInputType = (inSys == "xinput") ? 0 : (inSys == "dinput") ? 1
                                                   : (inSys == "rawinput") ? 2
-                                                                          : 2;
+                                                  : (inSys == "sdl" || inSys == "sdlgamepad") ? 3
+                                                  : (inSys == "none" || inSys == "NONE") ? 4   // P3: streaming server
+                                                                          : 2;   // 11/11: "sdl" was read as Rawinput
 
     int selectedCrosshair = (int)config["Crosshairs"].ValueAs<int64_t>();
 
@@ -1903,6 +1905,24 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     font_cfg.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF((void *)Font01_data, sizeof(Font01_data), fontSize, &font_cfg);
 
+    // Streaming lobby (P6b, 2026-11-16): Discord names and host names may be Japanese. Merge the kana/kanji
+    // glyphs of a Windows font into the GUI font (skipped when none of these files exists).
+    {
+        static const char *jpFonts[] = { "C:\\Windows\\Fonts\\meiryo.ttc", "C:\\Windows\\Fonts\\YuGothM.ttc", "C:\\Windows\\Fonts\\msgothic.ttc" };
+        for (const char *path : jpFonts)
+        {
+            FILE *fp = fopen(path, "rb");
+            if (!fp)
+                continue;
+            fclose(fp);
+            ImFontConfig jp;
+            jp.MergeMode = true;
+            jp.PixelSnapH = true;
+            io.Fonts->AddFontFromFileTTF(path, fontSize, &jp, io.Fonts->GetGlyphRangesJapanese());
+            break;
+        }
+    }
+
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 150");
 
@@ -1984,6 +2004,26 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
+        // Streaming (P5): the lobby replaces the settings screen while it is open
+        if (Lobby::IsOpen())
+        {
+            Lobby::Action action = Lobby::Draw(1.0f);
+            if (action == Lobby::Action::Connect)
+            {
+                Lobby::Close();
+                exitLaunch = false;     // no ROM launch: Main runs the stream client (Lobby::Request())
+                exit = true;
+            }
+            else if (action == Lobby::Action::Skip)
+            {
+                Lobby::Close();
+                exitLaunch = true;      // CL-02b: the normal local spikeofe
+                exit = true;
+            }
+            else if (action == Lobby::Action::Back)
+                Lobby::Close();
+        }
+        else
         // GUI(io, config, games, selectedGame, exit, exitLaunch, saveSettings, window,selectedResIndex);
         GUI(io, config, games, selectedGame, exit, exitLaunch, saveSettings, window,
             selectedResIndex, engineSelection, vVsync, vQuadRendering, vGPUMultiThreaded,
@@ -1992,7 +2032,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
             vNoWhiteFlash, vHideCMD, vDefaultScanline, vTrueHz, superSampling, selectedCRT, selectedUpscale, ppcFreq, WindowXPosition, WindowYPosition, Scanline, Barrel,
             musicVol, sfxVol, balance, vEmulateSound, vEmulateDSB, vFlipStereo,
             vLegacySoundDSP, selectedInputType, selectedCrosshair, selectedStyle,
-            vForceFeedback, vNetwork, vSimulateNet, vStreaming, vCodec, pRemote);
+            vForceFeedback, vNetwork, vSimulateNet, vStreaming, vCodec);
         if (exit)
         {
             running = false;
@@ -2098,6 +2138,8 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
 
         // --- Control / Network ---
         u["InputSystem"] = (selectedInputType == 0) ? "xinput" : (selectedInputType == 1) ? "dinput"
+                         : (selectedInputType == 3) ? (inSys == "sdlgamepad" ? "sdlgamepad" : "sdl")   // 11/11: SDL was saved as rawinput
+                         : (selectedInputType == 4) ? "NONE"                                           // P3: streaming server
                                                                                           : "rawinput";
 
         u["Crosshairs"] = std::to_string(selectedCrosshair);

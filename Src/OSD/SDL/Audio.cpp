@@ -83,6 +83,7 @@ int nbHostAudioChannels = NUM_CHANNELS_M3; // Number of channels on host
 
 static UdpAudioSender g_audioSender;
 static bool g_audioSenderReady = false;
+static bool g_streamMuteLocal = false;   // D-4 / VF-05: a streaming server stays silent on its own speakers
 
 static int samples_per_frame_host = SAMPLES_PER_FRAME_M3;
 static int bytes_per_sample_host = BYTES_PER_SAMPLE_M3;
@@ -574,6 +575,9 @@ Result OpenAudio(const Util::Config::Node &config, bool streamingEnabled = false
     {
         int audioPort = config["AudioPort"].ValueAs<int>();
         g_audioSenderReady = g_audioSender.Init("127.0.0.1", audioPort);
+        g_streamMuteLocal = config["StreamMuteLocal"].ValueAsDefault<bool>(false);
+        if (g_streamMuteLocal)
+            printf("[AudioUDP] StreamMuteLocal: sound is sent to the client only (local speakers silent)\n");
     }
     else
     {
@@ -612,6 +616,8 @@ bool OutputAudio(unsigned numSamples, const float *leftFrontBuffer, const float 
             streamBuf[i * 2 + 1] = MixINT16(rightFrontBuffer[i], rightRearBuffer[i]);
         }
         g_audioSender.SendWithTimestamp(streamBuf, numSamples, 2);
+        if (g_streamMuteLocal)
+            memset(mixBuffer, 0, sizeof(mixBuffer));
     }
     // Lock SDL audio callback so that it doesn't interfere with following code
     SDL_LockAudio();

@@ -18,6 +18,7 @@ public:
   virtual void UploadTextures(unsigned level, unsigned x, unsigned y, unsigned width, unsigned height) = 0;
   virtual void AttachMemory(const uint32_t *cullingRAMLoPtr, const uint32_t *cullingRAMHiPtr, const uint32_t *polyRAMPtr, const uint32_t *vromPtr, const uint16_t *textureRAMPtr) = 0;
   virtual void SetStepping(int stepping) = 0;
+  virtual void AttachGhostMemory(const uint16_t *ghostRAMPtr) {}   // Spikeout ghost texture pages (New3D only)
   virtual Result Init(unsigned xOffset, unsigned yOffset, unsigned xRes, unsigned yRes, unsigned totalXRes, unsigned totalYRes, unsigned aaTarget) = 0;
   virtual void SetSunClamp(bool enable) = 0;
   virtual void SetBlockCulling(bool enable) = 0;

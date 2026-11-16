@@ -87,6 +87,11 @@
 #include "OSD/FileSystemPath.h"
 #include "GameLoader.h"
 #include "SDLInputSystem.h"
+#include "Stream/RemoteInputSystem.h"
+#include "Stream/Lobby.h"
+#include "Stream/StreamClient.h"
+#include "Stream/Version.h"
+#include "Stream/RoomPassword.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
 #ifndef SUPERMODEL_OSX
@@ -113,17 +118,17 @@
 #include <ctime>
 // #include <windows.h>
 #include <shellapi.h>
-#include "Network/HandshakeServer.h"
+#include "Stream/SessionServer.h"
 #include "Pkgs/imgui/imgui.h"
 #include "Pkgs/imgui/imgui_impl_sdl2.h"
 #include "Pkgs/imgui/imgui_impl_opengl3.h"
 
 // -------------------------------------------------------
-// XInput Remote Controller Manager (Integration: VB.NET -> C++)
+// Lobby slot state (Firebase). P1 (11/16): the ViGEm / XInput remote-controller parts were removed;
+// remote input comes back as a CInputSystem in P3 (design: RemoteInputSystem).
 // -------------------------------------------------------
 #ifdef SUPERMODEL_WIN32
 #include "Remote/RemoteSlotManager.h"
-// Singleton managing ViGEm & XInput listening on startup
 static RemoteSlotManager s_remoteSlotMgr;
 #endif
 
@@ -165,19 +170,11 @@ bool replayRequested = false;
 bool replayStarted = false;
 std::string replayFile;
 static bool lastLoadStatePressed = false;
-HandshakeServer g_handshake;
-HandshakeServer g_handshakeP2;
+static SessionServer s_session;   // P4: this server's slot session
 
-// --- Debug panel / connect-notify / bitrate overlay ---
+// --- Debug panel / bitrate overlay ---
 static bool      s_debugPanelVisible = false;
 static IEncoder* s_debugEncoder      = nullptr;
-
-struct SlotNotification {
-    std::string message;
-    float expireTime;
-};
-static std::vector<SlotNotification> s_slotNotifications;
-static std::string s_prevNicks[4][2]; // [slot][0=player,1=spectator]
 
 struct BitrateNotification {
     std::string message;
@@ -994,11 +991,177 @@ bool BeginFrameVideo()
   return true;
 }
 
+/*
+ * 11/15 Spikeout AITargetMarker (Model3.cpp fills g_spkMarker; New3D.cpp g_spkMainVp): on a bot cabinet, a ball in
+ * the bot's own colour above the enemy it is after, and a thin line to it from above its own head. Drawn over the
+ * finished picture (no depth test), with the game camera (fa_camera pos +0x10, interest +0x404) and the frustum of
+ * New3D's full-screen viewport. Camera right = (-fz, 0, fx) - the same axes the bot's lever uses (calibrated).
+ */
+struct SpikeoutMarker { uint32_t f; int on; float cam[3], itr[3], me[3], tg[3]; unsigned colour; };
+extern SpikeoutMarker g_spkMarker;
+namespace New3D { extern float g_spkMainVp[9]; }
+using New3D::g_spkMainVp;
+
+static void SpikeoutDrawMarker()
+{
+  static uint32_t lastF = 0; static int still = 0;
+  const SpikeoutMarker mk = g_spkMarker;
+  if (mk.f == lastF) still++; else { still = 0; lastF = mk.f; }
+  if (!mk.on || still > 3 || g_spkMainVp[8] == 0.0f) return;
+  const float L = g_spkMainVp[0], R = g_spkMainVp[1], B = g_spkMainVp[2], T = g_spkMainVp[3];
+  const int vx = (int) g_spkMainVp[4], vy = (int) g_spkMainVp[5], vw = (int) g_spkMainVp[6], vh = (int) g_spkMainVp[7];
+  if (vw <= 0 || vh <= 0 || R == L || T == B) return;
+
+  // camera axes
+  float f[3] = { mk.itr[0] - mk.cam[0], mk.itr[1] - mk.cam[1], mk.itr[2] - mk.cam[2] };
+  float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  if (fl < 1e-4f) return;
+  for (float &c : f) c /= fl;
+  float r[3] = { -f[2], 0.0f, f[0] };
+  float rl = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+  if (rl < 1e-4f) return;
+  r[0] /= rl; r[2] /= rl;
+  float u[3] = { r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0] };
+  if (u[1] < 0) { u[0] = -u[0]; u[1] = -u[1]; u[2] = -u[2]; }
+  auto toView = [&](const float *p, float *v) {
+    float d[3] = { p[0] - mk.cam[0], p[1] - mk.cam[1], p[2] - mk.cam[2] };
+    v[0] = d[0] * r[0] + d[1] * r[1] + d[2] * r[2];
+    v[1] = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+    v[2] = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+  };
+  auto toNdc = [&](const float *v, float *n) {
+    n[0] = (2.0f * (v[0] / v[2]) - (R + L)) / (R - L);
+    n[1] = (2.0f * (v[1] / v[2]) - (T + B)) / (T - B);
+  };
+  const float NEARZ = 0.2f;
+
+  static const float pal[8][3] = {
+    { 0.86f, 0.16f, 0.16f }, { 0.16f, 0.36f, 0.92f }, { 0.16f, 0.72f, 0.24f }, { 0.98f, 0.55f, 0.08f },
+    { 1.00f, 0.43f, 0.71f }, { 0.60f, 0.28f, 0.84f }, { 0.12f, 0.12f, 0.12f }, { 0.96f, 0.96f, 0.96f },
+  };
+  const float *col = pal[mk.colour & 7];
+
+  // vertices: x, y (NDC), r, g, b, a
+  std::vector<float> vb;
+  auto vert = [&](float x, float y, float cr, float cg, float cb, float ca) { vb.insert(vb.end(), { x, y, cr, cg, cb, ca }); };
+  const float pxX = 2.0f / vw, pxY = 2.0f / vh;   // one pixel in NDC
+
+  // line: own head -> target head, clipped to the near plane
+  float a[3], b[3];
+  toView(mk.me, a); toView(mk.tg, b);
+  if (a[2] >= NEARZ || b[2] >= NEARZ)
+  {
+    if (a[2] < NEARZ) { float t = (NEARZ - a[2]) / (b[2] - a[2]); for (int k = 0; k < 3; k++) a[k] += (b[k] - a[k]) * t; }
+    if (b[2] < NEARZ) { float t = (NEARZ - b[2]) / (a[2] - b[2]); for (int k = 0; k < 3; k++) b[k] += (a[k] - b[k]) * t; }
+    float na[2], nb[2]; toNdc(a, na); toNdc(b, nb);
+    float dx = (nb[0] - na[0]) / pxX, dy = (nb[1] - na[1]) / pxY, dl = std::sqrt(dx * dx + dy * dy);
+    if (dl > 0.5f)
+    {
+      const float hw = 1.0f;   // half width in pixels
+      float ox = -dy / dl * hw * pxX, oy = dx / dl * hw * pxY;
+      vert(na[0] + ox, na[1] + oy, col[0], col[1], col[2], 0.9f); vert(na[0] - ox, na[1] - oy, col[0], col[1], col[2], 0.9f);
+      vert(nb[0] + ox, nb[1] + oy, col[0], col[1], col[2], 0.9f);
+      vert(na[0] - ox, na[1] - oy, col[0], col[1], col[2], 0.9f); vert(nb[0] - ox, nb[1] - oy, col[0], col[1], col[2], 0.9f);
+      vert(nb[0] + ox, nb[1] + oy, col[0], col[1], col[2], 0.9f);
+    }
+  }
+
+  // ball above the target: world radius 0.25 (smaller further away), at least 3 px; outline, then a shaded disc
+  // with the highlight up-left so it reads as a sphere
+  float tv[3]; toView(mk.tg, tv);
+  if (tv[2] >= NEARZ)
+  {
+    float c[2]; toNdc(tv, c);
+    const float WR = 0.125f;   // 11/15: 0.25 -> 0.125 (user: half)
+    float rx = WR / tv[2] * 2.0f / (R - L), ry = WR / tv[2] * 2.0f / (T - B);
+    float rpx = rx / pxX; if (rpx < 2.0f) { float s = 2.0f / rpx; rx *= s; ry *= s; }
+    const int N = 32;
+    const float oc = (mk.colour & 7) == 6 ? 0.85f : 0.0f;   // black ball: light outline
+    float orx = rx + 1.5f * pxX, ory = ry + 1.5f * pxY;
+    for (int i = 0; i < N; i++)
+    {
+      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
+      vert(c[0], c[1], oc, oc, oc, 0.6f);
+      vert(c[0] + std::cos(a0) * orx, c[1] + std::sin(a0) * ory, oc, oc, oc, 0.6f);
+      vert(c[0] + std::cos(a1) * orx, c[1] + std::sin(a1) * ory, oc, oc, oc, 0.6f);
+    }
+    float hx = c[0] - rx * 0.35f, hy = c[1] + ry * 0.35f;   // highlight point
+    float hc[3] = { col[0] + (1.0f - col[0]) * 0.55f, col[1] + (1.0f - col[1]) * 0.55f, col[2] + (1.0f - col[2]) * 0.55f };
+    float ec[3] = { col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f };
+    if ((mk.colour & 7) == 6) { ec[0] = ec[1] = ec[2] = 0.02f; hc[0] = hc[1] = hc[2] = 0.45f; }
+    for (int i = 0; i < N; i++)
+    {
+      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
+      vert(hx, hy, hc[0], hc[1], hc[2], 1.0f);
+      vert(c[0] + std::cos(a0) * rx, c[1] + std::sin(a0) * ry, ec[0], ec[1], ec[2], 1.0f);
+      vert(c[0] + std::cos(a1) * rx, c[1] + std::sin(a1) * ry, ec[0], ec[1], ec[2], 1.0f);
+    }
+  }
+  if (vb.empty()) return;
+
+  static GLuint prog = 0, vao = 0, vbo = 0; static bool failed = false;
+  if (failed) return;
+  if (!prog)
+  {
+    const char *vs = "#version 410 core\nlayout(location=0) in vec2 p; layout(location=1) in vec4 c; out vec4 vc;\n"
+                     "void main(){ gl_Position = vec4(p, 0.0, 1.0); vc = c; }\n";
+    const char *fs = "#version 410 core\nin vec4 vc; out vec4 o; void main(){ o = vc; }\n";
+    auto sh = [](GLenum type, const char *src) { GLuint s = glCreateShader(type); glShaderSource(s, 1, &src, NULL); glCompileShader(s);
+                                                 GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok); return ok ? s : 0u; };
+    GLuint v = sh(GL_VERTEX_SHADER, vs), fr = sh(GL_FRAGMENT_SHADER, fs);
+    if (!v || !fr) { failed = true; ErrorLog("AITargetMarker: shader compile failed\n"); return; }
+    prog = glCreateProgram(); glAttachShader(prog, v); glAttachShader(prog, fr); glLinkProgram(prog);
+    GLint ok = 0; glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) { failed = true; ErrorLog("AITargetMarker: shader link failed\n"); return; }
+    glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
+    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) 0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *) (2 * sizeof(float)));
+    glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+    glBindVertexArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0);
+  }
+  // 11/15: keep the GL state as we found it - the scissor test left off let the next frames draw over the black
+  // frame round the picture (textures in the border). The scissor stays as it is (it also keeps the marker inside
+  // the picture).
+  GLint oldVp[4]; glGetIntegerv(GL_VIEWPORT, oldVp);
+  const GLboolean oldDepth = glIsEnabled(GL_DEPTH_TEST), oldCull = glIsEnabled(GL_CULL_FACE), oldStencil = glIsEnabled(GL_STENCIL_TEST), oldBlend = glIsEnabled(GL_BLEND);
+  GLint oldSrc = 0, oldDst = 0, oldProg = 0, oldVao = 0, oldBuf = 0;
+  glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrc); glGetIntegerv(GL_BLEND_DST_RGB, &oldDst);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &oldProg); glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao); glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &oldBuf);
+  glViewport(vx, vy, vw, vh);
+  glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_STENCIL_TEST);
+  glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glUseProgram(prog);
+  glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, vb.size() * sizeof(float), vb.data(), GL_STREAM_DRAW);
+  glDrawArrays(GL_TRIANGLES, 0, (GLsizei) (vb.size() / 6));
+  glBindVertexArray((GLuint) oldVao); glBindBuffer(GL_ARRAY_BUFFER, (GLuint) oldBuf); glUseProgram((GLuint) oldProg);
+  glViewport(oldVp[0], oldVp[1], oldVp[2], oldVp[3]);
+  if (oldDepth) glEnable(GL_DEPTH_TEST);
+  if (oldCull) glEnable(GL_CULL_FACE);
+  if (oldStencil) glEnable(GL_STENCIL_TEST);
+  glBlendFunc((GLenum) oldSrc, (GLenum) oldDst);
+  if (!oldBlend) glDisable(GL_BLEND);
+}
+
 void EndFrameVideo()
 {
   // Show crosshairs for light gun games
   if (videoInputs)
     s_crosshair->Update(currentInputs, videoInputs, xOffset, yOffset, xRes, yRes);
+
+  SpikeoutDrawMarker();   // 11/15 AITargetMarker (does nothing unless a bot filled g_spkMarker this frame)
+
+  // Debug: save the frame to shot_<frame>.bmp at the video frames listed in ScreenshotFrames
+  static unsigned s_videoFrame = 0;
+  ++s_videoFrame;
+  std::string shotFrames = s_runtime_config["ScreenshotFrames"].ValueAsDefault<std::string>("");
+  if (!shotFrames.empty())
+  {
+    std::string list = "," + shotFrames + ",";
+    if (list.find("," + std::to_string(s_videoFrame) + ",") != std::string::npos)
+      SaveFrameBuffer("shot_" + std::to_string(s_videoFrame) + ".bmp");
+  }
 
   // Swap the buffers
   SDL_GL_SwapWindow(s_window);
@@ -1186,85 +1349,18 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   s_debugEncoder = streamingEnabled ? &superAA->GetEncoder() : nullptr;
 
-  // Meta-keys from remote clients (rising-edge)
-  s_remoteSlotMgr.SetMetaKeyCallback([](WORD newKeys, WORD prevKeys) {
-    WORD rose = newKeys & ~prevKeys;
-    if (rose & METAKEY_ALT_D)
-    {
-      s_debugPanelVisible = !s_debugPanelVisible;
-      printf("[Debug] Panel %s (remote Alt+D)\n", s_debugPanelVisible ? "ON" : "OFF");
-    }
-    if (rose & METAKEY_BITRATE_UP)
-    {
-      int newCeil = s_currentAvgBitrate + s_bitrateStep;
-      if (newCeil > s_bitrateMax) newCeil = s_bitrateMax;
-      if (newCeil != s_currentAvgBitrate)
-      {
-        s_currentAvgBitrate = newCeil;
-        printf("[Bitrate] Ceiling UP -> %d bps\n", s_currentAvgBitrate);
-        PushBitrateNotify(s_currentAvgBitrate, "manual UP");
-      }
-    }
-    if (rose & METAKEY_BITRATE_DOWN)
-    {
-      int newCeil = s_currentAvgBitrate - s_bitrateStep;
-      if (newCeil < s_bitrateMin) newCeil = s_bitrateMin;
-      if (newCeil != s_currentAvgBitrate)
-      {
-        s_currentAvgBitrate = newCeil;
-        printf("[Bitrate] Ceiling DOWN -> %d bps\n", s_currentAvgBitrate);
-        PushBitrateNotify(s_currentAvgBitrate, "manual DOWN");
-      }
-    }
-  });
+  // P1 (11/16): the remote meta keys (Alt+D, bitrate up/down) came in through the ViGEm/XInput receiver,
+  // which was removed. They come back through the new SessionServer in P4 (design SV-15, D-6).
 
   // Pre-encode callback: render debug panel / notifications into the stream
-  superAA->SetPreEncodeCallback([superAA, decoderCodec](GLuint fboID, int w, int h) {
+  superAA->SetPreEncodeCallback([decoderCodec](GLuint fboID, int w, int h) {
     if (!ImGui::GetCurrentContext())
       return;
 
     float now = SDL_GetTicks() / 1000.0f;
 
-    // Nick change detection
-    for (int pi = 0; pi < 4; ++pi)
-    {
-      std::string pNick, sNick;
-      superAA->ReadNicknames(pi, pNick, sNick);
-      bool playerChanged    = (pNick != s_prevNicks[pi][0]);
-      bool spectatorChanged = (sNick != s_prevNicks[pi][1]);
-
-      std::string slot = "P" + std::to_string(pi + 1);
-      bool promoted = spectatorChanged && playerChanged &&
-                      !s_prevNicks[pi][1].empty() && pNick == s_prevNicks[pi][1];
-
-      if (playerChanged) {
-        if (!s_prevNicks[pi][0].empty())
-          s_slotNotifications.push_back({slot + " " + s_prevNicks[pi][0] + " : disconnected", now + 7.0f});
-        if (promoted)
-          s_slotNotifications.push_back({slot + " " + pNick + " : connected (promoted)", now + 7.0f});
-        else if (!pNick.empty())
-          s_slotNotifications.push_back({slot + " " + pNick + " : connected", now + 7.0f});
-        s_prevNicks[pi][0] = pNick;
-      }
-      if (spectatorChanged) {
-        bool silentlyCleared = sNick.empty() && playerChanged && pNick.empty();
-        if (!promoted && !silentlyCleared) {
-          if (!sNick.empty())
-            s_slotNotifications.push_back({slot + " " + sNick + " : spectating", now + 7.0f});
-          else if (!s_prevNicks[pi][1].empty())
-            s_slotNotifications.push_back({slot + " " + s_prevNicks[pi][1] + " : left", now + 7.0f});
-        }
-        s_prevNicks[pi][1] = sNick;
-      }
-    }
-    s_slotNotifications.erase(
-      std::remove_if(s_slotNotifications.begin(), s_slotNotifications.end(),
-                     [now](const SlotNotification &n){ return now > n.expireTime; }),
-      s_slotNotifications.end());
-
-    bool hasNotify  = !s_slotNotifications.empty();
     bool hasBitrate = (now < s_bitrateNotify.expireTime);
-    bool needDraw   = s_debugPanelVisible || hasNotify || hasBitrate;
+    bool needDraw   = s_debugPanelVisible || hasBitrate;
     if (!needDraw) return;
 
     GLint prevFBO = 0;
@@ -1282,7 +1378,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     if (s_debugPanelVisible)
     {
       ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(260.0f, 310.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(260.0f, 60.0f), ImGuiCond_Always);
       ImGui::SetNextWindowBgAlpha(0.6f);
       ImGui::Begin("##debugpanel_stream", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -1294,47 +1390,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.8f, 1.0f), "UDP Video TX: %.2f Mbps", mbps);
       }
       ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Codec: %s", decoderCodec.c_str());
-      ImGui::Separator();
-      for (int pi = 0; pi < 4; ++pi)
-      {
-        std::string pNick, sNick;
-        superAA->ReadNicknames(pi, pNick, sNick);
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "P%d", pi + 1);
-        if (!pNick.empty())
-          ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "  Player   : %s", pNick.c_str());
-        else
-          ImGui::TextDisabled("  Player   : ---");
-        if (!sNick.empty())
-          ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "  Spectator: %s", sNick.c_str());
-        else
-          ImGui::TextDisabled("  Spectator: ---");
-        if (pi < 3) ImGui::Spacing();
-      }
-      ImGui::End();
-    }
-
-    // Connect/Disconnect notification overlay (bottom-left, 7s)
-    if (hasNotify)
-    {
-      float notifyH = s_slotNotifications.size() * 22.0f + 12.0f;
-      ImGui::SetNextWindowPos(ImVec2(10.0f, (float)h - notifyH - 10.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(320.0f, notifyH), ImGuiCond_Always);
-      ImGui::SetNextWindowBgAlpha(0.55f);
-      ImGui::Begin("##notify_overlay", nullptr,
-                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs |
-                   ImGuiWindowFlags_NoSavedSettings);
-      for (const auto &n : s_slotNotifications)
-      {
-        float remain = n.expireTime - now;
-        float alpha  = remain < 1.5f ? remain / 1.5f : 1.0f;
-        bool connected  = n.message.find(": connected")  != std::string::npos;
-        bool spectating = n.message.find(": spectating") != std::string::npos;
-        ImVec4 col = connected  ? ImVec4(0.0f, 1.0f, 1.0f, alpha) :
-                     spectating ? ImVec4(1.0f, 0.8f, 0.2f, alpha) :
-                                  ImVec4(0.7f, 0.7f, 0.7f, alpha);
-        ImGui::TextColored(col, "%s", n.message.c_str());
-      }
       ImGui::End();
     }
 
@@ -1362,96 +1417,74 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prevFBO);
   });
 
-  int handshakePort = s_runtime_config["HandshakePort"].ValueAs<int>();
-
-  int audioPort = s_runtime_config["AudioPort"].ValueAs<int>();
+  int sessionPort = s_runtime_config["HandshakePort"].ValueAs<int>();
+  int inputPort   = s_runtime_config["XinputPort"].ValueAsDefault<int>(sessionPort - 1);
 
   streamingEnabled = superAA->IsStreamingEnabled();
   printf("[Streaming] %s (codec: %s)\n", streamingEnabled ? "true" : "false", decoderCodec.c_str());
-  // Moved after superAA creation
+  // P4 (2026-11-16): one SessionServer per server = one slot (design 4.2). Replaces the old HandshakeServer
+  // (text protocol, spectators, LinkPlay=0 two-slot mode, 1-min idle kick).
   if (streamingEnabled)
   {
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
-    int handshakePortP2 = handshakePort + 4; // Handshake port for P2 (usually 5005)
-
-        // Helper: extract just the IP part from "ip:nick" format
-        auto ExtractIP = [](const std::string &ipNick) -> std::string {
-            auto colon = ipNick.find(':');
-            return (colon != std::string::npos) ? ipNick.substr(0, colon) : ipNick;
-        };
-
-        if (linkplay == 0)
+    SessionServer::Callbacks cb;
+    cb.onConnected = [superAA, linkplay](const std::string &name, const std::string &ip) {
+      superAA->GetEncoder().RequestKeyframe();   // the new client starts with a keyframe
+#ifdef SUPERMODEL_WIN32
+      s_remoteSlotMgr.SetSlotClientCount(linkplay, 1);
+      s_remoteSlotMgr.SetSlotPlayer(linkplay, name);
+      s_remoteSlotMgr.SetSlotOccupied();
+#endif
+    };
+    cb.onDisconnected = [superAA, linkplay](const char *why) {
+      superAA->GetEncoder().SetDestEndpoints({});
+      SetAudioDestEndpoints({});
+#ifdef SUPERMODEL_WIN32
+      s_remoteSlotMgr.SetSlotClientCount(linkplay, 0);
+      s_remoteSlotMgr.SetSlotPlayer(linkplay, "");
+      s_remoteSlotMgr.SetSlotAvailable();
+#endif
+    };
+    cb.onKeyframeRequest = [superAA]() {
+      superAA->GetEncoder().RequestKeyframe();
+    };
+    cb.onMetaKeys = [](uint8_t risen) {
+      // Bitrate ceiling up/down from the client's arrow keys (SV-15, same as the old XInput meta keys)
+      if (risen & StreamProto::META_BITRATE_UP)
+      {
+        int newCeil = std::min(s_currentAvgBitrate + s_bitrateStep, s_bitrateMax);
+        if (newCeil != s_currentAvgBitrate)
+        {
+          s_currentAvgBitrate = newCeil;
+          printf("[Bitrate] Ceiling UP -> %d bps\n", s_currentAvgBitrate);
+          PushBitrateNotify(s_currentAvgBitrate, "manual UP");
+        }
+      }
+      if (risen & StreamProto::META_BITRATE_DOWN)
+      {
+        int newCeil = std::max(s_currentAvgBitrate - s_bitrateStep, s_bitrateMin);
+        if (newCeil != s_currentAvgBitrate)
+        {
+          s_currentAvgBitrate = newCeil;
+          printf("[Bitrate] Ceiling DOWN -> %d bps\n", s_currentAvgBitrate);
+          PushBitrateNotify(s_currentAvgBitrate, "manual DOWN");
+        }
+      }
+      // META_ALT_D (host debug panel) is reserved; whether to carry it over is still open (design D-6).
+    };
+    // SV-18 (11/16): room password from the launcher (StreamPassword = DPAPI:..., blank = public)
     {
-        printf("[Main] LinkPlay=0 -> Launching BOTH P1 (port %d) and P2 (port %d) handshake servers\n", handshakePort, handshakePortP2);
-        g_handshake.Start(handshakePort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                          [superAA, ExtractIP](const std::vector<std::string> &clientIPs) {
-#ifdef SUPERMODEL_WIN32
-                              s_remoteSlotMgr.SetSlotClientCount(1, (int)clientIPs.size());
-                              std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
-                              std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              superAA->WriteNicknames(playerNick, spectatorNick);
-                              s_remoteSlotMgr.SetSlotPlayer(1, playerNick);
-                              s_remoteSlotMgr.SetSlotSpectator(1, spectatorNick);
-#endif
-                              // クライアントの受信ポートはHELLOホールパンチで動的学習するため、
-                              // 全員切断時のみclearし、接続時はHELLO学習に任せる
-                              size_t totalClients = clientIPs.size() + g_handshakeP2.GetClientIPs().size();
-                              if (totalClients == 0)
-                              {
-                                  superAA->GetEncoder().SetDestEndpoints({});
-                                  SetAudioDestEndpoints({});
-                              }
-#ifdef SUPERMODEL_WIN32
-                              if (totalClients >= 3) s_remoteSlotMgr.SetSlotOccupied();
-                              else s_remoteSlotMgr.SetSlotAvailable();
-#endif
-                          });
-        g_handshakeP2.Start(handshakePortP2, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                            [superAA, ExtractIP](const std::vector<std::string> &clientIPs) {
-#ifdef SUPERMODEL_WIN32
-                                s_remoteSlotMgr.SetSlotClientCount(2, (int)clientIPs.size());
-                                std::string p2player    = clientIPs.size() >= 1 ? g_handshakeP2.GetDiscordNick(clientIPs[0]) : "";
-                                std::string p2spectator = clientIPs.size() >= 2 ? g_handshakeP2.GetDiscordNick(clientIPs[1]) : "";
-                                superAA->WriteNicknames(p2player, p2spectator);
-                                s_remoteSlotMgr.SetSlotPlayer(2, p2player);
-                                s_remoteSlotMgr.SetSlotSpectator(2, p2spectator);
-#endif
-                                size_t totalClients = g_handshake.GetClientIPs().size() + clientIPs.size();
-                                if (totalClients == 0)
-                                {
-                                    superAA->GetEncoder().SetDestEndpoints({});
-                                    SetAudioDestEndpoints({});
-                                }
-#ifdef SUPERMODEL_WIN32
-                                if (totalClients >= 3) s_remoteSlotMgr.SetSlotOccupied();
-                                else s_remoteSlotMgr.SetSlotAvailable();
-#endif
-                            });
+      bool unreadable = false;
+      std::string pw = RoomPassword::FromIni(s_runtime_config["StreamPassword"].ValueAsDefault<std::string>(""), &unreadable);
+      if (unreadable)
+        printf("[Session] StreamPassword cannot be decrypted (another Windows user / PC?) -> nobody can join. Set it again in the launcher.\n");
+      else if (!pw.empty())
+        printf("[Session] Room password is set (players must enter it)\n");
+      s_session.SetPassword(pw);
     }
-    else
-    {
-        printf("[Main] LinkPlay=%d -> Launching single handshake server on port %d\n", linkplay, handshakePort);
-        g_handshake.Start(handshakePort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                          [linkplay, superAA, videoPort, audioPort, ExtractIP](const std::vector<std::string> &clientIPs) {
-#ifdef SUPERMODEL_WIN32
-                              s_remoteSlotMgr.SetSlotClientCount(linkplay, (int)clientIPs.size());
-                              std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
-                              std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              superAA->WriteNicknames(playerNick, spectatorNick);
-                              s_remoteSlotMgr.SetSlotPlayer(linkplay, playerNick);
-                              s_remoteSlotMgr.SetSlotSpectator(linkplay, spectatorNick);
-#endif
-                              if (clientIPs.empty())
-                              {
-                                  superAA->GetEncoder().SetDestEndpoints({});
-                                  SetAudioDestEndpoints({});
-                              }
-#ifdef SUPERMODEL_WIN32
-                              if (!clientIPs.empty()) s_remoteSlotMgr.SetSlotOccupied();
-                              else s_remoteSlotMgr.SetSlotAvailable();
-#endif
-                          });
-    }
+    if (!s_session.Start(linkplay, sessionPort, inputPort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(),
+                         decoderCodec, cb))
+      printf("[Session] Failed to start the session server (ports %d / %d)\n", sessionPort, inputPort);
   }
 
   CRender2D *Render2D = new CRender2D(s_runtime_config);
@@ -1525,8 +1558,8 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
             PushBitrateNotify(currentAvg, "auto clamp");
         }
 
-        uint32_t statusTime = g_handshake.GetLastStatusTime();
-        float lossRate = g_handshake.GetLatestLossRate();
+        uint32_t statusTime = s_session.GetLastStatusTime();
+        float lossRate = s_session.GetLatestLossRate();
 
         bool hasRecentStatus = (statusTime != 0 && (now - statusTime < 5000));
 
@@ -1697,10 +1730,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       else if (Inputs->uiOverlay->Pressed())
       {
         superAA->ToggleOverlay();
-      }
-      else if (Inputs->uiToggleMultiView->Pressed())
-      {
-        superAA->ToggleMultiView();
       }
       else if (Inputs->uiReset->Pressed())
       {
@@ -2005,6 +2034,9 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   // Save NVRAM
   SaveNVRAM(Model3);
 
+  // Stop the streaming session before the encoder (superAA) and the audio sender go away
+  s_session.Stop();
+
   // Close audio
   CloseAudio();
 
@@ -2037,6 +2069,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   // Quit with an error
 QuitError:
+  s_session.Stop();
   delete Render2D;
   delete Render3D;
   delete superAA;
@@ -2218,7 +2251,7 @@ Util::Config::Node DefaultConfig()
   config.Set("NoWhiteFlash", false, "Video");
   config.Set("FlipStereo", false, "Sound");
 #ifdef SUPERMODEL_WIN32
-  config.Set<std::string>("InputSystem", "dinput", "Core", "", "", {"sdl", "sdlgamepad", "dinput", "xinput", "rawinput"});
+  config.Set<std::string>("InputSystem", "dinput", "Core", "", "", {"sdl", "sdlgamepad", "dinput", "xinput", "rawinput", "none"});
   // DirectInput ForceFeedback
   config.Set("DirectInputConstForceLeftMax", 100, "ForceFeedback", 0, 100);
   config.Set("DirectInputConstForceRightMax", 100, "ForceFeedback", 0, 100);
@@ -2259,6 +2292,16 @@ Util::Config::Node DefaultConfig()
   config.Set("VideoPort", 5002, "Network");
   config.Set("AudioPort", 5003, "Network");
   config.Set("XInputPort", 55000, "Network");
+  config.Set("Spikeout8Link", false, "Network");
+  config.Set("Spikeout8Players", false, "Network");
+  config.Set<std::string>("TestInputScript", "", "Misc", "", "");
+  config.Set("TraceEnemyCreate", false, "Misc");
+  config.Set<std::string>("WatchWrite", "", "Misc", "", "");
+  config.Set<std::string>("TraceCall", "", "Misc", "", "");
+  config.Set("TaskArrayLog", false, "Misc");
+  config.Set("StateTrace", false, "Misc");
+  config.Set<std::string>("ScreenshotFrames", "", "Misc", "", "");
+
 #ifdef SUPERMODEL_WIN32
   config.Set<std::string>("Outputs", "none", "Misc", "", "", {"none", "win", "net"});
 #else
@@ -2998,6 +3041,52 @@ int main(int argc, char **argv)
   // Before command line is parsed, console logging only
   SetLogger(std::make_shared<CConsoleErrorLogger>());
 
+  // 11/16: "-build-version" prints this build's number (Stream/Version.h) for the launcher's version check.
+  for (int i = 1; i < argc; i++)
+  {
+    if (strcmp(argv[i], "-build-version") == 0)
+    {
+      printf("BUILD=%lld\n", StreamVersion::kBuild);
+      fflush(stdout);
+      return 0;
+    }
+  }
+
+  // Streaming (P5): test aid only, not the user entry (that is GUI -> spikeofe -> lobby, CL-02):
+  //   -stream-test-connect=HOST:SLOT[:NAME]  connects the stream client directly, without the GUI.
+  for (int i = 1; i < argc; i++)
+  {
+    const char *opt = "-stream-test-connect=";
+    if (strncmp(argv[i], opt, strlen(opt)) == 0)
+    {
+      std::string spec = argv[i] + strlen(opt);
+      StreamConnectRequest req;
+      req.requested = true;
+      req.name = "tester";
+      size_t c1 = spec.find(':');
+      req.host = spec.substr(0, c1);
+      if (c1 != std::string::npos)
+      {
+        size_t c2 = spec.find(':', c1 + 1);
+        req.slot = atoi(spec.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1).c_str());
+        if (c2 != std::string::npos)
+        {
+          // host:slot:name[:password] (SV-18 test)
+          size_t c3 = spec.find(':', c2 + 1);
+          req.name = spec.substr(c2 + 1, c3 == std::string::npos ? std::string::npos : c3 - c2 - 1);
+          if (c3 != std::string::npos)
+            req.password = spec.substr(c3 + 1);
+        }
+      }
+      if (req.slot < 1 || req.slot > 8)
+        req.slot = 1;
+      std::string message;
+      RunStreamClient(req, message);
+      printf("[Client] test connect finished: %s\n", message.c_str());
+      return 0;
+    }
+  }
+
   // Load config and parse command line
   auto cmd_line = ParseCommandLine(argc, argv);
   if (cmd_line.error)
@@ -3047,26 +3136,61 @@ int main(int argc, char **argv)
       RelaunchHidden(argc, argv);
     }
 
-    // --- Before GUI display: If streaming=true, initialize ViGEm + create virtual controller ---
-#ifdef SUPERMODEL_WIN32
+#ifdef _WIN32
+    // 11/16 (owner): only one client per PC. A start without a ROM (settings GUI -> lobby -> stream client) takes a
+    // named mutex; servers started by the launcher with a ROM never get here, so they stay multi-instance.
+    // Checked after the HideCMD relaunch (the first process exits there). No setting lifts it (distribution build:
+    // a player must not take several slots).
     {
-      bool streaming = fConfig2["Streaming"].ValueAsDefault<bool>(false);
-      if (streaming)
+      HANDLE clientMutex = CreateMutexA(nullptr, FALSE, "Local\\SupermodelPonMi_StreamClient");
+      if (clientMutex && GetLastError() == ERROR_ALREADY_EXISTS)
       {
-        printf("[Main] Streaming=true: initializing ViGEm before GUI...\n");
-        s_remoteSlotMgr.InitViGEm();
-        s_remoteSlotMgr.AddVirtualController();
+        HWND other = FindWindowA(nullptr, "Supermodel-PonMi-Edition");
+        if (other)
+        {
+          ShowWindow(other, SW_RESTORE);
+          SetForegroundWindow(other);
+        }
+        MessageBoxA(nullptr, "Supermodel (client / lobby) is already running on this PC.\nOnly one client can run at a time.",
+                    "Supermodel", MB_OK | MB_ICONINFORMATION);
+        CloseHandle(clientMutex);
+        return 0;
       }
+      // the handle stays open while this process runs (Windows closes it on exit)
     }
-    cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2, &s_remoteSlotMgr);
-#else
-    cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2);
 #endif
+
+    // Streaming (P5): GUI -> (spikeofe) lobby -> stream client -> back to the lobby, until a ROM is
+    // launched (normal play, or "skip" in the lobby) or the GUI is closed.
+    for (;;)
+    {
+      cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2);
+      StreamConnectRequest &request = Lobby::Request();
+      if (!request.requested)
+        break;
+      StreamConnectRequest req = request;
+      request.requested = false;
+      std::string message;
+      uint8_t rejectReason = 0;
+      if (RunStreamClient(req, message, &rejectReason) == StreamClientExit::QuitApp)
+        return 0;
+      Lobby::Open(message);   // show the lobby again (with why the session ended)
+      if (rejectReason == StreamProto::R_PASSWORD_REQUIRED || rejectReason == StreamProto::R_PASSWORD_WRONG)
+        Lobby::AskPassword(req, rejectReason == StreamProto::R_PASSWORD_WRONG);   // SV-18: the password box for that slot
+    }
 
     if (cmd_line.rom_files.empty())
     {
       return 0;
     }
+  }
+
+  // Several instances started from one folder with -ini=Supermodel_01.ini .. _08.ini (launcher, 11/16):
+  // give each its own log (Supermodel_01.log ...), like the NVRAM, unless -log-output was given.
+  if (!s_nvramSuffix.empty() && cmd_line.config["LogOutput"].ValueAs<std::string>() == s_logFilePath)
+  {
+    std::string perInstanceLog = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Log) << "Supermodel" << s_nvramSuffix << ".log";
+    cmd_line.config.Set("LogOutput", perInstanceLog);
   }
 
   // Create logger as specified by command line
@@ -3187,6 +3311,25 @@ int main(int argc, char **argv)
   std::shared_ptr<Debugger::CSupermodelDebugger> Debugger;
 #endif // SUPERMODEL_DEBUGGER
   std::string selectedInputSystem = s_runtime_config["InputSystem"].ValueAs<std::string>();
+  for (char &c : selectedInputSystem)   // "NONE" (streaming server, P3) is usually written in capitals
+    c = (char) tolower((unsigned char) c);
+
+  // P4 (2026-11-16, design 3.1): a streaming server's ports follow from its slot (LinkPlay 1..8):
+  // base = 55000 + (slot - 1) * 4 -> input, session, video, audio. Other LinkPlay values (e.g. 9 for tests)
+  // keep the ports written in the ini.
+  {
+    int linkplay = (int) s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
+    if (s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && linkplay >= 1 && linkplay <= 8)
+    {
+      int base = StreamProto::SlotBasePort(linkplay);
+      s_runtime_config.Set("XinputPort", base + StreamProto::PORT_INPUT);
+      s_runtime_config.Set("HandshakePort", base + StreamProto::PORT_SESSION);
+      s_runtime_config.Set("VideoPort", base + StreamProto::PORT_VIDEO);
+      s_runtime_config.Set("AudioPort", base + StreamProto::PORT_AUDIO);
+      printf("[Streaming] Slot %d: ports %d (input) %d (session) %d (video) %d (audio)\n", linkplay,
+             base + StreamProto::PORT_INPUT, base + StreamProto::PORT_SESSION, base + StreamProto::PORT_VIDEO, base + StreamProto::PORT_AUDIO);
+    }
+  }
 
   aaValue = s_runtime_config["Supersampling"].ValueAs<int>();
   CRTcolors = (CRTcolor)s_runtime_config["CRTcolors"].ValueAs<int>();
@@ -3205,20 +3348,15 @@ int main(int argc, char **argv)
   {
     bool streaming = s_runtime_config["Streaming"].ValueAsDefault<bool>(false);
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
-    bool shouldPostFirebase = (linkplay >= 0 && linkplay <= 4) && streaming;
+    bool shouldPostFirebase = (linkplay >= 0 && linkplay <= 8) && streaming;   // P6: slots 1..8 (0 = old two-slot mode)
 
     if (shouldPostFirebase)
     {
-        // 1. ストリーミングが有効な場合のみ、仮想コントローラの準備とUDP待機を開始
-        printf("[Main] Launch: streaming=true linkplay=%d -> StartListening\n", linkplay);
-        if (!s_remoteSlotMgr.IsViGEmReady())
-        {
-            s_remoteSlotMgr.InitViGEm();
-            s_remoteSlotMgr.AddVirtualController();
-        }
-        s_remoteSlotMgr.StartListening(linkplay);
+        // P1 (11/16): the ViGEm virtual pad and the XInput listener were removed (remote input: P3/P4).
+        // Only the UPnP port opening of the old StartListening() is kept.
+        s_remoteSlotMgr.StartStreaming(linkplay);
 
-        // 2. メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
+        // メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
         std::string romPath = cmd_line.rom_files[0];
         size_t sep = romPath.find_last_of("/\\");
         if (sep != std::string::npos)
@@ -3227,6 +3365,8 @@ int main(int argc, char **argv)
         if (dot != std::string::npos)
             romPath = romPath.substr(0, dot);
         std::string serverName = s_runtime_config["ServerName"].ValueAsDefault<std::string>("");
+        // SV-18: the lobby shows a lock (only the fact, never the password)
+        s_remoteSlotMgr.SetLocked(!s_runtime_config["StreamPassword"].ValueAsDefault<std::string>("").empty());
         s_remoteSlotMgr.StartFirebaseAsync(game.name, serverName);
     }
   }
@@ -3253,6 +3393,10 @@ int main(int argc, char **argv)
     InputSystem = std::shared_ptr<CInputSystem>(new CSDLInputSystem(s_runtime_config, false));
   else if (selectedInputSystem == "sdlgamepad")
     InputSystem = std::shared_ptr<CInputSystem>(new CSDLInputSystem(s_runtime_config, true));
+  else if (selectedInputSystem == "none")
+    // Streaming server (P3, requirements IN-06/IN-07): ignore this PC's keyboard and pads (except ESCAPE);
+    // the client's input arrives through CRemoteInputSystem::SetRemoteState().
+    InputSystem = std::shared_ptr<CInputSystem>(new CRemoteInputSystem(s_runtime_config));
 #ifdef SUPERMODEL_WIN32
   else if (selectedInputSystem == "dinput")
     InputSystem = std::shared_ptr<CInputSystem>(new CDirectInputSystem(s_runtime_config, s_window, false, false));
@@ -3354,7 +3498,7 @@ int main(int argc, char **argv)
 
 Exit:
 #ifdef SUPERMODEL_WIN32
-  // Shutdown RemoteSlotManager (stops ViGEm & UDP reception)
+  // Shutdown RemoteSlotManager (closes UPnP ports, stops the Firebase heartbeat)
   s_remoteSlotMgr.Shutdown();
 #endif
   delete Inputs;

@@ -320,18 +320,6 @@ SuperAA::~SuperAA()
         delete m_encoder;
         m_encoder = nullptr;
     }
-
-    if (m_shmManager)
-    {
-        m_shmManager->Cleanup();
-        delete m_shmManager;
-        m_shmManager = nullptr;
-    }
-    m_shmFbo.Destroy();
-    for (int i = 0; i < 4; ++i)
-    {
-        if (m_opponentTexs[i]) { glDeleteTextures(1, &m_opponentTexs[i]); m_opponentTexs[i] = 0; }
-    }
 }
 
 // =========================
@@ -369,22 +357,8 @@ void SuperAA::Init(int width, int height, int port, bool streamingEnabled, const
             }
         }
 
-        if (!initSuccess && (encoderType == "AMF" || encoderType == "AUTO"))
-        {
-            printf("[Streaming] Attempting to initialize AMD AMF...\n");
-            m_encoder = new AmfEncoder();
-            if (m_encoder->Init(width, height, 60, port, codec, [](const uint8_t *data, size_t size, bool isKeyframe) {}))
-            {
-                initSuccess = true;
-                chosenEncoder = "AMF";
-            }
-            else
-            {
-                delete m_encoder;
-                m_encoder = nullptr;
-                printf("[Streaming] AMD AMF initialization failed.\n");
-            }
-        }
+        // 11/16: the AMD AMF encoder was removed. AUTO = NVENC (NVIDIA driver), else FFMPEG (x264/x265 on the CPU,
+        // any GPU: the frame is read back with glGetTexImage).
 
         if (!initSuccess && (encoderType == "FFMPEG" || encoderType == "AUTO"))
         {
@@ -411,48 +385,13 @@ void SuperAA::Init(int width, int height, int port, bool streamingEnabled, const
         else
         {
             m_streamingEnabled = false;
-            printf("[Streaming] Failed to initialize any encoder (NVENC/AMF/FFmpeg). Streaming disabled.\n");
+            printf("[Streaming] Failed to initialize any encoder (NVENC/FFmpeg). Streaming disabled.\n");
         }
     }
     else
     {
         m_streamingEnabled = false;
-        printf("[Streaming] NVENC/AMF/RTP disabled\n");
-    }
-
-    // --- Shared memory multi-view initialization ---
-    {
-        extern Util::Config::Node s_runtime_config;
-        int videoPort = s_runtime_config["VideoPort"].ValueAsDefault<int>(55002);
-        m_playerIndex = (videoPort - 55002) / 4;
-        if (m_playerIndex < 0 || m_playerIndex >= 4)
-            m_playerIndex = 0;
-
-        m_shmW = width;
-        m_shmH = height;
-        m_shmFbo.Destroy();
-        m_shmFbo.Create(m_shmW, m_shmH);
-
-        if (m_shmManager)
-        {
-            m_shmManager->Cleanup();
-            delete m_shmManager;
-            m_shmManager = nullptr;
-        }
-        m_shmManager = new SharedMemManager(m_playerIndex, m_shmW, m_shmH);
-        if (m_shmManager->Init())
-        {
-            m_ownPixelBuffer.resize(m_shmW * m_shmH * 4);
-            for (int i = 0; i < 4; ++i)
-                m_opponentPixelBuffers[i].resize(m_shmW * m_shmH * 4, 0);
-            printf("[LinkPlay] Shared memory initialized for P%d\n", m_playerIndex + 1);
-        }
-        else
-        {
-            delete m_shmManager;
-            m_shmManager = nullptr;
-            printf("[LinkPlay] Shared memory initialization failed!\n");
-        }
+        printf("[Streaming] NVENC/FFmpeg/RTP disabled\n");
     }
 }
 // m_fbo.Destroy();
@@ -541,123 +480,11 @@ void SuperAA::Draw()
         glBindVertexArray(0);
         m_shader.DisableShader();
 
-        // --- Shared memory multi-view processing ---
-        if (m_shmManager)
-        {
-            // Downscale fbo2 → m_shmFbo
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo2.GetFBOID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_shmFbo.GetFBOID());
-            glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_shmW, m_shmH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-            // Read pixels and write to local shared memory
-            glBindTexture(GL_TEXTURE_2D, m_shmFbo.GetTextureID());
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, m_ownPixelBuffer.data());
-            glBindTexture(GL_TEXTURE_2D, 0);
-            m_shmManager->WriteLocalFrame(m_ownPixelBuffer.data());
-
-            if (m_multiViewEnabled)
-            {
-                // Read opponent frames
-                bool hasNewOpponentFrames[4] = {false, false, false, false};
-                for (int i = 0; i < 4; ++i)
-                {
-                    if (i != m_playerIndex)
-                        hasNewOpponentFrames[i] = m_shmManager->ReadRemoteFrame(i, m_opponentPixelBuffers[i].data());
-                }
-
-                // Create or update opponent textures
-                for (int i = 0; i < 4; ++i)
-                {
-                    if (i == m_playerIndex) continue;
-                    if (m_opponentTexs[i] == 0)
-                    {
-                        glGenTextures(1, &m_opponentTexs[i]);
-                        glBindTexture(GL_TEXTURE_2D, m_opponentTexs[i]);
-                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_shmW, m_shmH, 0, GL_RGBA, GL_UNSIGNED_BYTE, m_opponentPixelBuffers[i].data());
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                    }
-                    else if (hasNewOpponentFrames[i])
-                    {
-                        glBindTexture(GL_TEXTURE_2D, m_opponentTexs[i]);
-                        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_shmW, m_shmH, GL_RGBA, GL_UNSIGNED_BYTE, m_opponentPixelBuffers[i].data());
-                    }
-                }
-
-                // Render 4 quadrants to default FBO
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                glClear(GL_COLOR_BUFFER_BIT);
-
-                int maxQuadW = m_width / 2;
-                int maxQuadH = m_height / 2;
-                int srcW = (m_shmW > 0) ? m_shmW : 960;
-                int srcH = (m_shmH > 0) ? m_shmH : 540;
-                int quadW = maxQuadW;
-                int quadH = (quadW * srcH) / srcW;
-                if (quadH > maxQuadH) { quadH = maxQuadH; quadW = (quadH * srcW) / srcH; }
-                int offsetX = (maxQuadW - quadW) / 2;
-                int offsetY = (maxQuadH - quadH) / 2;
-
-                auto RenderQuadrant = [this, quadW, quadH](int x, int y, int playerIdx) {
-                    glViewport(x, y, quadW, quadH);
-                    if (playerIdx == m_playerIndex)
-                    {
-                        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo2.GetFBOID());
-                        glBlitFramebuffer(0, 0, m_width, m_height, x, y, x + quadW, y + quadH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                    }
-                    else
-                    {
-                        GLuint tex = m_opponentTexs[playerIdx];
-                        if (tex != 0)
-                        {
-                            m_overlayShader.EnableShader();
-                            glActiveTexture(GL_TEXTURE0);
-                            glBindTexture(GL_TEXTURE_2D, tex);
-                            glUniform1i(m_overlayShader.uniformLocMap["uOverlayTex"], 0);
-                            glBindVertexArray(m_vao);
-                            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                            m_overlayShader.DisableShader();
-                        }
-                    }
-                };
-
-                // P1: Top-Left, P2: Top-Right, P3: Bottom-Right, P4: Bottom-Left
-                RenderQuadrant(offsetX,            maxQuadH + offsetY, 0);
-                RenderQuadrant(maxQuadW + offsetX, maxQuadH + offsetY, 1);
-                RenderQuadrant(maxQuadW + offsetX, offsetY,            2);
-                RenderQuadrant(offsetX,            offsetY,            3);
-
-                glBindVertexArray(0);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-                // Copy result back to fbo2 for encoder
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbo2.GetFBOID());
-                glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            }
-            else
-            {
-                // Single view: normal blit
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo2.GetFBOID());
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            }
-        }
-        else
-        {
-            // No shared memory: normal blit
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo2.GetFBOID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        }
+        // Show the frame in the window (P1, 11/16: the 4-screen multi-view and its shared memory were removed)
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo2.GetFBOID());
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     if (m_overlayTex != 0 && m_wideScreen && m_overlay)
@@ -1005,28 +832,4 @@ void SuperAA::UpdateFrameRingBuffer()
     // Encode
     if (m_streamingEnabled && m_encoder)
         m_encoder->EncodeFrame(m_fbo2.GetTextureID());
-}
-
-void SuperAA::WriteNicknames(const std::string& player, const std::string& spectator)
-{
-    if (m_shmManager) m_shmManager->WriteNicknames(player, spectator);
-}
-
-bool SuperAA::ReadNicknames(int playerIdx, std::string& outPlayer, std::string& outSpectator) const
-{
-    if (!m_shmManager) return false;
-    return m_shmManager->ReadNicknames(playerIdx, outPlayer, outSpectator);
-}
-
-void SuperAA::ToggleMultiView()
-{
-    if (!m_multiViewEnabled && m_shmManager && !m_shmManager->HasAnyRemotePlayer())
-    {
-        printf("[LinkPlay] MultiView request ignored — no remote players in shared memory.\n");
-        return;
-    }
-    m_multiViewEnabled = !m_multiViewEnabled;
-    printf("[LinkPlay] MultiView toggled to %s\n", m_multiViewEnabled ? "ON" : "OFF");
-    if (m_multiViewEnabled && m_shmManager)
-        m_shmManager->ResetConnections();
 }

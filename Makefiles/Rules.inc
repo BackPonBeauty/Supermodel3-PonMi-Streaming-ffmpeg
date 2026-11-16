@@ -120,13 +120,18 @@ SRC_FILES = \
 	Src/Graphics/FBO.cpp \
 	Src/Graphics/Render2D.cpp \
 	Src/Graphics/SuperAA.cpp \
-	Src/Graphics/SharedMemManager.cpp \
 	Src/Video/NvencEncoder.cpp \
-	Src/Video/AmfEncoder.cpp \
 	Src/Video/FfmpegEncoder.cpp \
 	Src/Network/RtpSender.cpp \
     Src/Network/UdpAudioSender.cpp \
-	Src/Network/HandshakeServer.cpp \
+	Src/Stream/SessionServer.cpp \
+	Src/Stream/Lobby.cpp \
+	Src/Stream/StreamClient.cpp \
+	Src/Stream/Secrets.cpp \
+	Src/Stream/DiscordNotifier.cpp \
+	Src/Stream/DiscordAuth.cpp \
+	Src/Stream/Http.cpp \
+	Src/Stream/Ticket.cpp \
 	Src/Model3/TileGen.cpp \
 	Src/Model3/Model3.cpp \
 	Src/CPU/PowerPC/ppc.cpp \
@@ -165,6 +170,7 @@ SRC_FILES = \
 	Src/Inputs/ReplayRecorder.cpp \
 	Src/Inputs/ReplayPlayer.cpp \
 	Src/OSD/SDL/SDLInputSystem.cpp \
+	Src/Stream/RemoteInputSystem.cpp \
 	Src/OSD/SDL/Crosshair.cpp \
 	Src/OSD/Outputs.cpp \
 	Src/Sound/MPEG/MpegAudio.cpp \

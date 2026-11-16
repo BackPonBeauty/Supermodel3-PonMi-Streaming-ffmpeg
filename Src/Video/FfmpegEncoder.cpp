@@ -55,7 +55,7 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
     m_codecContext->time_base = { 1, fps };
     m_codecContext->framerate = { fps, 1 };
     m_codecContext->pix_fmt = AV_PIX_FMT_YUV420P;
-    m_codecContext->gop_size = 60;
+    m_codecContext->gop_size = fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
     m_codecContext->max_b_frames = 0;
     
     // Default bitrate 2.5 Mbps
@@ -68,7 +68,12 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
     {
         av_opt_set(m_codecContext->priv_data, "preset", "ultrafast", 0);
         av_opt_set(m_codecContext->priv_data, "tune", "zerolatency", 0);
+        // A frame marked as a keyframe (RequestKeyframe) becomes a real IDR, not just an I-frame
+        av_opt_set(m_codecContext->priv_data, "forced-idr", "1", 0);
     }
+    // x265 makes its keyframes CRA by default (open GOP); closed GOP makes them IDR like x264 / NVENC
+    if (strcmp(m_ffmpegCodec->name, "libx265") == 0)
+        av_opt_set(m_codecContext->priv_data, "x265-params", "open-gop=0", 0);
 
     // Open codec
     if (avcodec_open2(m_codecContext, m_ffmpegCodec, nullptr) < 0)
@@ -147,6 +152,18 @@ void FfmpegEncoder::EncodeFrame(unsigned int glTextureID)
     sws_scale(m_swsContext, srcData, srcLinesize, 0, m_height, m_dstFrame->data, m_dstFrame->linesize);
 
     m_dstFrame->pts = s_frameCount++;
+
+    // A client asked for a keyframe (RequestKeyframe)
+    if (m_keyframeRequested.exchange(false))
+    {
+        m_dstFrame->pict_type = AV_PICTURE_TYPE_I;
+        m_dstFrame->flags |= AV_FRAME_FLAG_KEY;
+    }
+    else
+    {
+        m_dstFrame->pict_type = AV_PICTURE_TYPE_NONE;
+        m_dstFrame->flags &= ~AV_FRAME_FLAG_KEY;
+    }
 
     // 3. Send frame to encoder
     int ret = avcodec_send_frame(m_codecContext, m_dstFrame);

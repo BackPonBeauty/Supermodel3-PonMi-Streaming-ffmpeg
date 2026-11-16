@@ -56,6 +56,15 @@
 #include "Util/BitCast.h"
 #include <cstring>
 #include <algorithm>
+#include <functional>
+#include <string>
+#include <vector>
+#include <zlib.h>
+// 11/17 (owner): the 8-player costume pictures are built into the exe (Scripts/gen_costume.ps1, not in git)
+#if __has_include("EmbeddedCostume.h")
+#include "EmbeddedCostume.h"
+#define HAVE_EMBEDDED_COSTUME 1
+#endif
 
 // Macros that divide memory regions into pages and mark them as dirty when they are written to
 #define PAGE_WIDTH 12
@@ -86,6 +95,8 @@
 /******************************************************************************
  Save States
 ******************************************************************************/
+
+extern bool g_texGhost;   // defined below (Spikeout ghost texture pages)
 
 void CReal3D::SaveState(CBlockFile *SaveState)
 {
@@ -126,6 +137,14 @@ void CReal3D::SaveState(CBlockFile *SaveState)
 
   SaveState->Write(&polyUpdateBlockOffset, sizeof(polyUpdateBlockOffset));
   SaveState->Write(&highCullUpdateBlockOffset, sizeof(highCullUpdateBlockOffset));
+
+  // 11/14 Spikeout 8 players: the ghost texture pages (costumes of slots 4-7 etc., outside texture RAM) as a block of
+  // their own, so states without it still load.
+  if (g_texGhost && ghostRAM)
+  {
+    SaveState->NewBlock("Real3D Ghost", __FILE__);
+    SaveState->Write(ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+  }
 }
 
 void CReal3D::LoadState(CBlockFile *SaveState)
@@ -173,7 +192,20 @@ void CReal3D::LoadState(CBlockFile *SaveState)
 
   if (highCullUpdateBlockOffset == (uint32_t)-1) { m_highRamUpdateBlock = nullptr; }
   else                                           { m_highRamUpdateBlock = (UpdateBlock*)(cullingRAMLo + highCullUpdateBlockOffset); }
-  
+
+  // 11/14 ghost texture pages: from the state if it has them, else cleared (stale costumes of the old session would
+  // show otherwise); then the whole sheet (all 4 banks) is sent to the renderer again.
+  if (g_texGhost && ghostRAM)
+  {
+    if (Result::OKAY == SaveState->FindBlock("Real3D Ghost"))
+      SaveState->Read(ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+    else
+      memset(ghostRAM, 0, 2048 * 2048 * sizeof(uint16_t));
+    if (ghostRAMRO) memcpy(ghostRAMRO, ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+    ghostDirty = false;
+    Render3D->UploadTextures(0, 0, 0, 2048, 2048);
+  }
+
 }
 
 
@@ -384,6 +416,7 @@ uint32_t CReal3D::UpdateSnapshots(bool copyWhole)
   uint32_t cullHiCopied  = UpdateSnapshot(copyWhole, (uint8_t*)cullingRAMHi, (uint8_t*)cullingRAMHiRO, 0x100000, cullingRAMHiDirty);
   uint32_t polyCopied    = UpdateSnapshot(copyWhole, (uint8_t*)polyRAM,      (uint8_t*)polyRAMRO,      0x400000, polyRAMDirty);
   uint32_t textureCopied = UpdateSnapshot(copyWhole, (uint8_t*)textureRAM,   (uint8_t*)textureRAMRO,   0x800000, textureRAMDirty);
+  if (ghostRAM && ghostRAMRO && (ghostDirty || copyWhole)) { memcpy(ghostRAMRO, ghostRAM, 0x800000); ghostDirty = false; textureCopied += 0x800000; }
   //printf("Read3D copied - cullLo:%4uK, cullHi:%4uK, poly:%4uK, texture:%4uK\n", cullLoCopied / 1024, cullHiCopied / 1024, polyCopied / 1024, textureCopied / 1024);
   return cullLoCopied + cullHiCopied + polyCopied + textureCopied;
 }
@@ -418,6 +451,23 @@ void CReal3D::EndFrame(void)
 /******************************************************************************
  Texture Uploading and Decoding
 ******************************************************************************/
+
+bool g_texGhost = false;   // Spikeout 8 players + New3D: ghost texture pages on (set in Model3.cpp)
+
+void CReal3D::DumpRaw(FILE *f) const
+{
+  auto sec = [f](const char *name, const void *p, uint32_t len) {
+    char n[8] = {}; strncpy(n, name, 8); fwrite(n, 1, 8, f);
+    if (!p) len = 0;
+    fwrite(&len, 4, 1, f); if (len) fwrite(p, 1, len, f);
+  };
+  sec("CULLLO",   cullingRAMLo,   0x400000);
+  sec("CULLHI",   cullingRAMHi,   0x100000);
+  sec("POLY",     polyRAM,        0x400000);
+  sec("CULLLOro", cullingRAMLoRO, 0x400000);
+  sec("CULLHIro", cullingRAMHiRO, 0x100000);
+  sec("POLYro",   polyRAMRO,      0x400000);
+}
 
 // Mipmap coordinates for each reduction level (within a single 2048x1024 page)
 
@@ -463,6 +513,231 @@ static constexpr unsigned decode8x2[16] =
   15, 14
 };
 
+/******************************************************************************
+ Spikeout 8 players: new costume colours for slots 4-7 (11/14)
+
+ The game uploads a player's costume as 10 pieces of 128x128 (16-bit, mipmapped) to the slot's place in texture
+ RAM; slots 4-7 wrap round to the same 4 colours as 0-3. Here an upload whose header is one of a slot 4-7 piece
+ headers, and whose data is that piece of one of the 16 ROM costumes (character c, colour k), is replaced by the
+ same piece of a BMP made for colour 4+k (8p\costume\<c>_<name>_col<4+k>_<colour>.bmp, 640x256, laid out like the
+ dump). The ROM is not touched; only what is drawn changes (not link-synced data).
+******************************************************************************/
+
+bool g_costumeSwap = false;
+static uint32_t s_csHdr[8][10];                       // slot 0-7 piece headers (11/14 col8: was 4-7)
+static const uint8_t *s_csRam = nullptr;              // PPC RAM: the colour bytes fa_player +0xA0 + slot (11/14 col8)
+static const uint16_t *s_csOrig[4][4] = {};           // [character][colour] ROM costume data, texture-FIFO order
+static std::vector<uint16_t> s_csNew[4][4][10];       // [character][new colour - 4][piece], encoded like the FIFO
+static unsigned s_csHits = 0, s_csMiss = 0;
+static const unsigned CS_PIECE = 21840;               // 128x128 + mipmaps 64..4 in the ROM
+
+static void CsTileWalk(unsigned w, unsigned h, const std::function<void(unsigned idx, unsigned x, unsigned y)> &f)
+{
+  const unsigned tileX = (std::min)(8u, w), tileY = (std::min)(8u, h);
+  const unsigned *dec = (tileX == 8) ? decode8x8 : (tileX == 4) ? decode8x4 : decode8x2;
+  unsigned base = 0;
+  for (unsigned y = 0; y < h; y += tileY)
+    for (unsigned x = 0; x < w; x += tileX)
+    {
+      for (unsigned yy = 0; yy < tileY; yy++)
+        for (unsigned xx = 0; xx < tileX; xx++)
+          f(base + dec[yy * tileX + xx], x + xx, y + yy);
+      base += tileX * tileY;
+    }
+}
+
+// 11/17: the embedded costume archive, unpacked (deflate, raw): [1 byte name length][name][4 bytes length LE][data]...
+// Empty when the build had no Config/costume.
+static std::vector<uint8_t> CsUnpackEmbedded()
+{
+  std::vector<uint8_t> raw;
+#ifdef HAVE_EMBEDDED_COSTUME
+  if (EmbeddedCostume::kZLen > 1 && EmbeddedCostume::kRawLen > 0)
+  {
+    raw.resize(EmbeddedCostume::kRawLen);
+    z_stream zs = {};
+    if (inflateInit2(&zs, -15) == Z_OK)
+    {
+      zs.next_in = (Bytef *) EmbeddedCostume::kZ;
+      zs.avail_in = EmbeddedCostume::kZLen;
+      zs.next_out = raw.data();
+      zs.avail_out = (uInt) raw.size();
+      int r = inflate(&zs, Z_FINISH);
+      bool ok = r == Z_STREAM_END && zs.total_out == raw.size();
+      inflateEnd(&zs);
+      if (!ok) { ErrorLog("CostumeSwap: the built-in costume pictures could not be unpacked."); raw.clear(); }
+    }
+    else
+      raw.clear();
+  }
+#endif
+  return raw;
+}
+
+static bool CsFindEmbedded(const std::vector<uint8_t> &raw, const std::string &name, std::vector<uint8_t> &out)
+{
+  size_t p = 0;
+  while (p < raw.size())
+  {
+    const unsigned nl = raw[p];
+    if (p + 1 + nl + 4 > raw.size()) break;
+    const size_t q = p + 1 + nl;
+    const uint32_t len = raw[q] | raw[q + 1] << 8 | raw[q + 2] << 16 | (uint32_t) raw[q + 3] << 24;
+    const size_t d = q + 4;
+    if (d + len > raw.size()) break;
+    if (nl == name.size() && memcmp(&raw[p + 1], name.data(), nl) == 0) { out.assign(raw.begin() + d, raw.begin() + d + len); return true; }
+    p = d + len;
+  }
+  return false;
+}
+
+static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h);
+
+static bool CsLoadBmp(const std::string &path, std::vector<uint8_t> &rgb, int &w, int &h)
+{
+  FILE *f = fopen(path.c_str(), "rb");
+  if (!f) return false;
+  std::vector<uint8_t> d; uint8_t buf[65536]; size_t n;
+  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) d.insert(d.end(), buf, buf + n);
+  fclose(f);
+  return CsParseBmp(d, rgb, w, h);
+}
+
+static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h)
+{
+  if (d.size() < 54 || d[0] != 'B' || d[1] != 'M') return false;
+  uint32_t off = d[10] | d[11] << 8 | d[12] << 16 | (uint32_t) d[13] << 24;
+  int32_t bw = (int32_t) (d[18] | d[19] << 8 | d[20] << 16 | (uint32_t) d[21] << 24), bh = (int32_t) (d[22] | d[23] << 8 | d[24] << 16 | (uint32_t) d[25] << 24);
+  unsigned bpp = d[28] | d[29] << 8;
+  if ((bpp != 24 && bpp != 32) || bw <= 0 || bh == 0) return false;
+  bool topDown = bh < 0; if (topDown) bh = -bh;
+  unsigned bypp = bpp / 8, row = (bw * bypp + 3) & ~3u;
+  if (off + (size_t) row * bh > d.size()) return false;
+  w = bw; h = bh; rgb.assign((size_t) w * h * 3, 0);
+  for (int y = 0; y < h; y++)
+  {
+    const uint8_t *p = &d[off + (size_t) row * (topDown ? y : h - 1 - y)];
+    for (int x = 0; x < w; x++) { rgb[(y * w + x) * 3] = p[x * bypp + 2]; rgb[(y * w + x) * 3 + 1] = p[x * bypp + 1]; rgb[(y * w + x) * 3 + 2] = p[x * bypp]; }
+  }
+  return true;
+}
+
+// hdrSlot0: slot 0's 10 piece headers (the BMP layout); hdr: slots 0-7; orig: ROM costumes [character][colour]
+// 11/14 col8 (user): the game now gives same-character players colours 0-7 in pick order on any slot (red blue green
+// orange pink purple black white); the ROM costume is fetched with colour & 3. An upload to slot s is swapped when that
+// slot's colour byte (fa_player +0xA0 + s) is 4-7: ROM colour k -> new colour 4+k. Was: every upload to slots 4-7.
+void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][10], const uint16_t *const orig[4][4], const std::string &dir, const uint8_t *ram)
+{
+  static const char *names[4] = { "spike", "white", "linda", "tenshin" };
+  static const char *cols[4] = { "pink", "purple", "grey", "white" };
+  memcpy(s_csHdr, hdr, sizeof(s_csHdr)); s_csRam = ram;
+  for (int c = 0; c < 4; c++) for (int k = 0; k < 4; k++) s_csOrig[c][k] = orig[c][k];
+  unsigned bx0 = 4096, by0 = 4096;
+  for (int i = 0; i < 10; i++) { bx0 = (std::min)(bx0, 32 * (hdrSlot0[i] & 0x3F)); by0 = (std::min)(by0, 32 * ((hdrSlot0[i] >> 7) & 0x1F)); }
+  unsigned loaded = 0;
+  // 11/17: the pictures come from the exe itself; a costume folder (dir) is only a fallback for a build without them
+  const std::vector<uint8_t> embedded = CsUnpackEmbedded();
+  unsigned fromExe = 0;
+  for (int c = 0; c < 4; c++)
+    for (int k = 0; k < 4; k++)
+    {
+      char fn[128]; snprintf(fn, sizeof(fn), "/%d_%s_col%d_%s.bmp", c, names[c], 4 + k, cols[k]);
+      std::vector<uint8_t> rgb; int w = 0, h = 0;
+      for (int i = 0; i < 10; i++) s_csNew[c][k][i].clear();
+      std::vector<uint8_t> bmp;
+      bool got = false;
+      if (CsFindEmbedded(embedded, fn + 1, bmp)) { got = CsParseBmp(bmp, rgb, w, h); if (got) fromExe++; }
+      if (!got) got = CsLoadBmp(dir + fn, rgb, w, h);
+      if (!orig[c][k] || !got || w < 640 || h < 256) { ErrorLog("CostumeSwap: cannot use %s (not built in, not in %s)", fn + 1, dir.c_str()); continue; }
+      for (int i = 0; i < 10; i++)
+      {
+        const unsigned px = 32 * (hdrSlot0[i] & 0x3F) - bx0, py = 32 * ((hdrSlot0[i] >> 7) & 0x1F) - by0;
+        const uint16_t *src = orig[c][k] + (size_t) i * CS_PIECE;
+        // original levels 128..4 (for the top bit of each texel), linear
+        std::vector<uint16_t> ol[6]; unsigned so = 0;
+        for (int lv = 0, sz = 128; lv < 6; lv++, sz /= 2)
+        {
+          ol[lv].assign(sz * sz, 0);
+          CsTileWalk(sz, sz, [&](unsigned idx, unsigned x, unsigned y) { ol[lv][y * sz + x] = src[so + idx]; });
+          so += sz * sz;
+        }
+        // new levels: top from the BMP, each smaller one the 2x2 average of the one above; top bit from the ROM
+        std::vector<uint16_t> &out = s_csNew[c][k][i];
+        out.assign(CS_PIECE + 4, 0);
+        std::vector<uint32_t> r(128 * 128), g(128 * 128), b(128 * 128);
+        for (unsigned y = 0; y < 128; y++)
+          for (unsigned x = 0; x < 128; x++)
+          {
+            const uint8_t *q = &rgb[((py + y) * w + px + x) * 3];
+            r[y * 128 + x] = q[0] >> 3; g[y * 128 + x] = q[1] >> 3; b[y * 128 + x] = q[2] >> 3;
+          }
+        // 11/14: texels the new colour leaves as they are (face, skin - and Spike's other-format pictures, Spike Jr?,
+        // which only look like noise as 16-bit) keep the ROM data on every level: averaging them as 1555 broke the
+        // ROM's own mipmaps of those pictures. A smaller texel is the ROM one when its whole block above is unchanged.
+        std::vector<uint8_t> chg(128 * 128);
+        for (unsigned t = 0; t < 128 * 128; t++)
+          chg[t] = (uint16_t) (r[t] << 10 | g[t] << 5 | b[t]) != (ol[0][t] & 0x7FFF);
+        unsigned oo = 0;
+        for (int lv = 0, sz = 128; sz >= 2; lv++, sz /= 2)
+        {
+          if (lv > 0)
+          {
+            std::vector<uint32_t> r2(sz * sz), g2(sz * sz), b2(sz * sz);
+            for (int y = 0; y < sz; y++)
+              for (int x = 0; x < sz; x++)
+              {
+                const int s2 = sz * 2, a = (2 * y) * s2 + 2 * x;
+                r2[y * sz + x] = (r[a] + r[a + 1] + r[a + s2] + r[a + s2 + 1] + 2) / 4;
+                g2[y * sz + x] = (g[a] + g[a + 1] + g[a + s2] + g[a + s2 + 1] + 2) / 4;
+                b2[y * sz + x] = (b[a] + b[a + 1] + b[a + s2] + b[a + s2 + 1] + 2) / 4;
+              }
+            r.swap(r2); g.swap(g2); b.swap(b2);
+          }
+          const int olv = lv < 6 ? lv : 5, osz = 128 >> olv;
+          CsTileWalk(sz, sz, [&](unsigned idx, unsigned x, unsigned y) {
+            const unsigned ox = (std::min)((unsigned) osz - 1, x << (lv - olv)), oy = (std::min)((unsigned) osz - 1, y << (lv - olv));
+            const uint16_t top = ol[olv][oy * osz + ox] & 0x8000;
+            bool same = lv < 6;
+            for (unsigned by = 0; same && by < (1u << lv); by++)
+              for (unsigned bx = 0; bx < (1u << lv); bx++)
+                if (chg[((y << lv) + by) * 128 + (x << lv) + bx]) { same = false; break; }
+            if (oo + idx < out.size()) out[oo + idx] = same ? ol[lv][y * sz + x] : (uint16_t) (top | r[y * sz + x] << 10 | g[y * sz + x] << 5 | b[y * sz + x]); });
+          oo += sz * sz;
+        }
+      }
+      loaded++;
+    }
+  g_costumeSwap = loaded > 0;
+  InfoLog("CostumeSwap: %u of 16 new costumes loaded (%u built into the exe, %u from %s)", loaded, fromExe, loaded - fromExe, dir.c_str());
+}
+
+static const uint16_t *CostumeSwapData(uint32_t header, const uint16_t *texData)
+{
+  for (int s = 0; s < 8; s++)
+    for (int i = 0; i < 10; i++)
+    {
+      if (s_csHdr[s][i] != header) continue;
+      unsigned col = 0;
+      if (s_csRam)
+      {
+        uint32_t fa = *(const uint32_t *) &s_csRam[0x104114];                 // fa_player (SDA -0x3eec)
+        if (fa >= 0x100000 && fa < 0x7FFF00) col = s_csRam[(fa + 0xA0 + s) ^ 3];
+      }
+      if (col < 4 || col > 7) return texData;                                  // ROM colours 0-3 (or not set): as it is
+      for (int c = 0; c < 4; c++)
+        for (int k = 0; k < 4; k++)
+        {
+          const uint16_t *o = s_csOrig[c][k];
+          if (!o || s_csNew[c][k][i].empty() || memcmp(texData, o + (size_t) i * CS_PIECE, CS_PIECE * sizeof(uint16_t)) != 0) continue;   // 11/14: the whole piece - the first 64 texels are the same in several colours on some pieces (a grey Spike got a pink waist)
+          if ((s_csHits++ & 63) == 0) InfoLog("CostumeSwap: slot %d piece %d = character %d colour %d (byte %u) -> new colour %d (%u swaps)", s, i, c, k, col, k + 4, s_csHits);
+          return s_csNew[c][k][i].data();
+        }
+      if ((s_csMiss++ & 63) == 0) InfoLog("CostumeSwap: slot %d piece %d (colour %u) upload matched no ROM costume (%u)", s, i, col, s_csMiss);
+      return texData;
+    }
+  return texData;
+}
+
 void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigned width, unsigned height, const uint16_t *texData, bool sixteenBit, bool writeLSB, bool writeMSB, uint32_t &texDataOffset)
 {
   const uint32_t tileX = (std::min)(8u, width);
@@ -471,6 +746,11 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
   const unsigned* const decode = (tileX == 8) ? decode8x8 : (tileX == 4) ? decode8x4 : (tileX == 2) ? decode8x2 : nullptr;
 
   texDataOffset = 0;
+
+  // Ghost upload (Spikeout costumes in a mipmap quadrant): write to the ghost pages; the renderer sees them as pages 2-3
+  uint16_t *const dst = m_ghostUpload ? ghostRAM : textureRAM;
+  const bool markDirty = m_gpuMultiThreaded && !m_ghostUpload;
+  if (m_ghostUpload) ghostDirty = true;
 
   if (sixteenBit)  // 16-bit textures
   {
@@ -485,10 +765,10 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
         {
           for (uint32_t xx = 0; xx < tileX; xx++)
           {
-            if (m_gpuMultiThreaded)
+            if (markDirty)
               MARK_DIRTY(textureRAMDirty, destOffset * 2);
 
-            textureRAM[destOffset++] = texData[decode[yy * tileX + xx]];
+            dst[destOffset++] = texData[decode[yy * tileX + xx]];
 
             texDataOffset++;
           }
@@ -524,9 +804,9 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
           for (uint32_t xx = 0; xx < tileX; xx++)
           {
             if (writeLSB | writeMSB) {
-              if (m_gpuMultiThreaded)
+              if (markDirty)
                 MARK_DIRTY(textureRAMDirty, destOffset * 2);
-              textureRAM[destOffset] &= byteMask[byteSelect];
+              dst[destOffset] &= byteMask[byteSelect];
               const uint8_t shift = (8 * ((xx & 1) ^ 1));
               const uint8_t index = (yy ^ 1) * tileX + (xx ^ 1) - (tileX & 1);
 
@@ -534,7 +814,7 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
 
               tempData |= tempData << 8;
               tempData &= byteMask[byteSelect] ^ 0xFFFF;
-              textureRAM[destOffset] |= tempData;
+              dst[destOffset] |= tempData;
             }
             destOffset++;
           }
@@ -554,13 +834,13 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
     QueuedUploadTextures upl;
     upl.level = level;
     upl.x = xPos;
-    upl.y = yPos;
+    upl.y = yPos + (m_ghostUpload ? 2048 : 0);
     upl.width = width;
     upl.height = height;
     queuedUploadTextures.push_back(upl);
   }
   else
-    Render3D->UploadTextures(level, xPos, yPos, width, height);
+    Render3D->UploadTextures(level, xPos, yPos + (m_ghostUpload ? 2048 : 0), width, height);
 }
 
 /*
@@ -581,8 +861,19 @@ xxxxxxxx -------- -------- -------- Texture type:
 */
 
 // Texture data will be in little endian format
+// Debug: count of texture uploads per 32x32 block (64 x 64 blocks), dumped with DumpMemory
+uint32_t g_texUploadMap[64 * 64];
+
 void CReal3D::UploadTexture(uint32_t header, const uint16_t *texData)
 {
+  if (g_costumeSwap) texData = CostumeSwapData(header, texData);   // Spikeout slots 4-7: new costume colours (11/14)
+  {
+    uint32_t bx = header & 0x3F, by = ((header >> 7) & 0x1F) + 32 * ((header >> 20) & 1);
+    uint32_t bw = 1u << ((header >> 14) & 7), bh = 1u << ((header >> 17) & 7);
+    for (uint32_t j = by; j < by + bh && j < 64; j++)
+      for (uint32_t i = bx; i < bx + bw && i < 64; i++)
+        g_texUploadMap[j * 64 + i]++;
+  }
   // Position: texture RAM is arranged as 2 2048x1024 texel sheets
   uint32_t x              = 32 * (header & 0x3F);
   uint32_t y              = 32 * ((header >> 7) & 0x1F);
@@ -594,6 +885,9 @@ void CReal3D::UploadTexture(uint32_t header, const uint16_t *texData)
   bool     writeUpperByte = (header >> 22) & 0x1;
   bool     writeLowerByte = (header >> 21) & 0x1;
   uint32_t offset         = 0;
+
+  // Spikeout 8 players: a texture based in the mipmap quadrant goes to the ghost pages (all its levels)
+  m_ghostUpload = g_texGhost && ghostRAM && type <= 0x02 && x >= 1024 && y >= 512;
 
   switch (type)
   {
@@ -626,6 +920,7 @@ void CReal3D::UploadTexture(uint32_t header, const uint16_t *texData)
     DebugLog("Unknown texture format %02X\n", type);
     break;
   }
+  m_ghostUpload = false;
 }
 
 
@@ -1073,6 +1368,7 @@ void CReal3D::AttachRenderer(IRender3D *Render3DPtr)
     Render3D->AttachMemory(cullingRAMLoRO, cullingRAMHiRO, polyRAMRO, vrom, textureRAMRO);
   else
     Render3D->AttachMemory(cullingRAMLo, cullingRAMHi, polyRAM, vrom, textureRAM);
+  Render3D->AttachGhostMemory(m_gpuMultiThreaded ? ghostRAMRO : ghostRAM);
 
   Render3D->SetStepping(step);
 
@@ -1119,6 +1415,8 @@ Result CReal3D::Init(const uint8_t *vromPtr, IBus *BusObjectPtr, CIRQ *IRQObject
   polyRAM = (uint32_t *) &memoryPool[OFFSET_98];
   textureRAM = (uint16_t *) &memoryPool[OFFSET_TEXRAM];
   textureFIFO = (uint32_t *) &memoryPool[OFFSET_TEXFIFO];
+  ghostRAM = new(std::nothrow) uint16_t[2048 * 2048]();
+  if (m_gpuMultiThreaded) ghostRAMRO = new(std::nothrow) uint16_t[2048 * 2048]();
 
   // If multi-threaded, set up pointers for read-only snapshots and dirty page arrays too
   if (m_gpuMultiThreaded)
@@ -1229,6 +1527,8 @@ CReal3D::~CReal3D(void)
   Render3D = nullptr;
   delete [] memoryPool;
   memoryPool = nullptr;
+  delete [] ghostRAM; ghostRAM = nullptr;
+  delete [] ghostRAMRO; ghostRAMRO = nullptr;
   cullingRAMLo = nullptr;
   cullingRAMHi = nullptr;
   polyRAM = nullptr;

@@ -401,6 +401,10 @@ void CSDLInputSystem::OpenJoysticks()
         m_joysticks.push_back(joystick);
 
     m_joyDetails.push_back(joyDetails);
+    // 11/11: always list the opened pads in Supermodel.log, so their JOYn numbers are known (SDL counts
+    // buttons its own way; a pad's Start is not the DirectInput/XInput button number).
+    InfoLog("[SDLInput] JOY%d \"%s\": %d buttons, %d axes, %d POVs%s", (int) m_joyDetails.size(), joyDetails.name,
+      joyDetails.numButtons, joyDetails.numAxes, joyDetails.numPOVs, m_useGameController ? " (gamepad mode)" : "");
     m_SDLHapticDatas.push_back(hapticDatas);
   }
 }
@@ -727,6 +731,56 @@ bool CSDLInputSystem::Poll()
 
   // Get mouse state from SDL (except mouse wheel which was handled earlier)
   m_mouseButtons = SDL_GetMouseState(&m_mouseX, &m_mouseY);
+
+  // 11/11: SDLInputLog=1 in the ini -> every pad button / POV / axis change goes to Supermodel.log with the
+  // name Supermodel uses for it (JOYn_BUTTONm, JOYn_POVp_UP, JOYn_XAXIS_POS ...), to build the mapping table.
+  {
+    static int logOn = -1;
+    if (logOn < 0) logOn = m_config["SDLInputLog"].ValueAsDefault<int>(0) ? 1 : 0;
+    if (logOn)
+    {
+      static std::vector<std::vector<int>> prevBtn, prevHat, prevAxis;
+      size_t nJoy = m_joyDetails.size();
+      prevBtn.resize(nJoy); prevHat.resize(nJoy); prevAxis.resize(nJoy);
+      static const char *axisNames[] = { "XAXIS", "YAXIS", "ZAXIS", "RXAXIS", "RYAXIS", "RZAXIS" };
+      for (size_t j = 0; j < nJoy; j++)
+      {
+        SDL_Joystick *joy = m_useGameController ? (j < m_gamepads.size() ? SDL_GameControllerGetJoystick(m_gamepads[j]) : nullptr)
+                                                : (j < m_joysticks.size() ? m_joysticks[j] : nullptr);
+        if (!joy) continue;
+        int nb = SDL_JoystickNumButtons(joy), nh = SDL_JoystickNumHats(joy), na = SDL_JoystickNumAxes(joy);
+        prevBtn[j].resize(nb, 0); prevHat[j].resize(nh, 0); prevAxis[j].resize(na, 0);
+        for (int b = 0; b < nb; b++)
+        {
+          int v = SDL_JoystickGetButton(joy, b);
+          if (v != prevBtn[j][b]) { prevBtn[j][b] = v; if (v) InfoLog("[SDLInput] JOY%d_BUTTON%d pressed (%s)", (int) j + 1, b + 1, m_joyDetails[j].name); }
+        }
+        for (int h = 0; h < nh; h++)
+        {
+          int v = SDL_JoystickGetHat(joy, h);
+          if (v != prevHat[j][h])
+          {
+            prevHat[j][h] = v;
+            if (v & SDL_HAT_UP)    InfoLog("[SDLInput] JOY%d_POV%d_UP", (int) j + 1, h + 1);
+            if (v & SDL_HAT_DOWN)  InfoLog("[SDLInput] JOY%d_POV%d_DOWN", (int) j + 1, h + 1);
+            if (v & SDL_HAT_LEFT)  InfoLog("[SDLInput] JOY%d_POV%d_LEFT", (int) j + 1, h + 1);
+            if (v & SDL_HAT_RIGHT) InfoLog("[SDLInput] JOY%d_POV%d_RIGHT", (int) j + 1, h + 1);
+          }
+        }
+        for (int a = 0; a < na; a++)
+        {
+          int raw = SDL_JoystickGetAxis(joy, a);
+          int v = raw > 20000 ? 1 : raw < -20000 ? -1 : 0;
+          if (v != prevAxis[j][a])
+          {
+            prevAxis[j][a] = v;
+            if (v && a < 6) InfoLog("[SDLInput] JOY%d_%s_%s (SDL axis %d)", (int) j + 1, axisNames[a], v > 0 ? "POS" : "NEG", a);
+            else if (v) InfoLog("[SDLInput] JOY%d SDL axis %d %s (no Supermodel name)", (int) j + 1, a, v > 0 ? "POS" : "NEG");
+          }
+        }
+      }
+    }
+  }
 
   // Update joystick state (not required as called implicitly by SDL_PollEvent above)
   //SDL_JoystickUpdate();

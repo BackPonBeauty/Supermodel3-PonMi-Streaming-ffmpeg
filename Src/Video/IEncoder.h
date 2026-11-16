@@ -7,6 +7,10 @@
 
 using OnEncodedCallback = std::function<void(const uint8_t* data, size_t size, bool isKeyframe)>;
 
+// P4 (2026-11-16, design D-1): periodic keyframe interval. Keyframes are large, so they are kept rare to
+// keep the data small; a client that lost packets asks for one at once (KEYREQ -> RequestKeyframe).
+constexpr int kKeyframeIntervalSeconds = 10;
+
 class IEncoder
 {
 public:
@@ -15,6 +19,10 @@ public:
     virtual void EncodeFrame(unsigned int glTextureID) = 0;
     virtual bool ReconfigureBitrate(int avgBitrate, int maxBitrate) = 0;
     virtual void Shutdown() = 0;
+
+    // P2 (2026-11-16, design SV-03/D-1): make the next encoded frame a keyframe (IDR + parameter sets).
+    // Thread-safe: may be called from a network thread; the encoder thread picks it up on the next frame.
+    virtual void RequestKeyframe() = 0;
 
     virtual void SetDestIP(const std::string &ip) = 0;
     virtual void SetDestIPs(const std::vector<std::string> &ips) = 0;

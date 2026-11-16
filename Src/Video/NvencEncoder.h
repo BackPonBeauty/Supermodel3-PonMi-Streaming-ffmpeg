@@ -11,8 +11,8 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
-#include <cuda.h>
-#include <cuda_gl_interop.h>
+#include <atomic>
+#include <cuda.h>   // types of the CUDA driver API only (nvcuda.dll is loaded at run time; no cudart)
 #include <utility>
 #include "nvEncodeAPI.h"
 #include "Network/RtpSender.h" // Added
@@ -43,9 +43,10 @@ public:
     virtual int GetWidth() const override { return m_width; }
     virtual int GetHeight() const override { return m_height; }
     virtual float GetBitrateBps() override { return m_rtpSender.GetBitrateBps(); }
-   
+    virtual void RequestKeyframe() override { m_keyframeRequested.store(true); }
 
 private:
+    std::atomic<bool> m_keyframeRequested{false};
     bool LoadNvencDll();
     bool InitCuda();
     bool CreateEncoder();
@@ -59,7 +60,7 @@ private:
 
     static constexpr int BUFFER_COUNT = 3;
 
-    cudaGraphicsResource_t m_cuResource = nullptr;
+    CUgraphicsResource m_cuResource = nullptr;
     unsigned int m_glTexID = 0;
 
     NV_ENC_INPUT_PTR m_inputBuffers[BUFFER_COUNT] = {};

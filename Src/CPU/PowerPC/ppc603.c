@@ -298,6 +298,10 @@ int ppc_execute(int cycles)
 		opcode = *ppc.op++;	// Supermodel byte reverses each aligned word (converting them to little endian) so they can be fetched directly
 		ppc.npc = ppc.pc + 4;
 
+		// Idle skip: only Spikeout's frame-wait loops (0x36E08-0x370D4); see ppc_idle_check in ppc.cpp
+		if (s_idleSkipOn && (ppc.pc - 0x36E08u) <= 0x2CCu)
+			ppc_idle_check(opcode);
+
 #ifdef SUPERMODEL_DEBUGGER
 		if (PPCDebug != NULL)
 		{
@@ -313,6 +317,16 @@ int ppc_execute(int cycles)
 			case 59:	optable59[(opcode >> 1) & 0x3ff](opcode); break;
 			case 63:	optable63[(opcode >> 1) & 0x3ff](opcode); break;
 			default:	optable[opcode >> 26](opcode); break;
+		}
+
+		// Debug aid: report the first instruction that moves the stack pointer out of RAM
+		{
+			static bool s_reportedStack = false;
+			if (REG(1) >= 0x00800000 && !s_reportedStack)
+			{
+				s_reportedStack = true;
+				printf("[STACK] r1=%08X after %08X at PC=%08X (LR=%08X)\n", REG(1), opcode, ppc.pc, LR);
+			}
 		}
 
 		ppc.icount--;
