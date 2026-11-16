@@ -84,33 +84,67 @@ std::string DiscordNotifier::BuildJson(const DiscordHostStatus &s)
   if (dots == 3 && second != std::string::npos)
     masked = "xxx.xxx" + s.ip.substr(second);
 
+  // 11/17 (owner): two columns, Slot 1-4 on the left and Slot 5-8 on the right, one slot per line.
+  // (Two inline fields: side by side on PC; the phone app puts the right one under the left one.)
   std::string fields;
   int used = 0, total = 0;
-  for (int n = 1; n <= 8; n++)
+  for (int col = 0; col < 2; col++)
   {
-    if (!s.present[n])
-      continue;
-    total++;
-    std::string value;
-    if (s.available[n])
-      value = "\\ud83d\\udfe2 \\u7a7a\\u304d";                                   // green, "free"
-    else
+    std::string lines;
+    for (int n = col * 4 + 1; n <= col * 4 + 4; n++)
     {
-      used++;
-      value = "\\ud83d\\udd34 " + (s.player[n].empty() ? std::string("\\u4f7f\\u7528\\u4e2d")  // red, "in use"
-                                                       : EscapeJson(s.player[n]));
+      if (!s.present[n])
+        continue;
+      total++;
+      std::string value;
+      if (s.available[n])
+        value = "\\ud83d\\udfe2 \\u7a7a\\u304d";                                   // green, "free"
+      else
+      {
+        used++;
+        value = "\\ud83d\\udd34 " + (s.player[n].empty() ? std::string("\\u4f7f\\u7528\\u4e2d")  // red, "in use"
+                                                         : EscapeJson(s.player[n]));
+      }
+      if (!lines.empty())
+        lines += "\\n";
+      lines += "**" + std::to_string(n) + "** " + value;
     }
+    if (lines.empty())
+      continue;                                                                  // no slot of this column runs
     if (!fields.empty())
       fields += ",";
-    fields += "{\"name\":\"Slot " + std::to_string(n) + "\",\"value\":\"" + value + "\",\"inline\":true}";
+    fields += "{\"name\":\"Slot " + std::to_string(col * 4 + 1) + "\\u301c" + std::to_string(col * 4 + 4) +
+              "\",\"value\":\"" + lines + "\",\"inline\":true}";
   }
   if (total == 0)
     fields = "{\"name\":\"-\",\"value\":\"\\u306a\\u3057\",\"inline\":false}";   // "none"
 
   // SV-18: a lock in front when the host has a room password
   std::string json = "{\"embeds\":[{\"title\":\"" + std::string(s.locked ? "\\ud83d\\udd12 " : "") + EscapeJson(title) + "\"";
-  if (!masked.empty())
-    json += ",\"description\":\"" + masked + "\"";
+  // 11/17 (owner): the games running on the host, one line each: "GAME A：STAGE 7・エリア75・6人"
+  std::string desc = masked;
+  {
+    size_t p = 0;
+    for (int g = 0; !s.sess.empty() && p <= s.sess.size() && g < 8; g++)
+    {
+      size_t e = s.sess.find(';', p);
+      std::string part = s.sess.substr(p, e == std::string::npos ? std::string::npos : e - p);
+      unsigned st = 0, ar = 0, pl = 0;
+      if (sscanf(part.c_str(), "%u,%u,%u", &st, &ar, &pl) == 3)
+      {
+        char line[160];
+        snprintf(line, sizeof(line), "GAME %c\\uff1aSTAGE %u\\u30fb\\u30a8\\u30ea\\u30a2%u\\u30fb%u\\u4eba", 'A' + g, st, ar, pl);
+        if (!desc.empty())
+          desc += "\\n";
+        desc += line;
+      }
+      if (e == std::string::npos)
+        break;
+      p = e + 1;
+    }
+  }
+  if (!desc.empty())
+    json += ",\"description\":\"" + desc + "\"";
   json += ",\"color\":" + std::string(used < total ? "3066993" : "15158332");   // green while a slot is free, else red
   json += ",\"fields\":[" + fields + "]";
   json += ",\"footer\":{\"text\":\"Supermodel PonMi streaming\"}}]}";

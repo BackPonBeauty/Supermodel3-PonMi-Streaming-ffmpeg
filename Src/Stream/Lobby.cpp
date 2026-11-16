@@ -345,6 +345,22 @@ namespace Lobby
             ImGui::SameLine();
           }
           ImGui::Text("%s", shownName);
+          // 11/17 (owner): the games running on this host ("stage,area,players;..." from the host, GAME A first)
+          if (!h.sess.empty())
+          {
+            size_t p = 0;
+            for (int g = 0; p <= h.sess.size() && g < 8; g++)
+            {
+              size_t e = h.sess.find(';', p);
+              std::string part = h.sess.substr(p, e == std::string::npos ? std::string::npos : e - p);
+              unsigned st = 0, ar = 0, pl = 0;
+              if (sscanf(part.c_str(), "%u,%u,%u", &st, &ar, &pl) == 3)
+                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "GAME %c：STAGE %u・エリア%u・%u人", 'A' + g, st, ar, pl);
+              if (e == std::string::npos)
+                break;
+              p = e + 1;
+            }
+          }
           ImGui::TableSetColumnIndex(1);
           ImGui::Text("%s", h.gametitle.c_str());
           ImGui::TableSetColumnIndex(2);

@@ -162,6 +162,7 @@ void RemoteSlotManager::StartDiscordPost()
             out.gametitle = h.gametitle;
             out.ip = h.ip;
             out.locked = h.locked;
+            out.sess = h.sess;
             for (int n = 1; n <= 8; n++)
             {
                 out.present[n] = h.slots[n].present;

@@ -238,6 +238,8 @@
 #include <set>
 #include <iostream>
 #include <algorithm>
+#include <mutex>
+#include <string>
 
 // WatchWrite: also append log lines to watch.txt so capture does not depend on
 // the console. Opened lazily on first watched write.
@@ -278,6 +280,8 @@ static bool g_spikeoutAI = false;
 extern std::atomic<bool> g_streamHumanJoined;   // Stream/SessionServer.cpp (P4): a streaming client has taken this slot (SV-11)
 static int g_spikeoutAIChar = -1;   // AIChar (11/14): the character a bot picks on a new session's select screen - 0 Spike,
                                     // 1 White, 2 Linda, 3 Tenshin (or the names); -1 / empty = whatever the cursor is on
+static bool g_spikeoutAIRandSel = true;   // AIrandSel (11/17): 1 = a continue's select picks a character at random (LEFT 0-3
+                                          // times), 0 = keep the same one. Only without AIChar (a set AIChar never picks at random)
 static bool g_spikeoutAIShift = false;  // AIShift=1: hold Shift next to an enemy (off for now)
 static bool g_spikeoutAISpecial = false; // AISpecial=1: special attack (Beat+Charge+Jump) under 30% life (per cabinet; off: suspected link desync)
 static int g_spikeoutAIRoute = -1;       // AIRoute=0..3 (11/10): force the Diesel Town branches - 0 front Mall, 1 back Mall,
@@ -2277,6 +2281,57 @@ static bool SpikeoutFloorDumpDue(const UINT8 *ram)
 		return true;
 	}
 	return false;
+}
+
+// 11/17 (owner): the games running in the link, for the lobby / the Discord post ("GAME A: STAGE 7, area 75, 6").
+// Every cabinet's link record reaches every cabinet: +4 link state (4 = in a game), +0x3C game number (the games of
+// GAME SELECT are grouped by it, 0x4AD08), +0x3E stage (= that cabinet's 0x10402C), +0x3F area (= its 0x10402D).
+// Own record 0x140100, the others *(0x150060 + 4n), n = 1..total-1, cabinet = self - n (ring). Once a second the
+// cabinets in a game are grouped by game number, ordered by their lowest cabinet number (A, B, ...), and kept as
+// "stage,area,players;stage,area,players..." ("" = no game). Read by the Firebase status writer (FirebaseMatchingCpp).
+static std::mutex g_sessLock;
+static std::string g_sessSummary;
+std::string SpikeoutSessionSummary()
+{
+	std::lock_guard<std::mutex> lock(g_sessLock);
+	return g_sessSummary;
+}
+static void SpikeoutSessionTick(const UINT8 *ram)
+{
+	if (!g_spikeofe8task || (g_ppcTraceFrame % 60) != 0) return;
+	unsigned total = ram[0x10065A ^ 3], self = ram[0x10065B ^ 3];
+	if (total < 1 || total > 8 || self < 1 || self > total) return;
+	struct Game { unsigned id, stage, area, players, firstNode; } games[8];
+	int ng = 0;
+	for (unsigned n = 0; n < total; n++)
+	{
+		UINT32 rec = 0x140100;
+		if (n)
+		{
+			rec = *(const UINT32 *) &ram[0x150060 + 4 * n];
+			if (rec < 0x150000 || rec > 0x160000 - 0x300 || (rec & 3)) continue;
+		}
+		if (ram[(rec + 4) ^ 3] != 4) continue;
+		const unsigned id = *(const UINT16 *) &ram[(rec + 0x3C) ^ 2];
+		const unsigned node = ((self - 1 + 8 * total - n) % total) + 1;
+		int g = 0;
+		while (g < ng && games[g].id != id) g++;
+		if (g == ng) { games[ng++] = { id, ram[(rec + 0x3E) ^ 3], ram[(rec + 0x3F) ^ 3], 0, node }; }
+		games[g].players++;
+		if (node < games[g].firstNode) { games[g].firstNode = node; games[g].stage = ram[(rec + 0x3E) ^ 3]; games[g].area = ram[(rec + 0x3F) ^ 3]; }
+	}
+	std::sort(games, games + ng, [](const Game &a, const Game &b) { return a.firstNode < b.firstNode; });
+	std::string out;
+	for (int g = 0; g < ng; g++)
+	{
+		char buf[32];
+		snprintf(buf, sizeof(buf), "%s%u,%u,%u", g ? ";" : "", games[g].stage, games[g].area, games[g].players);
+		out += buf;
+	}
+	std::lock_guard<std::mutex> lock(g_sessLock);
+	if (out != g_sessSummary)
+		InfoLog("Session summary: \"%s\" (own link state %u)", out.c_str(), (unsigned) ram[0x140104 ^ 3]);
+	g_sessSummary = out;
 }
 
 static void SpikeoutP1StateTick(UINT8 *ram)   // every frame: mark (bot) or unmark (human) our own link record
@@ -4819,6 +4874,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					uint32_t x = (uint32_t) time(NULL) ^ ((uint32_t) ram[0x10065B ^ 3] * 2654435761u) ^ (g_ppcTraceFrame * 40503u);
 					x ^= x << 13; x ^= x >> 17; x ^= x << 5; x ^= x >> 11;
 					nLeft = x % 4;
+					if (g_spikeoutAIChar >= 0 || !g_spikeoutAIRandSel) nLeft = 0;   // 11/17: AIChar set / AIrandSel=0: same character
 				}
 				unsigned t = g_ppcTraceFrame - selT0;
 				selDone = false;
@@ -4852,7 +4908,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				uint32_t x = (uint32_t) time(NULL) ^ ((uint32_t) ram[0x10065B ^ 3] * 2654435761u) ^ (g_ppcTraceFrame * 40503u);
 				x ^= x << 13; x ^= x >> 17; x ^= x << 5; x ^= x >> 11;
 				contN = x % 4;
-				if (g_spikeoutAIChar >= 0) contN = 0;    // 11/15 (user): a fixed character (AIChar set): no random pick on a continue
+				if (g_spikeoutAIChar >= 0 || !g_spikeoutAIRandSel) contN = 0;    // 11/15 (user): AIChar set - 11/17: or AIrandSel=0 - no random pick on a continue
 			}
 			const unsigned t = g_ppcTraceFrame - contT0, tb = 80u + 8u * contN + 10u;
 			bits &= (UINT8) ~0xF0;
@@ -7068,6 +7124,7 @@ void CModel3::RunMainBoardFrame(void)
 	if (g_spikeoutJoinLog) { SpikeoutJoinLog(ram); SpikeoutSyncLog(ram); }
 	if (g_spikeoutItemLog) SpikeoutItemLog(ram);
 	SpikeoutP1StateTick(ram);   // bot cabinets mark their link record, so the bots can tell a started human (bots must not start a game on their own)
+	SpikeoutSessionTick(ram);   // 11/17: the games in the link, for the lobby / Discord
 	if (g_floorDump && SpikeoutFloorDumpDue(ram))
 	{
 		// 11/13 FloorDump: every cabinet writes the same link-synced moment (sync counter 0x1000A8)
@@ -8057,6 +8114,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     else if (ch == "white" || ch == "1") g_spikeoutAIChar = 1;
     else if (ch == "linda" || ch == "2") g_spikeoutAIChar = 2;
     else if (ch == "tenshin" || ch == "3") g_spikeoutAIChar = 3;
+    g_spikeoutAIRandSel = m_config["AIrandSel"].ValueAsDefault<bool>(true);   // 11/17 (owner); default = as before (random)
   }
   g_spikeoutWaypointRecord = (game.name == "spikeofe" && m_config["WaypointRecord"].ValueAsDefault<bool>(false));
   g_spikeoutScenarioLog = (game.name == "spikeofe" && m_config["ScenarioLog"].ValueAsDefault<bool>(false));

@@ -64,6 +64,7 @@ struct LobbyHostCpp
         bool locked = false;     // SV-18: the host has a room password
     } slots[9];                  // 1..8
     bool locked = false;         // any slot locked
+    std::string sess;            // 11/17: games in the link, "stage,area,players;..." (GAME A first)
 };
 
 using FirebaseStatusCallback = std::function<void(const std::string &message)>;

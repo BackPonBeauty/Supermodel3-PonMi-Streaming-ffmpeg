@@ -29,6 +29,7 @@ struct DiscordHostStatus
   std::string gametitle;
   std::string ip;
   bool        locked = false;     // SV-18: room password
+  std::string sess;               // 11/17: games in the link, "stage,area,players;..." (GAME A first)
   bool        present[9] = {};    // 1..8: a streaming server runs for this slot
   bool        available[9] = {};  // nobody connected
   std::string player[9];

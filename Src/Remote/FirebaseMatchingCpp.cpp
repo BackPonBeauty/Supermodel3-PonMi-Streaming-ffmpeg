@@ -557,13 +557,36 @@ void FirebaseMatchingCpp::StopHeartbeat()
         m_heartbeatThread.join();
 }
 
+extern std::string SpikeoutSessionSummary();   // Model3.cpp (11/17): "stage,area,players;..." of the games in the link
+
 void FirebaseMatchingCpp::HeartbeatThread(std::string hostId, std::vector<int> slots)
 {
     int heartbeatCount = 0;
+    std::string sentSess = "?";
     while (m_heartbeatRunning.load())
     {
         for (int i = 0; i < HEARTBEAT_INTERVAL_MS / 100 && m_heartbeatRunning.load(); i++)
+        {
             Sleep(100);
+            // 11/17 (owner): the games in the link (lobby / Discord: "GAME A: STAGE 7, area 75, 6") - every 15 s,
+            // written only when it changed. A write of its own, so the rules refusing it can't stop the heartbeat.
+            if (i % 150 == 149)
+            {
+                std::string sess = SpikeoutSessionSummary();
+                if (sess != sentSess && sess.size() <= 64)
+                {
+                    for (int slot : slots)
+                    {
+                        std::string path = "/hosts/" + hostId + "/slot" + std::to_string(slot) + ".json?auth=" + Token();
+                        std::string resp = HttpPatch(StreamSecrets::FirebaseDbHost(), std::wstring(path.begin(), path.end()),
+                                                     "{\"sess\":\"" + sess + "\"}", Token());
+                        if (resp.find("\"error\"") != std::string::npos)
+                            printf("[Firebase] game status slot%d refused: %s\n", slot, resp.c_str());
+                    }
+                    sentSess = sess;
+                }
+            }
+        }
         if (!m_heartbeatRunning.load())
             break;
 
@@ -939,6 +962,8 @@ bool FirebaseMatchingCpp::FetchHosts(std::vector<LobbyHostCpp> &out)
             host.slots[s].available = slot->GetBool("available");
             host.slots[s].player = slot->GetString("player");
             host.slots[s].locked = slot->GetBool("locked");
+            if (ts >= host.timestamp)
+                host.sess = slot->GetString("sess");   // 11/17: games in the link (from the most recently updated slot)
             if (host.slots[s].locked)
                 host.locked = true;
             anySlot = true;
