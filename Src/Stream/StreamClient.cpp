@@ -6,6 +6,7 @@
 
 #include "StreamClient.h"
 #include "Protocol.h"
+#include "DiscordAuth.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -86,9 +87,10 @@ namespace
     case R_VERSION:           return "The server runs a different version. Please update.";
     case R_NOT_MEMBER:        return "Refused: you are not a member of the Discord server.";
     case R_SLOT_BUSY:         return "That slot is in use. Please choose another slot.";
-    case R_LOGIN_REQUIRED:    return "Refused: connecting without login works only from this PC / home network.";
+    case R_LOGIN_REQUIRED:    return "Refused: please log in to Discord (top of the lobby). Without login only this PC / home network can connect.";
     case R_CODEC:             return "Refused: this client cannot decode the server's video codec.";
-    case R_LOGIN_UNAVAILABLE: return "Refused: Discord login is not available on this server yet.";
+    case R_LOGIN_UNAVAILABLE: return "Refused: the server could not check your Discord login now. Please try again later.";
+    case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
     default:                  return "Refused by the server.";
     }
   }
@@ -475,14 +477,29 @@ namespace
     memcpy(hello.name, req.name.c_str(), std::min(req.name.size(), (size_t) kMaxNameLength));   // zero padded, no terminator needed
     hello.tokenLen = 0;
 
+    // P6b (CL-07, SV-16): with a Discord login the access token follows the Hello struct; the host checks it
+    std::string token;
+    if (DiscordAuth::GetAccessToken(token) && token.size() <= 256)
+    {
+      hello.login = LOGIN_DISCORD;
+      hello.tokenLen = (uint16_t) token.size();
+    }
+    std::vector<char> packet(sizeof(hello) + token.size());
+    memcpy(packet.data(), &hello, sizeof(hello));
+    if (hello.tokenLen)
+      memcpy(packet.data() + sizeof(hello), token.data(), token.size());
+    else
+      packet.resize(sizeof(hello));
+
     char buf[512];
     uint64_t start = NowMs();
     uint64_t lastSend = 0;
-    while (NowMs() - start < 5000)
+    const uint64_t waitMs = hello.tokenLen ? 9000 : 5000;   // the host asks Discord (up to 5 s)
+    while (NowMs() - start < waitMs)
     {
       if (NowMs() - lastSend >= 500)
       {
-        c->SendSession(&hello, sizeof(hello));
+        c->SendSession(packet.data(), (int) packet.size());
         lastSend = NowMs();
       }
       sockaddr_in from = {};

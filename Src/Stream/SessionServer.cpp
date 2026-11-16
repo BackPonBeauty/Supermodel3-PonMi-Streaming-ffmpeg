@@ -6,6 +6,7 @@
 
 #include "SessionServer.h"
 #include "RemoteInputSystem.h"
+#include "DiscordAuth.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <windows.h>
@@ -195,6 +196,7 @@ void SessionServer::Disconnect(const char *why)
     m_connected.store(false);
     printf("[Session] Slot %d: %s disconnected (%s) -> standing still\n", m_slot, m_playerName.c_str(), why);
     m_playerName.clear();
+    m_playerId.clear();
     m_key = 0;
     m_haveSeq = false;
     m_lastMeta = 0;
@@ -263,16 +265,35 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
 
   if (!resend)
   {
+    bool local = IsLocalOrPrivate(from);
     if (hello.login == LOGIN_DISCORD)
     {
-      // Discord membership check comes in P6 (SV-16). Until then only local / home-network clients.
-      if (!IsLocalOrPrivate(from))
+      // P6b (SV-16): ask Discord whether the token's owner is a member of our guild.
+      // This PC / the home network may connect anyway (LB-07); the check then only gives the name.
+      std::string token;
+      if (hello.tokenLen > 0 && hello.tokenLen <= 256 && len >= (int) sizeof(Hello) + hello.tokenLen)
+        token.assign(buf + sizeof(Hello), hello.tokenLen);
+      DiscordAuth::Check check = token.empty() ? DiscordAuth::Check::InvalidToken
+                                               : DiscordAuth::CheckMember(token, m_pendingName, m_pendingId);
+      if (check == DiscordAuth::Check::Member)
       {
-        reject(R_LOGIN_UNAVAILABLE, "Discord check not available yet");
+        if (!m_pendingName.empty())
+          name = m_pendingName;
+      }
+      else if (!local)
+      {
+        if (check == DiscordAuth::Check::NotMember)
+          reject(R_NOT_MEMBER, "not a member of the Discord server");
+        else if (check == DiscordAuth::Check::InvalidToken)
+          reject(R_LOGIN_INVALID, "Discord token invalid or expired");
+        else
+          reject(R_LOGIN_UNAVAILABLE, DiscordAuth::HostConfigured() ? "could not ask Discord" : "DiscordGuildId not set on this host");
         return;
       }
+      else
+        m_pendingId.clear();
     }
-    else if (!IsLocalOrPrivate(from))
+    else if (!local)
     {
       reject(R_LOGIN_REQUIRED, "no login from the internet");
       return;
@@ -288,6 +309,7 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
       do { m_key = ((uint32_t) rd() << 16) ^ (uint32_t) rd(); } while (m_key == 0);
       m_clientAddr = from;
       m_playerName = name;
+      m_playerId = (hello.login == LOGIN_DISCORD) ? m_pendingId : std::string();   // LB-05 (same person) later
       m_lastHb = NowMs();
       m_lastKeyReq = 0;
       m_haveSeq = false;

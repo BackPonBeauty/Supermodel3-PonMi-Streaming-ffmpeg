@@ -7,6 +7,7 @@
 #include "Protocol.h"   // winsock2.h first (before windows.h from the Firebase header)
 #include "Lobby.h"
 #include "Secrets.h"
+#include "DiscordAuth.h"
 #include "Remote/FirebaseMatchingCpp.h"
 #include "Pkgs/imgui/imgui.h"
 #include <atomic>
@@ -88,6 +89,18 @@ namespace Lobby
       else
         s_listStatus = "Could not read the host list. Retrying...";
     }
+  }
+
+  // Logged in: the Discord name (the host replaces it with the checked one anyway). Else the typed name.
+  static std::string RequestName()
+  {
+    if (DiscordAuth::GetState() == DiscordAuth::State::LoggedIn)
+    {
+      std::string n = DiscordAuth::UserName();
+      if (!n.empty())
+        return n;
+    }
+    return s_name[0] ? s_name : "guest";
   }
 
   // Same router as the host (same external IP): use its LAN address, or this PC itself.
@@ -185,6 +198,36 @@ namespace Lobby
       ImGui::Spacing();
     }
 
+    // --- Discord login (P6b, CL-07): needed to join hosts over the internet ---
+    {
+      DiscordAuth::State st = DiscordAuth::GetState();
+      ImGui::Text("Discord");
+      ImGui::SameLine(140.0f * scale);
+      ImVec4 col = st == DiscordAuth::State::LoggedIn ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
+                 : st == DiscordAuth::State::Failed   ? ImVec4(1.0f, 0.5f, 0.4f, 1.0f)
+                                                      : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+      ImGui::TextColored(col, "%s", DiscordAuth::StateText().c_str());
+      if (st == DiscordAuth::State::LoggedOut || st == DiscordAuth::State::Failed)
+      {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("LOGIN"))
+          DiscordAuth::StartLogin();
+      }
+      else if (st == DiscordAuth::State::Waiting)
+      {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("CANCEL"))
+          DiscordAuth::CancelLogin();
+      }
+      else if (st == DiscordAuth::State::LoggedIn)
+      {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("LOGOUT"))
+          DiscordAuth::Logout();
+      }
+      ImGui::Spacing();
+    }
+
     // --- Host list (P6, LB-01..03): click a free slot to connect ---
     ImGui::Text("Hosts");
     if (!StreamSecrets::HasFirebase())
@@ -249,7 +292,7 @@ namespace Lobby
                 s_request.requested = true;
                 s_request.host = addr;
                 s_request.slot = s;
-                s_request.name = s_name[0] ? s_name : "guest";
+                s_request.name = RequestName();
                 Save();
                 result = Action::Connect;
               }
@@ -310,7 +353,7 @@ namespace Lobby
       s_request.requested = true;
       s_request.host = s_hostBuf;
       s_request.slot = s_slot;
-      s_request.name = s_name[0] ? s_name : "guest";
+      s_request.name = RequestName();
       Save();
       result = Action::Connect;
     }

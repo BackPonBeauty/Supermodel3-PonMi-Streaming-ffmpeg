@@ -379,3 +379,5 @@ Docs/spikeofe_re/*.bin
 # Streaming keys (P6): real values stay local
 Config/StreamingKeys.ini
 **/Config/StreamingKeys.ini
+**/Config/DiscordLogin.ini
+**/Config/DiscordMessage.txt

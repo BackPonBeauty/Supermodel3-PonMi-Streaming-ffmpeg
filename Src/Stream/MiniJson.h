@@ -2,7 +2,7 @@
  * MiniJson.h
  *
  * Streaming (P6, 2026-11-16): a tiny JSON reader, enough for the Firebase host list.
- * Parses objects, arrays, strings (basic escapes; \uXXXX kept as '?'), numbers, true/false/null.
+ * Parses objects, arrays, strings (escapes; \uXXXX to UTF-8), numbers, true/false/null.
  */
 
 #ifndef INCLUDED_STREAM_MINIJSON_H
@@ -73,6 +73,25 @@ namespace MiniJson
       m_i += n;
       return true;
     }
+    unsigned Hex4()
+    {
+      unsigned v = 0;
+      for (int k = 0; k < 4 && m_i < m_s.size(); k++, m_i++)
+      {
+        char h = m_s[m_i];
+        v = v * 16 + ((h >= '0' && h <= '9') ? h - '0' : (h >= 'a' && h <= 'f') ? h - 'a' + 10 : (h >= 'A' && h <= 'F') ? h - 'A' + 10 : 0);
+      }
+      return v;
+    }
+
+    static void AppendUtf8(std::string &out, unsigned cp)
+    {
+      if (cp < 0x80) out += (char) cp;
+      else if (cp < 0x800) { out += (char) (0xC0 | (cp >> 6)); out += (char) (0x80 | (cp & 0x3F)); }
+      else if (cp < 0x10000) { out += (char) (0xE0 | (cp >> 12)); out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F)); }
+      else { out += (char) (0xF0 | (cp >> 18)); out += (char) (0x80 | ((cp >> 12) & 0x3F)); out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F)); }
+    }
+
     bool ParseString(std::string &out)
     {
       if (m_i >= m_s.size() || m_s[m_i] != '"') return false;
@@ -91,7 +110,21 @@ namespace MiniJson
           case 'r': out += '\r'; break;
           case 'b': out += '\b'; break;
           case 'f': out += '\f'; break;
-          case 'u': out += '?'; m_i += 4; break;
+          case 'u':
+          {
+            // P6b: \uXXXX (and surrogate pairs) -> UTF-8, for Discord names
+            unsigned cp = Hex4();
+            if (cp >= 0xD800 && cp < 0xDC00 && m_i + 1 < m_s.size() && m_s[m_i] == '\\' && m_s[m_i + 1] == 'u')
+            {
+              m_i += 2;
+              unsigned lo = Hex4();
+              cp = (lo >= 0xDC00 && lo < 0xE000) ? 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00) : 0xFFFD;
+            }
+            else if (cp >= 0xD800 && cp < 0xE000)
+              cp = 0xFFFD;
+            AppendUtf8(out, cp);
+            break;
+          }
           default:  out += e; break;
           }
         }

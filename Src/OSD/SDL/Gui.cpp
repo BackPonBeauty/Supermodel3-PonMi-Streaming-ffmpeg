@@ -1905,6 +1905,24 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     font_cfg.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF((void *)Font01_data, sizeof(Font01_data), fontSize, &font_cfg);
 
+    // Streaming lobby (P6b, 2026-11-16): Discord names and host names may be Japanese. Merge the kana/kanji
+    // glyphs of a Windows font into the GUI font (skipped when none of these files exists).
+    {
+        static const char *jpFonts[] = { "C:\\Windows\\Fonts\\meiryo.ttc", "C:\\Windows\\Fonts\\YuGothM.ttc", "C:\\Windows\\Fonts\\msgothic.ttc" };
+        for (const char *path : jpFonts)
+        {
+            FILE *fp = fopen(path, "rb");
+            if (!fp)
+                continue;
+            fclose(fp);
+            ImFontConfig jp;
+            jp.MergeMode = true;
+            jp.PixelSnapH = true;
+            io.Fonts->AddFontFromFileTTF(path, fontSize, &jp, io.Fonts->GetGlyphRangesJapanese());
+            break;
+        }
+    }
+
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 150");
 
