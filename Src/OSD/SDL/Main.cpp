@@ -3129,6 +3129,14 @@ int main(int argc, char **argv)
     }
   }
 
+  // Several instances started from one folder with -ini=Supermodel_01.ini .. _08.ini (launcher, 11/16):
+  // give each its own log (Supermodel_01.log ...), like the NVRAM, unless -log-output was given.
+  if (!s_nvramSuffix.empty() && cmd_line.config["LogOutput"].ValueAs<std::string>() == s_logFilePath)
+  {
+    std::string perInstanceLog = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Log) << "Supermodel" << s_nvramSuffix << ".log";
+    cmd_line.config.Set("LogOutput", perInstanceLog);
+  }
+
   // Create logger as specified by command line
   auto logger = CreateLogger(cmd_line.config);
   if (!logger)
