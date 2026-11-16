@@ -19,6 +19,7 @@
 #define INCLUDED_STREAM_STREAMCLIENT_H
 
 #include "Lobby.h"
+#include <cstdint>
 #include <string>
 
 enum class StreamClientExit
@@ -27,6 +28,7 @@ enum class StreamClientExit
   QuitApp        // the window was closed
 };
 
-StreamClientExit RunStreamClient(const StreamConnectRequest &request, std::string &message);
+// rejectReason (optional): the server's REJECT reason (StreamProto::RejectReason), 0 if none
+StreamClientExit RunStreamClient(const StreamConnectRequest &request, std::string &message, uint8_t *rejectReason = nullptr);
 
 #endif // INCLUDED_STREAM_STREAMCLIENT_H

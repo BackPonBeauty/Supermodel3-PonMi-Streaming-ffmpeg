@@ -8,6 +8,8 @@
  *
  * - Idle kick (SV-17): if the game input (keys, buttons, hat, or an axis by kIdleAxisMove) does not change for
  *   3 minutes, the client is warned during the last 30 s and then removed. Not configurable.
+ * - Room password (SV-18): with SetPassword(non-empty), a HELLO first gets REJECT(R_PASSWORD_REQUIRED, nonce) and
+ *   must come again with the proof (RoomPassword.h). 5 wrong answers from one IP in 10 min -> 5 min refused.
  *
  * - One client per slot (no spectators). A second client gets REJECT(slot busy).
  * - Version check; login: Discord is verified in P6 (until then refused unless from this PC / home network);
@@ -24,6 +26,7 @@
 #include "Protocol.h"
 #include <atomic>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -49,6 +52,9 @@ public:
   bool Start(int slot, int sessionPort, int inputPort, int width, int height, const std::string &codec, Callbacks cb);
   void Stop();
 
+  // SV-18 (11/16): room password, "" = public. Set before Start().
+  void SetPassword(const std::string &password) { m_password = password; }
+
   bool IsConnected() const { return m_connected.load(); }
   std::string GetPlayerName();
 
@@ -67,6 +73,7 @@ private:
   void CheckIdle();   // SV-17: no input change for kIdleKickMs -> removed
   void SendTo(const void *data, int len, const sockaddr_in &to);
   bool FromClient(const sockaddr_in &from, uint32_t key);
+  bool CheckPassword(const StreamProto::Hello &hello, const sockaddr_in &from, uint8_t &rejectReason, uint32_t &nonceOut);
   bool ValidateMediaHello(const char *buf, int len, const sockaddr_in &from);
   static bool IsLocalOrPrivate(const sockaddr_in &addr);
 
@@ -103,6 +110,13 @@ private:
   uint32_t m_actButtons = 0;
   uint8_t m_actHat = 0;
   int16_t m_actAxes[6] = {};
+
+  // Room password (SV-18). Used by the session thread only.
+  std::string m_password;
+  struct PwNonce { uint32_t nonce; uint64_t time; };
+  struct PwFail { int count; uint64_t first; uint64_t lockUntil; };
+  std::map<uint32_t, PwNonce> m_pwNonces;   // by client IPv4 address
+  std::map<uint32_t, PwFail> m_pwFails;
 
   std::atomic<float> m_lossRate{0.0f};
   std::atomic<uint32_t> m_lastStatusTime{0};

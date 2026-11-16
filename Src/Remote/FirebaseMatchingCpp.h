@@ -61,7 +61,9 @@ struct LobbyHostCpp
         bool present = false;    // the host has this slot (a streaming server runs for it)
         bool available = false;  // nobody connected
         std::string player;
+        bool locked = false;     // SV-18: the host has a room password
     } slots[9];                  // 1..8
+    bool locked = false;         // any slot locked
 };
 
 using FirebaseStatusCallback = std::function<void(const std::string &message)>;
@@ -87,6 +89,9 @@ public:
 
     // Register host information to Firebase (PUT=create new / PATCH=update slot)
     // Key is automatically determined by SanitizeKeyFromIp(externalIp)
+    // SV-18 (11/16): the slot is written with "locked":true (the lobby draws a lock). Set before RegisterHost.
+    void SetLocked(bool locked) { m_locked = locked; }
+
     bool RegisterHost(const std::string &externalIp,
                       const bool availableSlots[9],   // index 1..8
                       int linkplay,
@@ -166,6 +171,7 @@ private:
     std::string m_refreshToken;  // 11/16: to get new ID tokens for the same uid
     std::string m_uid;           // 11/16: anonymous user id = "owner" of this server's slots (database rules)
     std::string m_currentHostId;
+    bool m_locked = false;
     std::string m_sessionFile;   // 11/16: "" = do not keep the session (the lobby)
 
     // Heartbeat thread

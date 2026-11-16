@@ -107,7 +107,8 @@ std::string DiscordNotifier::BuildJson(const DiscordHostStatus &s)
   if (total == 0)
     fields = "{\"name\":\"-\",\"value\":\"\\u306a\\u3057\",\"inline\":false}";   // "none"
 
-  std::string json = "{\"embeds\":[{\"title\":\"" + EscapeJson(title) + "\"";
+  // SV-18: a lock in front when the host has a room password
+  std::string json = "{\"embeds\":[{\"title\":\"" + std::string(s.locked ? "\\ud83d\\udd12 " : "") + EscapeJson(title) + "\"";
   if (!masked.empty())
     json += ",\"description\":\"" + masked + "\"";
   json += ",\"color\":" + std::string(used < total ? "3066993" : "15158332");   // green while a slot is free, else red

@@ -23,9 +23,9 @@ import sys
 import time
 
 MAGIC = b"SPKS"
-VERSION = 1
+VERSION = 2   # 11/16: v2 adds the room password fields (pwNonce, pwProof) to HELLO
 T_HELLO, T_WELCOME, T_REJECT, T_HB, T_PING, T_PONG, T_KEYREQ, T_BYE, T_NOTICE, T_INPUT, T_MEDIA_HELLO, T_STATUS = range(1, 13)
-REJECT_NAMES = {1: "version", 2: "not member", 3: "slot busy", 4: "login required", 5: "codec", 6: "bad request", 7: "login unavailable"}
+REJECT_NAMES = {1: "version", 2: "not member", 3: "slot busy", 4: "login required", 5: "codec", 6: "bad request", 7: "login unavailable", 8: "login invalid", 9: "already connected", 10: "password required", 11: "wrong password", 12: "password locked"}
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 SESSION = int(sys.argv[2]) if len(sys.argv) > 2 else 55001
@@ -45,7 +45,7 @@ def header(t, key, version=VERSION):
 
 def hello(name="tester", codecs=3, version=VERSION):
     nm = name.encode("utf-8")[:32].ljust(32, b"\0")
-    return header(T_HELLO, 0, version) + struct.pack("<BB", codecs, 0) + nm + struct.pack("<H", 0)
+    return header(T_HELLO, 0, version) + struct.pack("<BB", codecs, 0) + nm + struct.pack("<I", 0) + bytes(32) + struct.pack("<H", 0)
 
 
 def recv_type(sock, want, timeout=1.0):

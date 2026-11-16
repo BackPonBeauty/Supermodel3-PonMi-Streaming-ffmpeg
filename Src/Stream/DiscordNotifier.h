@@ -28,6 +28,7 @@ struct DiscordHostStatus
   std::string servername;
   std::string gametitle;
   std::string ip;
+  bool        locked = false;     // SV-18: room password
   bool        present[9] = {};    // 1..8: a streaming server runs for this slot
   bool        available[9] = {};  // nobody connected
   std::string player[9];

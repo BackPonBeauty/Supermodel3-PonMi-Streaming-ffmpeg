@@ -24,6 +24,8 @@ struct StreamConnectRequest
   std::string host;
   int slot = 1;
   std::string name;
+  std::string password;   // SV-18: room password typed in the lobby (kept in memory only, never saved)
+  std::string serverName; // for the password box title
 };
 
 namespace Lobby
@@ -40,6 +42,9 @@ namespace Lobby
 
   // Filled by Draw() when it returns Action::Connect; cleared by Main after the client ran.
   StreamConnectRequest &Request();
+
+  // SV-18: open the password box for this host / slot (the server asked for a password, or it was wrong)
+  void AskPassword(const StreamConnectRequest &req, bool wrong);
 }
 
 #endif // INCLUDED_STREAM_LOBBY_H

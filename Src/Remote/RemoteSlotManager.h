@@ -35,6 +35,7 @@ public:
     // Register the host and this slot on Firebase and start the heartbeat (asynchronous).
     // gameTitle: ROM name (e.g. spikeofe)
     void StartFirebaseAsync(const std::string &gameTitle = "", const std::string &serverName = "");
+    void SetLocked(bool locked) { m_firebase.SetLocked(locked); }   // SV-18: room password set (lock icon)
 
     // Host information
     const std::string &GetHostId() const { return m_hostId; }

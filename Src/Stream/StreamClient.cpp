@@ -11,6 +11,7 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <windows.h>
+#include "RoomPassword.h"
 #include "OSD/SDL/SDLIncludes.h"
 #include <GL/glew.h>
 #include "Pkgs/imgui/imgui.h"
@@ -92,6 +93,9 @@ namespace
     case R_LOGIN_UNAVAILABLE: return "Refused: the server could not check your Discord login now. Please try again later.";
     case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
     case R_ALREADY_CONNECTED: return "Refused: your Discord account is already connected to another slot of this host.";
+    case R_PASSWORD_REQUIRED: return "This host needs a password.";
+    case R_PASSWORD_WRONG:    return "Wrong password.";
+    case R_PASSWORD_LOCKED:   return "Too many wrong passwords. Please wait 5 minutes and try again.";
     default:                  return "Refused by the server.";
     }
   }
@@ -486,9 +490,10 @@ namespace
   // -------------------------------------------------------------------------------------------------------
   // Handshake (before the window opens)
   // -------------------------------------------------------------------------------------------------------
-  bool Handshake(Client *c, const StreamConnectRequest &req, std::string &message)
+  bool Handshake(Client *c, const StreamConnectRequest &req, std::string &message, uint8_t *rejectReason)
   {
     Hello hello = {};
+    hello.pwNonce = 0;   // SV-18: filled in after REJECT(R_PASSWORD_REQUIRED)
     FillHeader(hello.h, T_HELLO, 0);
     hello.codecs = CODEC_H264 | CODEC_H265;
     hello.login = LOGIN_NONE;
@@ -502,17 +507,20 @@ namespace
       hello.login = LOGIN_DISCORD;
       hello.tokenLen = (uint16_t) token.size();
     }
-    std::vector<char> packet(sizeof(hello) + token.size());
-    memcpy(packet.data(), &hello, sizeof(hello));
-    if (hello.tokenLen)
-      memcpy(packet.data() + sizeof(hello), token.data(), token.size());
-    else
-      packet.resize(sizeof(hello));
+    std::vector<char> packet;
+    auto build = [&]() {
+      packet.assign(sizeof(hello) + (hello.tokenLen ? token.size() : 0), 0);
+      memcpy(packet.data(), &hello, sizeof(hello));
+      if (hello.tokenLen)
+        memcpy(packet.data() + sizeof(hello), token.data(), token.size());
+    };
+    build();
 
     char buf[512];
     uint64_t start = NowMs();
     uint64_t lastSend = 0;
     const uint64_t waitMs = hello.tokenLen ? 9000 : 5000;   // the host asks Discord (up to 5 s)
+    int pwAnswers = 0;
     while (NowMs() - start < waitMs)
     {
       if (NowMs() - lastSend >= 500)
@@ -530,7 +538,25 @@ namespace
         continue;
       if (h.type == T_REJECT && n >= (int) sizeof(Reject))
       {
-        message = RejectText(((Reject *) buf)->reason);
+        Reject r;
+        memcpy(&r, buf, sizeof(r));
+        if (r.reason == R_PASSWORD_REQUIRED && !req.password.empty() && r.nonce != 0)
+        {
+          // SV-18: answer the nonce with the proof (the password itself is never sent)
+          if (r.nonce != hello.pwNonce && ++pwAnswers <= 3)
+          {
+            hello.pwNonce = r.nonce;
+            RoomPassword::Proof(r.nonce, req.password, hello.pwProof);
+            build();
+            c->SendSession(packet.data(), (int) packet.size());
+            lastSend = NowMs();
+            start = NowMs();   // a new wait for the answer
+          }
+          continue;
+        }
+        if (rejectReason)
+          *rejectReason = r.reason;
+        message = RejectText(r.reason);
         return false;
       }
       if (h.type == T_WELCOME && n >= (int) sizeof(Welcome))
@@ -554,7 +580,7 @@ namespace
 // Entry point
 // ---------------------------------------------------------------------------------------------------------
 
-StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &message)
+StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &message, uint8_t *rejectReason)
 {
   WSADATA wsa;
   WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -582,7 +608,9 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
   };
 
   printf("[Client] Connecting to %s slot %d (session port %d) as \"%s\"\n", req.host.c_str(), req.slot, base + PORT_SESSION, req.name.c_str());
-  if (!Handshake(c, req, message))
+  if (rejectReason)
+    *rejectReason = 0;
+  if (!Handshake(c, req, message, rejectReason))
   {
     printf("[Client] %s\n", message.c_str());
     closeSockets();

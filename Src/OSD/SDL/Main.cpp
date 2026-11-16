@@ -91,6 +91,7 @@
 #include "Stream/Lobby.h"
 #include "Stream/StreamClient.h"
 #include "Stream/Version.h"
+#include "Stream/RoomPassword.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
 #ifndef SUPERMODEL_OSX
@@ -1471,6 +1472,16 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       }
       // META_ALT_D (host debug panel) is reserved; whether to carry it over is still open (design D-6).
     };
+    // SV-18 (11/16): room password from the launcher (StreamPassword = DPAPI:..., blank = public)
+    {
+      bool unreadable = false;
+      std::string pw = RoomPassword::FromIni(s_runtime_config["StreamPassword"].ValueAsDefault<std::string>(""), &unreadable);
+      if (unreadable)
+        printf("[Session] StreamPassword cannot be decrypted (another Windows user / PC?) -> nobody can join. Set it again in the launcher.\n");
+      else if (!pw.empty())
+        printf("[Session] Room password is set (players must enter it)\n");
+      s_session.SetPassword(pw);
+    }
     if (!s_session.Start(linkplay, sessionPort, inputPort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(),
                          decoderCodec, cb))
       printf("[Session] Failed to start the session server (ports %d / %d)\n", sessionPort, inputPort);
@@ -3059,7 +3070,13 @@ int main(int argc, char **argv)
         size_t c2 = spec.find(':', c1 + 1);
         req.slot = atoi(spec.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1).c_str());
         if (c2 != std::string::npos)
-          req.name = spec.substr(c2 + 1);
+        {
+          // host:slot:name[:password] (SV-18 test)
+          size_t c3 = spec.find(':', c2 + 1);
+          req.name = spec.substr(c2 + 1, c3 == std::string::npos ? std::string::npos : c3 - c2 - 1);
+          if (c3 != std::string::npos)
+            req.password = spec.substr(c3 + 1);
+        }
       }
       if (req.slot < 1 || req.slot > 8)
         req.slot = 1;
@@ -3154,9 +3171,12 @@ int main(int argc, char **argv)
       StreamConnectRequest req = request;
       request.requested = false;
       std::string message;
-      if (RunStreamClient(req, message) == StreamClientExit::QuitApp)
+      uint8_t rejectReason = 0;
+      if (RunStreamClient(req, message, &rejectReason) == StreamClientExit::QuitApp)
         return 0;
       Lobby::Open(message);   // show the lobby again (with why the session ended)
+      if (rejectReason == StreamProto::R_PASSWORD_REQUIRED || rejectReason == StreamProto::R_PASSWORD_WRONG)
+        Lobby::AskPassword(req, rejectReason == StreamProto::R_PASSWORD_WRONG);   // SV-18: the password box for that slot
     }
 
     if (cmd_line.rom_files.empty())
@@ -3345,6 +3365,8 @@ int main(int argc, char **argv)
         if (dot != std::string::npos)
             romPath = romPath.substr(0, dot);
         std::string serverName = s_runtime_config["ServerName"].ValueAsDefault<std::string>("");
+        // SV-18: the lobby shows a lock (only the fact, never the password)
+        s_remoteSlotMgr.SetLocked(!s_runtime_config["StreamPassword"].ValueAsDefault<std::string>("").empty());
         s_remoteSlotMgr.StartFirebaseAsync(game.name, serverName);
     }
   }

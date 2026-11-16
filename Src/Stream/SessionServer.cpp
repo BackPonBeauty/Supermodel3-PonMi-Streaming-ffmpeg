@@ -7,6 +7,7 @@
 #include "SessionServer.h"
 #include "RemoteInputSystem.h"
 #include "DiscordAuth.h"
+#include "RoomPassword.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <windows.h>
@@ -260,6 +261,65 @@ void SessionServer::CheckIdle()
   }
 }
 
+// SV-18: true = the proof matches. Otherwise rejectReason (and nonceOut for R_PASSWORD_REQUIRED) say what to answer.
+bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, uint8_t &rejectReason, uint32_t &nonceOut)
+{
+  uint64_t now = NowMs();
+  uint32_t ip = from.sin_addr.s_addr;
+
+  // keep the maps small (a flood of HELLOs from many addresses)
+  if (m_pwNonces.size() > 512)
+    for (auto it = m_pwNonces.begin(); it != m_pwNonces.end();)
+      it = (now - it->second.time > kPwNonceLifeMs) ? m_pwNonces.erase(it) : std::next(it);
+  if (m_pwFails.size() > 512)
+    for (auto it = m_pwFails.begin(); it != m_pwFails.end();)
+      it = (now - it->second.first > kPwFailWindowMs && now >= it->second.lockUntil) ? m_pwFails.erase(it) : std::next(it);
+
+  auto fail = m_pwFails.find(ip);
+  if (fail != m_pwFails.end() && now < fail->second.lockUntil)
+  {
+    rejectReason = R_PASSWORD_LOCKED;
+    return false;
+  }
+
+  auto it = m_pwNonces.find(ip);
+  bool fresh = it != m_pwNonces.end() && now - it->second.time < kPwNonceLifeMs;
+  if (hello.pwNonce == 0 || !fresh || it->second.nonce != hello.pwNonce)
+  {
+    // no (valid) answer yet: (re)send the nonce. A live one is kept, so a repeated HELLO does not replace it.
+    if (!fresh)
+    {
+      m_pwNonces[ip] = { RoomPassword::NewNonce(), now };
+      it = m_pwNonces.find(ip);
+    }
+    rejectReason = R_PASSWORD_REQUIRED;
+    nonceOut = it->second.nonce;
+    return false;
+  }
+
+  uint8_t expect[32];
+  RoomPassword::Proof(hello.pwNonce, m_password, expect);
+  m_pwNonces.erase(it);   // one try per nonce
+  if (RoomPassword::ProofEquals(expect, hello.pwProof))
+  {
+    m_pwFails.erase(ip);
+    return true;
+  }
+
+  PwFail &f = m_pwFails[ip];
+  if (f.count == 0 || now - f.first > kPwFailWindowMs)
+    f = { 0, now, 0 };
+  if (++f.count >= kPwMaxFailures)
+  {
+    f.lockUntil = now + kPwLockMs;
+    f.count = 0;
+    printf("[Session] Slot %d: %d wrong passwords from %s -> refused for %u s\n", m_slot, kPwMaxFailures,
+           AddrToString(from).c_str(), (unsigned) (kPwLockMs / 1000));
+  }
+  rejectReason = R_PASSWORD_WRONG;
+  return false;
+}
+
 void SessionServer::Disconnect(const char *why)
 {
   {
@@ -291,10 +351,11 @@ void SessionServer::Disconnect(const char *why)
 
 void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &from)
 {
-  auto reject = [&](uint8_t reason, const char *text) {
-    Reject r;
+  auto reject = [&](uint8_t reason, const char *text, uint32_t nonce = 0) {
+    Reject r = {};
     FillHeader(r.h, T_REJECT, 0);
     r.reason = reason;
+    r.nonce = nonce;
     SendTo(&r, sizeof(r), from);
     printf("[Session] Slot %d: HELLO from %s:%d rejected (%s)\n", m_slot, AddrToString(from).c_str(), ntohs(from.sin_port), text);
   };
@@ -338,6 +399,20 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
         reject(R_SLOT_BUSY, "slot busy");
         return;
       }
+    }
+  }
+
+  if (!resend && !m_password.empty())
+  {
+    // SV-18: before the Discord check (cheap, and the first HELLO only fetches the nonce)
+    uint8_t reason = 0;
+    uint32_t nonce = 0;
+    if (!CheckPassword(hello, from, reason, nonce))
+    {
+      reject(reason, reason == R_PASSWORD_REQUIRED ? "password: nonce sent"
+                   : reason == R_PASSWORD_WRONG    ? "wrong password"
+                                                   : "too many wrong passwords from this IP", nonce);
+      return;
     }
   }
 

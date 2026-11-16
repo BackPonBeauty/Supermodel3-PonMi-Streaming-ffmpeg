@@ -25,7 +25,8 @@
 namespace StreamProto
 {
   constexpr char    kMagic[4] = { 'S', 'P', 'K', 'S' };
-  constexpr uint8_t kVersion  = 1;
+  // 2 (11/16): room password - Hello carries pwNonce / pwProof, Reject carries a nonce (design 3.6, SV-18)
+  constexpr uint8_t kVersion  = 2;
 
   constexpr int kBasePort = 55000;
   enum PortOffset { PORT_INPUT = 0, PORT_SESSION = 1, PORT_VIDEO = 2, PORT_AUDIO = 3 };
@@ -58,8 +59,19 @@ namespace StreamProto
     R_BAD_REQUEST = 6,
     R_LOGIN_UNAVAILABLE = 7, // the host could not ask Discord now (network, rate limit) / not set up on the host
     R_LOGIN_INVALID = 8,     // Discord said the token is invalid or expired
-    R_ALREADY_CONNECTED = 9  // this Discord account is already in another slot of this host
+    R_ALREADY_CONNECTED = 9, // this Discord account is already in another slot of this host
+    R_PASSWORD_REQUIRED = 10, // the host has a password: answer Reject.nonce with Hello.pwNonce / pwProof
+    R_PASSWORD_WRONG = 11,
+    R_PASSWORD_LOCKED = 12    // too many wrong passwords from this IP: wait kPwLockMs
   };
+
+  // Room password (SV-18): the password never travels. The host sends a fresh nonce (REJECT 10), the client
+  // answers with SHA-256("SPKS-room-v2" | nonce (4 bytes LE) | password). A nonce is used once and lives 30 s.
+  constexpr int      kMaxPasswordLength = 32;
+  constexpr uint32_t kPwNonceLifeMs     = 30000;
+  constexpr int      kPwMaxFailures     = 5;        // per IP within kPwFailWindowMs, then locked
+  constexpr uint32_t kPwFailWindowMs    = 600000;
+  constexpr uint32_t kPwLockMs          = 300000;
 
   enum CodecBits : uint8_t { CODEC_H264 = 1, CODEC_H265 = 2 };
   enum Login : uint8_t { LOGIN_NONE = 0, LOGIN_DISCORD = 1 };
@@ -92,6 +104,8 @@ namespace StreamProto
     uint8_t  codecs;    // CodecBits the client can decode
     uint8_t  login;     // Login
     char     name[kMaxNameLength];   // display name (UTF-8, zero padded)
+    uint32_t pwNonce;   // 0, or the nonce from REJECT(R_PASSWORD_REQUIRED)
+    uint8_t  pwProof[32];
     uint16_t tokenLen;
   };
 
@@ -108,6 +122,7 @@ namespace StreamProto
   {
     Header  h;
     uint8_t reason;     // RejectReason
+    uint32_t nonce;     // with R_PASSWORD_REQUIRED
   };
 
   struct Ping           // PING and PONG

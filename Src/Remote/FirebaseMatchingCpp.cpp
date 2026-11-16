@@ -288,6 +288,8 @@ bool FirebaseMatchingCpp::RegisterHost(const std::string &externalIp,
         ss << ",\"video\":" << GetSlotVideoPort(slot);
         ss << ",\"audio\":" << GetSlotAudioPort(slot);
         ss << ",\"available\":" << (availableSlots[slot] ? "true" : "false");
+        if (m_locked)
+            ss << ",\"locked\":true";   // SV-18 (only written when set, so public hosts work with older rules)
         ss << "}";
         std::string path = "/hosts/" + key + "/slot" + std::to_string(slot) + ".json?auth=" + Token();
         std::string resp = HttpPatch(dbHost, std::wstring(path.begin(), path.end()), ss.str(), Token());
@@ -936,6 +938,9 @@ bool FirebaseMatchingCpp::FetchHosts(std::vector<LobbyHostCpp> &out)
             host.slots[s].present = true;
             host.slots[s].available = slot->GetBool("available");
             host.slots[s].player = slot->GetString("player");
+            host.slots[s].locked = slot->GetBool("locked");
+            if (host.slots[s].locked)
+                host.locked = true;
             anySlot = true;
             if (ts > host.timestamp)
             {

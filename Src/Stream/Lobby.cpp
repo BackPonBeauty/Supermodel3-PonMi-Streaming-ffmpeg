@@ -34,6 +34,13 @@ namespace Lobby
 
   static const char *kSettingsFile = "streamclient.ini";
 
+  // SV-18: the password box (a modal popup). The typed password stays in memory only.
+  static bool s_pwOpenRequest = false;
+  static bool s_pwWrong = false;
+  static bool s_pwFocus = false;
+  static char s_pwBuf[StreamProto::kMaxPasswordLength + 1] = {};
+  static StreamConnectRequest s_pwReq;
+
   // --- Host list from Firebase (P6, LB-01/02/03) ---
   static std::mutex s_listLock;
   static std::vector<LobbyHostCpp> s_hosts;
@@ -192,6 +199,34 @@ namespace Lobby
     return s_request;
   }
 
+  void AskPassword(const StreamConnectRequest &req, bool wrong)
+  {
+    s_pwReq = req;
+    s_pwReq.requested = false;
+    s_pwReq.password.clear();
+    s_pwWrong = wrong;
+    s_pwOpenRequest = true;
+    memset(s_pwBuf, 0, sizeof(s_pwBuf));
+  }
+
+  // SV-18: a small padlock drawn with lines (no icon font needed), one text line high
+  static void DrawLock(ImU32 col)
+  {
+    float size = ImGui::GetTextLineHeight();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    float w = size * 0.62f, h = size * 0.50f;
+    float x0 = p.x + (size - w) * 0.5f, y0 = p.y + size - h - size * 0.04f;
+    float r = w * 0.30f, thick = size * 0.12f;
+    ImVec2 c(x0 + w * 0.5f, y0 - size * 0.02f);
+    dl->PathArcTo(c, r, 3.14159265f, 2.0f * 3.14159265f, 12);
+    dl->PathStroke(col, 0, thick);
+    dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x - r, y0 + 1.0f), col, thick);
+    dl->AddLine(ImVec2(c.x + r, c.y), ImVec2(c.x + r, y0 + 1.0f), col, thick);
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + h), col, size * 0.08f);
+    ImGui::Dummy(ImVec2(size, size));
+  }
+
   Action Draw(float scale)
   {
     Load();
@@ -301,7 +336,15 @@ namespace Lobby
           const LobbyHostCpp &h = hosts[i];
           ImGui::TableNextRow();
           ImGui::TableSetColumnIndex(0);
-          ImGui::Text("%s", h.servername.empty() ? h.ip.c_str() : h.servername.c_str());
+          const char *shownName = h.servername.empty() ? h.ip.c_str() : h.servername.c_str();
+          if (h.locked)
+          {
+            DrawLock(IM_COL32(255, 200, 60, 255));
+            if (ImGui::IsItemHovered())
+              ImGui::SetTooltip("Password required");
+            ImGui::SameLine();
+          }
+          ImGui::Text("%s", shownName);
           ImGui::TableSetColumnIndex(1);
           ImGui::Text("%s", h.gametitle.c_str());
           ImGui::TableSetColumnIndex(2);
@@ -331,16 +374,24 @@ namespace Lobby
                 std::string addr = ChooseAddress(h);
                 snprintf(s_hostBuf, sizeof(s_hostBuf), "%s", addr.c_str());
                 s_slot = s;
-                s_request.requested = true;
-                s_request.host = addr;
-                s_request.slot = s;
-                s_request.name = RequestName();
                 Save();
-                result = Action::Connect;
+                StreamConnectRequest req;
+                req.host = addr;
+                req.slot = s;
+                req.name = RequestName();
+                req.serverName = shownName;
+                if (h.locked)
+                  AskPassword(req, false);   // SV-18: the password box first
+                else
+                {
+                  s_request = req;
+                  s_request.requested = true;
+                  result = Action::Connect;
+                }
               }
               ImGui::PopStyleColor(2);
               if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Slot %d: free - click to join", s);
+                ImGui::SetTooltip(h.locked ? "Slot %d: free - click to join (password required)" : "Slot %d: free - click to join", s);
             }
             else
             {
@@ -395,12 +446,14 @@ namespace Lobby
     ImGui::EndDisabled();
     if (connectClicked && !updateRequired && s_hostBuf[0] != '\0')
     {
+      s_request = StreamConnectRequest();
       s_request.requested = true;
       s_request.host = s_hostBuf;
       s_request.slot = s_slot;
       s_request.name = RequestName();
+      s_request.serverName = s_hostBuf;
       Save();
-      result = Action::Connect;
+      result = Action::Connect;   // a host with a password answers "password required" -> the box opens
     }
     ImGui::SameLine();
     if (ImGui::Button("SKIP (PLAY LOCALLY)", ImVec2(btnW, btnH)))
@@ -418,6 +471,53 @@ namespace Lobby
     ImGui::Spacing();
     ImGui::Spacing();
     ImGui::TextDisabled("While connected:  F11 fullscreen,  F3 latency,  Up/Down bitrate,  ESC leave (back here)");
+
+    // --- SV-18: password box ---
+    if (s_pwOpenRequest)
+    {
+      s_pwOpenRequest = false;
+      s_pwFocus = true;
+      ImGui::OpenPopup("Password##room");
+    }
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Password##room", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+    {
+      DrawLock(IM_COL32(255, 200, 60, 255));
+      ImGui::SameLine();
+      ImGui::Text("%s  -  slot %d", s_pwReq.serverName.empty() ? s_pwReq.host.c_str() : s_pwReq.serverName.c_str(), s_pwReq.slot);
+      ImGui::Spacing();
+      if (s_pwWrong)
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "Wrong password. Please try again.");
+      else
+        ImGui::Text("This host needs a password.");
+      ImGui::Spacing();
+      if (s_pwFocus)
+      {
+        ImGui::SetKeyboardFocusHere();
+        s_pwFocus = false;
+      }
+      ImGui::SetNextItemWidth(300.0f * scale);
+      bool enter = ImGui::InputText("##roompw", s_pwBuf, sizeof(s_pwBuf), ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+      ImGui::Spacing();
+      bool join = ImGui::Button("JOIN", ImVec2(140.0f * scale, 0)) || enter;
+      ImGui::SameLine();
+      bool cancel = ImGui::Button("CANCEL", ImVec2(140.0f * scale, 0));
+      if (join && s_pwBuf[0] != '\0' && !updateRequired)
+      {
+        s_request = s_pwReq;
+        s_request.password = s_pwBuf;
+        s_request.requested = true;
+        memset(s_pwBuf, 0, sizeof(s_pwBuf));
+        ImGui::CloseCurrentPopup();
+        result = Action::Connect;
+      }
+      else if (cancel)
+      {
+        memset(s_pwBuf, 0, sizeof(s_pwBuf));
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    }
 
     ImGui::End();
     return result;
