@@ -16,6 +16,10 @@ public:
     virtual bool ReconfigureBitrate(int avgBitrate, int maxBitrate) = 0;
     virtual void Shutdown() = 0;
 
+    // P2 (2026-11-16, design SV-03/D-1): make the next encoded frame a keyframe (IDR + parameter sets).
+    // Thread-safe: may be called from a network thread; the encoder thread picks it up on the next frame.
+    virtual void RequestKeyframe() = 0;
+
     virtual void SetDestIP(const std::string &ip) = 0;
     virtual void SetDestIPs(const std::vector<std::string> &ips) = 0;
     virtual void SetDestEndpoints(const std::vector<std::pair<std::string, int>> &endpoints) = 0;

@@ -130,6 +130,22 @@ void AmfEncoder::EncodeFrame(unsigned int glTextureID)
         memcpy(dst + y * pitch, src + y * m_width * 4, m_width * 4);
     }
 
+    // 3b. A client asked for a keyframe (RequestKeyframe): force an IDR with parameter sets on this frame
+    if (m_keyframeRequested.exchange(false))
+    {
+        if (m_codec != "H264")   // same test as ReconfigureBitrate (H.265 unless H.264 was asked for)
+        {
+            pSurface->SetProperty(AMF_VIDEO_ENCODER_HEVC_FORCE_PICTURE_TYPE, amf_int64(AMF_VIDEO_ENCODER_HEVC_PICTURE_TYPE_IDR));
+            pSurface->SetProperty(AMF_VIDEO_ENCODER_HEVC_INSERT_HEADER, true);
+        }
+        else
+        {
+            pSurface->SetProperty(AMF_VIDEO_ENCODER_FORCE_PICTURE_TYPE, amf_int64(AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR));
+            pSurface->SetProperty(AMF_VIDEO_ENCODER_INSERT_SPS, true);
+            pSurface->SetProperty(AMF_VIDEO_ENCODER_INSERT_PPS, true);
+        }
+    }
+
     // 4. Submit input surface to encoder
     res = m_pEncoder->SubmitInput(pSurface);
     if (res != AMF_OK)

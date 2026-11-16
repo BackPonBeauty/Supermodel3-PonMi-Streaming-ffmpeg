@@ -68,6 +68,8 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
     {
         av_opt_set(m_codecContext->priv_data, "preset", "ultrafast", 0);
         av_opt_set(m_codecContext->priv_data, "tune", "zerolatency", 0);
+        // A frame marked as a keyframe (RequestKeyframe) becomes a real IDR, not just an I-frame
+        av_opt_set(m_codecContext->priv_data, "forced-idr", "1", 0);
     }
 
     // Open codec
@@ -147,6 +149,18 @@ void FfmpegEncoder::EncodeFrame(unsigned int glTextureID)
     sws_scale(m_swsContext, srcData, srcLinesize, 0, m_height, m_dstFrame->data, m_dstFrame->linesize);
 
     m_dstFrame->pts = s_frameCount++;
+
+    // A client asked for a keyframe (RequestKeyframe)
+    if (m_keyframeRequested.exchange(false))
+    {
+        m_dstFrame->pict_type = AV_PICTURE_TYPE_I;
+        m_dstFrame->flags |= AV_FRAME_FLAG_KEY;
+    }
+    else
+    {
+        m_dstFrame->pict_type = AV_PICTURE_TYPE_NONE;
+        m_dstFrame->flags &= ~AV_FRAME_FLAG_KEY;
+    }
 
     // 3. Send frame to encoder
     int ret = avcodec_send_frame(m_codecContext, m_dstFrame);

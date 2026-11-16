@@ -360,8 +360,9 @@ void NvencEncoder::EncodeFrame(unsigned int glTextureID)
     picParams.inputHeight = m_height;
     picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
 
-    // Force IDR frame for the first few frames
-    if (m_bufferIndex < 3)
+    // Force IDR frame for the first few frames, or when a client asked for one (RequestKeyframe)
+    bool forceIdr = m_keyframeRequested.exchange(false);
+    if (m_bufferIndex < 3 || forceIdr)
         picParams.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
     else
         picParams.encodePicFlags = NV_ENC_PIC_FLAG_OUTPUT_SPSPPS; // Attach SPS/PPS to every frame

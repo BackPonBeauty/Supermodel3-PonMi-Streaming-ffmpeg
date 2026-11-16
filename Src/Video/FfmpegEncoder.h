@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <atomic>
 #include "Network/RtpSender.h"
 
 // Forward declare FFmpeg structures to keep header clean
@@ -23,6 +24,7 @@ public:
     virtual void EncodeFrame(unsigned int glTextureID) override;
     virtual bool ReconfigureBitrate(int avgBitrate, int maxBitrate) override;
     virtual void Shutdown() override;
+    virtual void RequestKeyframe() override { m_keyframeRequested.store(true); }
 
     virtual void SetDestIP(const std::string &ip) override;
     virtual void SetDestIPs(const std::vector<std::string> &ips) override;
@@ -53,4 +55,6 @@ private:
     // RTP transmission
     RtpSender m_rtpSender;
     bool m_rtpEnabled = false;
+
+    std::atomic<bool> m_keyframeRequested{false};
 };

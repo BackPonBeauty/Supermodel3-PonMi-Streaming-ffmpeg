@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
+#include <atomic>
 #include <cuda.h>
 #include <cuda_gl_interop.h>
 #include <utility>
@@ -43,9 +44,10 @@ public:
     virtual int GetWidth() const override { return m_width; }
     virtual int GetHeight() const override { return m_height; }
     virtual float GetBitrateBps() override { return m_rtpSender.GetBitrateBps(); }
-   
+    virtual void RequestKeyframe() override { m_keyframeRequested.store(true); }
 
 private:
+    std::atomic<bool> m_keyframeRequested{false};
     bool LoadNvencDll();
     bool InitCuda();
     bool CreateEncoder();
