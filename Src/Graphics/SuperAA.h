@@ -11,8 +11,7 @@
 
 #include "IEncoder.h"
 #include "NvencEncoder.h"
-#include "AmfEncoder.h"
-#include "FfmpegEncoder.h"
+#include "FfmpegEncoder.h"   // 11/16: AMD AMF removed (owner: no streaming with AMF; FFMPEG works on any GPU)
 
 // This class just implements super sampling. Super sampling looks fantastic but is quite expensive.
 // 8x and beyond values can start to eat ridiculous amounts of memory / gpu time, for less and less noticable returns

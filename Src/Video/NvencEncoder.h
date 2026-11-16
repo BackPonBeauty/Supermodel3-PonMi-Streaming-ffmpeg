@@ -12,8 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <atomic>
-#include <cuda.h>
-#include <cuda_gl_interop.h>
+#include <cuda.h>   // types of the CUDA driver API only (nvcuda.dll is loaded at run time; no cudart)
 #include <utility>
 #include "nvEncodeAPI.h"
 #include "Network/RtpSender.h" // Added
@@ -61,7 +60,7 @@ private:
 
     static constexpr int BUFFER_COUNT = 3;
 
-    cudaGraphicsResource_t m_cuResource = nullptr;
+    CUgraphicsResource m_cuResource = nullptr;
     unsigned int m_glTexID = 0;
 
     NV_ENC_INPUT_PTR m_inputBuffers[BUFFER_COUNT] = {};

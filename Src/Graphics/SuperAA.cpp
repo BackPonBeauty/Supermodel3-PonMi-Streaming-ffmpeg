@@ -357,22 +357,8 @@ void SuperAA::Init(int width, int height, int port, bool streamingEnabled, const
             }
         }
 
-        if (!initSuccess && (encoderType == "AMF" || encoderType == "AUTO"))
-        {
-            printf("[Streaming] Attempting to initialize AMD AMF...\n");
-            m_encoder = new AmfEncoder();
-            if (m_encoder->Init(width, height, 60, port, codec, [](const uint8_t *data, size_t size, bool isKeyframe) {}))
-            {
-                initSuccess = true;
-                chosenEncoder = "AMF";
-            }
-            else
-            {
-                delete m_encoder;
-                m_encoder = nullptr;
-                printf("[Streaming] AMD AMF initialization failed.\n");
-            }
-        }
+        // 11/16: the AMD AMF encoder was removed. AUTO = NVENC (NVIDIA driver), else FFMPEG (x264/x265 on the CPU,
+        // any GPU: the frame is read back with glGetTexImage).
 
         if (!initSuccess && (encoderType == "FFMPEG" || encoderType == "AUTO"))
         {
@@ -399,13 +385,13 @@ void SuperAA::Init(int width, int height, int port, bool streamingEnabled, const
         else
         {
             m_streamingEnabled = false;
-            printf("[Streaming] Failed to initialize any encoder (NVENC/AMF/FFmpeg). Streaming disabled.\n");
+            printf("[Streaming] Failed to initialize any encoder (NVENC/FFmpeg). Streaming disabled.\n");
         }
     }
     else
     {
         m_streamingEnabled = false;
-        printf("[Streaming] NVENC/AMF/RTP disabled\n");
+        printf("[Streaming] NVENC/FFmpeg/RTP disabled\n");
     }
 }
 // m_fbo.Destroy();
