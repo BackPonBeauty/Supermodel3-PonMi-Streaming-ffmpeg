@@ -1,95 +1,65 @@
-Supermodel3-PonMi-Streaming-ffmpeg
+Supermodel3-PonMi
 https://github.com/BackPonBeauty/Supermodel3-PonMi-Streaming-ffmpeg
 
-MIT License
-
-Copyright (c) 2026 BackPonBeauty
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Copyright (C) 2026 BackPonBeauty
 
 Based on the original Supermodel3 (https://github.com/trzy/Supermodel)
-License: GPL Ver.3
-Copyright 2003-2026 The Supermodel Team
+Copyright (C) 2003-2026 The Supermodel Team
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+The full text of the GNU General Public License version 3 is in the file
+LICENSE. The FFmpeg / x264 / x265 build used by supermodel.exe (GPL) is
+described in Docs/BUILD_FFMPEG.md.
+
+No game ROM is included.
 
 --------------------------------------------------------------------------------
 
-This software includes the following libraries:
+This software uses the following libraries and services:
 
-Firebase (https://firebase.google.com/) 
-License: https://firebase.google.com/terms
+Firebase (https://firebase.google.com/)
+Realtime Database and Authentication through their REST API (no SDK)
+Terms: https://firebase.google.com/terms
 Copyright 2023 Google LLC.
 
-Newtonsoft.Json (https://www.newtonsoft.com/json)
-License: MIT 
-Copyright (c) 2007 James Newton-King
+FFmpeg (https://www.ffmpeg.org/)
+This build: GPL ver.2 or later (built with --enable-gpl, x264 and x265)
+FFmpeg itself: LGPL ver.2.1 or later (https://www.ffmpeg.org/legal.html)
+Copyright (c) 2000-2026 the FFmpeg developers
 
-SharpDX (http://sharpdx.org/)  
-License: MIT
-Copyright (c) 2010-2015 SharpDX - Alexandre Mutel
+x264 (https://www.videolan.org/developers/x264.html)
+License: GPL ver.2 or later (https://code.videolan.org/videolan/x264/-/blob/master/COPYING)
+Copyright (c) the x264 project
 
-System.Reactive (https://github.com/dotnet/reactive)
-License: MIT
-Copyright (c) .NET Foundation and Contributors  
+x265 (https://www.videolan.org/developers/x265.html)
+License: GPL ver.2 or later (https://bitbucket.org/multicoreware/x265_git/src/master/COPYING)
+Copyright (c) MulticoreWare, Inc
+
+libiconv (https://www.gnu.org/software/libiconv/)
+License: LGPL ver.2.1 or later
+Copyright (c) Free Software Foundation, Inc.
+
+NVIDIA Video Codec SDK header nvEncodeAPI.h (https://developer.nvidia.com/nvidia-video-codec-sdk)
+License: MIT License (see the header)
+Copyright (c) 2010-2024 NVIDIA Corporation
+
+NVIDIA CUDA Toolkit (https://developer.nvidia.com/cuda-toolkit)
+Only the CUDA driver API header (cuda.h) at build time; the CUDA runtime is not used
+License: CUDA Toolkit EULA (https://docs.nvidia.com/cuda/eula/index.html)
+Copyright (c) NVIDIA Corporation. All rights reserved.
 
 miniupnpc (https://github.com/miniupnp/miniupnp)
 License: BSD 3-Clause License (https://github.com/miniupnp/miniupnp/blob/master/LICENSE)
 Copyright (c) 2005-2022, Thomas BERNARD. All rights reserved.
-
-ViGEm Bus Driver (https://vigem.org/)
-License: MIT License (https://github.com/ViGEm/ViGEmBus/blob/master/LICENSE)
-Copyright (c) 2016-2022 Nefarius Software Solutions e.U.
-
-NVIDIA CUDA Toolkit (https://developer.nvidia.com/cuda-toolkit) 
-License: CUDA Toolkit EULA (https://docs.nvidia.com/cuda/eula/index.html)
-Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
-
-NVIDIA Video Codec SDK (https://developer.nvidia.com/nvidia-video-codec-sdk)  
-License: NVENC SDK License Agreement (https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement)
-Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
-
-Concentus & Concentus.Oggfile (https://github.com/lostindetails/Concentus)
-License: Microsoft Public License (MS-PL)
-Copyright (c) 2015 Logan Stromberg
-
-LiteDB (https://www.litedb.org/)
-License: MIT License (https://github.com/mbdavid/LiteDB/blob/master/LICENSE)
-Copyright (c) 2015 Maurício David
-
-NAudio (https://github.com/naudio/NAudio)
-License: MIT License (https://github.com/naudio/NAudio/blob/master/LICENSE)
-Copyright (c) 2020 Mark Heath
-
-Mono.Nat (https://github.com/mono/mono.nat)
-License: MIT License (https://github.com/mono/mono.nat/blob/master/LICENSE)
-Copyright (c) Alan McGovern and Contributors
-
-FFmpeg (https://www.ffmpeg.org/)
-License: LGPL ver.2.1 or later (https://www.ffmpeg.org/legal.html)
-Copyright (c) 2000-2026 the FFmpeg developers
-
-FirebaseDatabase.net (https://github.com/step-up-labs/firebase-database-dotnet)
-License: MIT License (https://github.com/step-up-labs/firebase-database-dotnet/blob/master/LICENSE)
-Copyright (c) 2017 Step Up Labs, Inc.
-
-FirebaseAuthentication.net (https://github.com/step-up-labs/firebase-authentication-dotnet)
-License: MIT License (https://github.com/step-up-labs/firebase-authentication-dotnet/blob/master/LICENSE)
-Copyright (c) 2017 Step Up Labs, Inc.
 
 SDL2 (https://www.libsdl.org/)
 License: zlib License (https://www.libsdl.org/license.php)
@@ -103,6 +73,10 @@ zlib (https://zlib.net/)
 License: zlib License (https://zlib.net/zlib_license.html)
 Copyright (c) 1995-2026 Jean-loup Gailly and Mark Adler
 
+Minizip (https://github.com/madler/zlib/tree/master/contrib/minizip)
+License: zlib License
+Copyright (c) 1998-2010 Gilles Vollant
+
 Dear ImGui (https://github.com/ocornut/imgui)
 License: MIT License (https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
 Copyright (c) 2014-2026 Omar Cornut
@@ -111,6 +85,13 @@ TinyXML-2 (https://github.com/leethomason/tinyxml2)
 License: zlib License (https://github.com/leethomason/tinyxml2/blob/master/LICENSE.txt)
 Copyright (c) 2011-2026 Lee Thomason
 
+GLEW (https://glew.sourceforge.net/)
+License: Modified BSD License / MIT License (https://github.com/nigels-com/glew/blob/master/LICENSE.txt)
+Copyright (c) the GLEW authors
+
+minimp3 (https://github.com/lieff/minimp3)
+License: CC0 1.0 (https://github.com/lieff/minimp3/blob/master/LICENSE)
+
 Opus (https://www.opus-codec.org/)
 License: BSD 3-Clause License (https://github.com/xiph/opus/blob/master/COPYING)
 Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo
@@ -118,4 +99,3 @@ Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc V
 Musashi M68K Emulator (https://github.com/kstenerud/Musashi)
 License: MIT License (https://github.com/kstenerud/Musashi/blob/master/LICENSE)
 Copyright (c) 2011 Karl Stenerud
-

@@ -401,3 +401,6 @@ Launcher/PonLuncher/EmbeddedKeys.vb
 # 11/17: costume pictures (ROM costumes recoloured) and their generated header: built into the exe, never in git
 /Config/costume/
 Src/Model3/EmbeddedCostume.h
+
+# 11/17 (owner): the launcher source is not published (kept on this PC only)
+/Launcher/

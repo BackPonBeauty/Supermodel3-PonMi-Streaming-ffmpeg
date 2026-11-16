@@ -194,31 +194,30 @@ spikeout8/
 
 ## 📜 ライセンス
 
-MIT License
+このソフトウェアは **GNU General Public License version 3（GPL v3）** で配布します。全文は [LICENSE](LICENSE) にあります。
 
-Copyright (c) 2026 BackPonBeauty
+- もとにしている [Supermodel3](https://github.com/trzy/Supermodel) が GPL v3 なので、それを改造したこのソフトウェア全体も GPL v3 です。
+- 組み込んでいる FFmpeg（`--enable-gpl`）・x264・x265 も GPL です。配布する exe も GPL の条件で配ります。作り直すための版と手順は [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md) にあります。
+- 使っているライブラリのライセンスは、下の「使用ライブラリ」と [PonMi_LICENSE.txt](PonMi_LICENSE.txt) にまとめています。
+- ゲームの ROM は含まれていません。自分で持っているものを使ってください。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+```
+Supermodel3-PonMi
+Copyright (C) 2026 BackPonBeauty
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Based on Supermodel3 (https://github.com/trzy/Supermodel)
+Copyright (C) 2003-2026 The Supermodel Team
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-Based on the original [Supermodel3](https://github.com/trzy/Supermodel)
-License: GPL Ver.3
-Copyright 2003-2026 The Supermodel Team
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+```
 
 ## 使用ライブラリ
 
@@ -255,8 +254,9 @@ Copyright 2003-2026 The Supermodel Team
 - Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
 
 ### [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk)
-- [License: NVENC SDK License Agreement](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement)
-- Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
+- ヘッダー `nvEncodeAPI.h` だけをソースに含めています（そのファイルは MIT License）。エンコードは、GPU ドライバーの `nvEncodeAPI64.dll` を実行時に読み込んで使います
+- License: MIT License（`Src/Video/nvEncodeAPI.h` の冒頭）
+- Copyright (c) 2010-2024 NVIDIA Corporation
 
 ### ~~[Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)~~
 - ~~License: Microsoft Public License (MS-PL)~~
