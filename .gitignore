@@ -420,3 +420,10 @@ Src/Model3/EmbeddedCostume.h
 /jp_lines.csv
 /translations.txt
 /route_table.html
+
+# 11/17 (owner): design notes, requirements and 8-link notes are not published
+/Docs/firebase_rules.json
+/Docs/spikeofe_8link_*
+/Docs/spikeout_8link_fix_summary.txt
+/Docs/streaming_design.md
+/Docs/streaming_requirements*.md
