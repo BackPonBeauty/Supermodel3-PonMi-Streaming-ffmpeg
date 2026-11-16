@@ -397,3 +397,7 @@ Launcher/PonLuncher/EmbeddedKeys.vb
 
 # 11/16: the entry-ticket Worker private key (paste into the Worker secret, then delete)
 **/Config/TicketSigningKey.private.jwk
+
+# 11/17: costume pictures (ROM costumes recoloured) and their generated header: built into the exe, never in git
+/Config/costume/
+Src/Model3/EmbeddedCostume.h

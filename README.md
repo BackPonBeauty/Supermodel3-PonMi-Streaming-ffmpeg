@@ -55,11 +55,12 @@ spikeout8/
 │   ├── NVRAM/
 │   ├── Roms/                   ← ROM ファイルをここに置く
 │   └── Assets/
-├── costume/                    ← 8人分の服の色
 └── waypoints.txt               ← ボットの道順
 ```
 
 クライアントは、同じ `supermodel.exe` と `Config/Supermodel.ini`、`Roms/` があれば動きます。
+
+5〜8人目の服の色は `supermodel.exe` に入っているので、`costume` フォルダは要りません。
 
 > ⚠️ ROM ファイルは含まれていません。各自で合法的に入手してください。
 

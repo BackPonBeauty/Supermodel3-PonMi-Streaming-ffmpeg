@@ -59,6 +59,12 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <zlib.h>
+// 11/17 (owner): the 8-player costume pictures are built into the exe (Scripts/gen_costume.ps1, not in git)
+#if __has_include("EmbeddedCostume.h")
+#include "EmbeddedCostume.h"
+#define HAVE_EMBEDDED_COSTUME 1
+#endif
 
 // Macros that divide memory regions into pages and mark them as dirty when they are written to
 #define PAGE_WIDTH 12
@@ -540,6 +546,53 @@ static void CsTileWalk(unsigned w, unsigned h, const std::function<void(unsigned
     }
 }
 
+// 11/17: the embedded costume archive, unpacked (deflate, raw): [1 byte name length][name][4 bytes length LE][data]...
+// Empty when the build had no Config/costume.
+static std::vector<uint8_t> CsUnpackEmbedded()
+{
+  std::vector<uint8_t> raw;
+#ifdef HAVE_EMBEDDED_COSTUME
+  if (EmbeddedCostume::kZLen > 1 && EmbeddedCostume::kRawLen > 0)
+  {
+    raw.resize(EmbeddedCostume::kRawLen);
+    z_stream zs = {};
+    if (inflateInit2(&zs, -15) == Z_OK)
+    {
+      zs.next_in = (Bytef *) EmbeddedCostume::kZ;
+      zs.avail_in = EmbeddedCostume::kZLen;
+      zs.next_out = raw.data();
+      zs.avail_out = (uInt) raw.size();
+      int r = inflate(&zs, Z_FINISH);
+      bool ok = r == Z_STREAM_END && zs.total_out == raw.size();
+      inflateEnd(&zs);
+      if (!ok) { ErrorLog("CostumeSwap: the built-in costume pictures could not be unpacked."); raw.clear(); }
+    }
+    else
+      raw.clear();
+  }
+#endif
+  return raw;
+}
+
+static bool CsFindEmbedded(const std::vector<uint8_t> &raw, const std::string &name, std::vector<uint8_t> &out)
+{
+  size_t p = 0;
+  while (p < raw.size())
+  {
+    const unsigned nl = raw[p];
+    if (p + 1 + nl + 4 > raw.size()) break;
+    const size_t q = p + 1 + nl;
+    const uint32_t len = raw[q] | raw[q + 1] << 8 | raw[q + 2] << 16 | (uint32_t) raw[q + 3] << 24;
+    const size_t d = q + 4;
+    if (d + len > raw.size()) break;
+    if (nl == name.size() && memcmp(&raw[p + 1], name.data(), nl) == 0) { out.assign(raw.begin() + d, raw.begin() + d + len); return true; }
+    p = d + len;
+  }
+  return false;
+}
+
+static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h);
+
 static bool CsLoadBmp(const std::string &path, std::vector<uint8_t> &rgb, int &w, int &h)
 {
   FILE *f = fopen(path.c_str(), "rb");
@@ -547,6 +600,11 @@ static bool CsLoadBmp(const std::string &path, std::vector<uint8_t> &rgb, int &w
   std::vector<uint8_t> d; uint8_t buf[65536]; size_t n;
   while ((n = fread(buf, 1, sizeof(buf), f)) > 0) d.insert(d.end(), buf, buf + n);
   fclose(f);
+  return CsParseBmp(d, rgb, w, h);
+}
+
+static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h)
+{
   if (d.size() < 54 || d[0] != 'B' || d[1] != 'M') return false;
   uint32_t off = d[10] | d[11] << 8 | d[12] << 16 | (uint32_t) d[13] << 24;
   int32_t bw = (int32_t) (d[18] | d[19] << 8 | d[20] << 16 | (uint32_t) d[21] << 24), bh = (int32_t) (d[22] | d[23] << 8 | d[24] << 16 | (uint32_t) d[25] << 24);
@@ -577,13 +635,20 @@ void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][1
   unsigned bx0 = 4096, by0 = 4096;
   for (int i = 0; i < 10; i++) { bx0 = (std::min)(bx0, 32 * (hdrSlot0[i] & 0x3F)); by0 = (std::min)(by0, 32 * ((hdrSlot0[i] >> 7) & 0x1F)); }
   unsigned loaded = 0;
+  // 11/17: the pictures come from the exe itself; a costume folder (dir) is only a fallback for a build without them
+  const std::vector<uint8_t> embedded = CsUnpackEmbedded();
+  unsigned fromExe = 0;
   for (int c = 0; c < 4; c++)
     for (int k = 0; k < 4; k++)
     {
       char fn[128]; snprintf(fn, sizeof(fn), "/%d_%s_col%d_%s.bmp", c, names[c], 4 + k, cols[k]);
       std::vector<uint8_t> rgb; int w = 0, h = 0;
       for (int i = 0; i < 10; i++) s_csNew[c][k][i].clear();
-      if (!orig[c][k] || !CsLoadBmp(dir + fn, rgb, w, h) || w < 640 || h < 256) { ErrorLog("CostumeSwap: cannot use %s%s", dir.c_str(), fn); continue; }
+      std::vector<uint8_t> bmp;
+      bool got = false;
+      if (CsFindEmbedded(embedded, fn + 1, bmp)) { got = CsParseBmp(bmp, rgb, w, h); if (got) fromExe++; }
+      if (!got) got = CsLoadBmp(dir + fn, rgb, w, h);
+      if (!orig[c][k] || !got || w < 640 || h < 256) { ErrorLog("CostumeSwap: cannot use %s (not built in, not in %s)", fn + 1, dir.c_str()); continue; }
       for (int i = 0; i < 10; i++)
       {
         const unsigned px = 32 * (hdrSlot0[i] & 0x3F) - bx0, py = 32 * ((hdrSlot0[i] >> 7) & 0x1F) - by0;
@@ -643,7 +708,7 @@ void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][1
       loaded++;
     }
   g_costumeSwap = loaded > 0;
-  InfoLog("CostumeSwap: %u of 16 new costumes loaded from %s", loaded, dir.c_str());
+  InfoLog("CostumeSwap: %u of 16 new costumes loaded (%u built into the exe, %u from %s)", loaded, fromExe, loaded - fromExe, dir.c_str());
 }
 
 static const uint16_t *CostumeSwapData(uint32_t header, const uint16_t *texData)
