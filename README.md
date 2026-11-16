@@ -28,7 +28,7 @@
 
 ### Spikeout FE changes
 
-- **5–8 players:** players 5–8 get their own costume colours (built into supermodel.exe, no `costume` folder), their own name colours on the HUD, and the KO / PK counters and ally stats for 8 players
+- **5–8 players:** players 5–8 get their own costume colours (made from your own ROM when the game starts; no pictures are shipped), their own name colours on the HUD, and the KO / PK counters and ally stats for 8 players
 - **Joining a running game:** a player who joins always joins **GAME A**, the game already in progress
 - **Time limit:** with 5 or more players in a game, the in-game countdown is held at 99. With 4 or fewer it runs as in the original
 - **3-minute mode is blocked:** pressing START while holding Shift + Beat + Charge + Jump does nothing
@@ -220,7 +220,7 @@ This software is distributed under the **GNU General Public License version 3 (G
 - It is based on [Supermodel3](https://github.com/trzy/Supermodel), which is GPL v3, so this modified program as a whole is GPL v3 as well.
 - The FFmpeg (`--enable-gpl`), x264 and x265 it contains are GPL too, and the distributed exe is under the GPL. Versions and build steps: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md).
 - Anyone may use, modify and redistribute it. When you distribute it (modified or not), provide the source under GPL v3 too.
-- The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt).
+- The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt). Their full license texts are in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) (include it when you distribute the exe).
 - No game ROM is included.
 
 ```
@@ -364,8 +364,8 @@ This software uses the following libraries (~~struck through~~ = no longer used 
 - Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo
 
 ### [Musashi M68K Emulator](https://github.com/kstenerud/Musashi)
-- [License: MIT License](https://github.com/kstenerud/Musashi/blob/master/LICENSE)
-- Copyright (c) 2011 Karl Stenerud
+- Used under the GPL with the permission of Karl Stenerud (see `Src/CPU/68K/Musashi`)
+- Copyright (c) Karl Stenerud
 
 ### Services used (new)
 - [Discord](https://discord.com/): sign-in (OAuth2 / PKCE), server membership check, slot status posts through a webhook — [Discord Developer Terms of Service](https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service)

@@ -44,9 +44,7 @@ include Makefiles/Options.inc
 # 11/16: embed the keys (Config/StreamingKeys.ini, not in git) into Src/Stream/EmbeddedKeys.h (not in git). The script
 # rewrites the header only when the keys change, so this costs nothing on an ordinary build.
 EMBEDDED_KEYS_RESULT := $(shell powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/gen_keys.ps1 -CppOnly)
-# 11/17: embed the 8-player costume pictures (Config/costume, not in git) deflate-compressed into
-# Src/Model3/EmbeddedCostume.h (not in git); rewritten only when a picture changes.
-EMBEDDED_COSTUME_RESULT := $(shell powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/gen_costume.ps1)
+# 11/17 (owner): the 8-player costume colours are made from the ROM at start-up (Real3D.cpp); no pictures are embedded.
 
 
 ###############################################################################

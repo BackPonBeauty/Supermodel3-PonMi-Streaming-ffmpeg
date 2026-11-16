@@ -24,7 +24,8 @@ No game ROM is included.
 
 --------------------------------------------------------------------------------
 
-This software uses the following libraries and services:
+This software uses the following libraries and services.
+Their full license texts are in THIRD_PARTY_LICENSES.txt.
 
 Firebase (https://firebase.google.com/)
 Realtime Database and Authentication through their REST API (no SDK)
@@ -97,5 +98,5 @@ License: BSD 3-Clause License (https://github.com/xiph/opus/blob/master/COPYING)
 Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo
 
 Musashi M68K Emulator (https://github.com/kstenerud/Musashi)
-License: MIT License (https://github.com/kstenerud/Musashi/blob/master/LICENSE)
-Copyright (c) 2011 Karl Stenerud
+Used under the GPL with the permission of Karl Stenerud (see Src/CPU/68K/Musashi)
+Copyright (c) Karl Stenerud

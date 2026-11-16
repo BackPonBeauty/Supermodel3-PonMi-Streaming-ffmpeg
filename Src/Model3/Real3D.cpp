@@ -56,15 +56,10 @@
 #include "Util/BitCast.h"
 #include <cstring>
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <string>
 #include <vector>
-#include <zlib.h>
-// 11/17 (owner): the 8-player costume pictures are built into the exe (Scripts/gen_costume.ps1, not in git)
-#if __has_include("EmbeddedCostume.h")
-#include "EmbeddedCostume.h"
-#define HAVE_EMBEDDED_COSTUME 1
-#endif
 
 // Macros that divide memory regions into pages and mark them as dirty when they are written to
 #define PAGE_WIDTH 12
@@ -519,8 +514,10 @@ static constexpr unsigned decode8x2[16] =
  The game uploads a player's costume as 10 pieces of 128x128 (16-bit, mipmapped) to the slot's place in texture
  RAM; slots 4-7 wrap round to the same 4 colours as 0-3. Here an upload whose header is one of a slot 4-7 piece
  headers, and whose data is that piece of one of the 16 ROM costumes (character c, colour k), is replaced by the
- same piece of a BMP made for colour 4+k (8p\costume\<c>_<name>_col<4+k>_<colour>.bmp, 640x256, laid out like the
- dump). The ROM is not touched; only what is drawn changes (not link-synced data).
+ same piece of a new picture for colour 4+k. The ROM is not touched; only what is drawn changes (not link-synced data).
+
+ 11/17 (owner): the new pictures are made at start-up from the player's own ROM (CsRecolor), so no SEGA picture is
+ built into the exe or shipped with it. Was: BMPs in a costume folder (11/14), then built into the exe (11/17).
 ******************************************************************************/
 
 bool g_costumeSwap = false;
@@ -546,109 +543,105 @@ static void CsTileWalk(unsigned w, unsigned h, const std::function<void(unsigned
     }
 }
 
-// 11/17: the embedded costume archive, unpacked (deflate, raw): [1 byte name length][name][4 bytes length LE][data]...
-// Empty when the build had no Config/costume.
-static std::vector<uint8_t> CsUnpackEmbedded()
+// 11/17 (owner): the new costume pictures are made here from the 4 ROM colours of the character, exactly like the
+// old tools (costume_dump.py + costume_recolor.py) made the BMPs: the costume texels are those that differ (more than
+// 16 in a channel, 8-bit) between red and any other ROM colour; they take their shading (HSV value / saturation) from
+// red and the hue / saturation of the new colour. Everything else (face, skin) stays as in red.
+// rgb: 640x256 (the dump's layout, the 10 pieces placed by slot 0's headers), 8-bit RGB.
+struct CsNewColour { double hue, satScale, valA, valB; };
+static const CsNewColour kCsNew[4] = {        // colours 4-7: pink, purple, grey (11/14: almost black), white
+  { 330.0 / 360.0, 0.55, 0.20, 0.85 },
+  { 275.0 / 360.0, 0.85, 0.00, 0.95 },
+  { 0.0,           0.00, 0.03, 0.27 },
+  { 0.0,           0.00, 0.45, 0.60 },
+};
+
+static inline uint8_t Cs5to8(unsigned v) { return (uint8_t) (v * 255 / 31); }
+
+// The ROM picture of one colour as 640x256 8-bit RGB (level 0 of each piece).
+static void CsRomPicture(const uint16_t *orig, const unsigned px[10], const unsigned py[10], std::vector<uint8_t> &rgb)
 {
-  std::vector<uint8_t> raw;
-#ifdef HAVE_EMBEDDED_COSTUME
-  if (EmbeddedCostume::kZLen > 1 && EmbeddedCostume::kRawLen > 0)
+  rgb.assign(640 * 256 * 3, 0);
+  for (int i = 0; i < 10; i++)
   {
-    raw.resize(EmbeddedCostume::kRawLen);
-    z_stream zs = {};
-    if (inflateInit2(&zs, -15) == Z_OK)
-    {
-      zs.next_in = (Bytef *) EmbeddedCostume::kZ;
-      zs.avail_in = EmbeddedCostume::kZLen;
-      zs.next_out = raw.data();
-      zs.avail_out = (uInt) raw.size();
-      int r = inflate(&zs, Z_FINISH);
-      bool ok = r == Z_STREAM_END && zs.total_out == raw.size();
-      inflateEnd(&zs);
-      if (!ok) { ErrorLog("CostumeSwap: the built-in costume pictures could not be unpacked."); raw.clear(); }
-    }
-    else
-      raw.clear();
+    const uint16_t *src = orig + (size_t) i * CS_PIECE;
+    CsTileWalk(128, 128, [&](unsigned idx, unsigned x, unsigned y) {
+      const uint16_t v = src[idx];
+      uint8_t *q = &rgb[((py[i] + y) * 640 + px[i] + x) * 3];
+      q[0] = Cs5to8((v >> 10) & 31); q[1] = Cs5to8((v >> 5) & 31); q[2] = Cs5to8(v & 31);
+    });
   }
-#endif
-  return raw;
 }
 
-static bool CsFindEmbedded(const std::vector<uint8_t> &raw, const std::string &name, std::vector<uint8_t> &out)
+// colorsys.hsv_to_rgb (Python), same arithmetic in double
+static void CsHsvToRgb(double h, double s, double v, double &r, double &g, double &b)
 {
-  size_t p = 0;
-  while (p < raw.size())
+  if (s == 0.0) { r = g = b = v; return; }
+  int i = (int) (h * 6.0);
+  const double f = (h * 6.0) - i, p = v * (1.0 - s), q = v * (1.0 - s * f), t = v * (1.0 - s * (1.0 - f));
+  switch (i % 6)
   {
-    const unsigned nl = raw[p];
-    if (p + 1 + nl + 4 > raw.size()) break;
-    const size_t q = p + 1 + nl;
-    const uint32_t len = raw[q] | raw[q + 1] << 8 | raw[q + 2] << 16 | (uint32_t) raw[q + 3] << 24;
-    const size_t d = q + 4;
-    if (d + len > raw.size()) break;
-    if (nl == name.size() && memcmp(&raw[p + 1], name.data(), nl) == 0) { out.assign(raw.begin() + d, raw.begin() + d + len); return true; }
-    p = d + len;
+  case 0: r = v; g = t; b = p; break;
+  case 1: r = q; g = v; b = p; break;
+  case 2: r = p; g = v; b = t; break;
+  case 3: r = p; g = q; b = v; break;
+  case 4: r = t; g = p; b = v; break;
+  default: r = v; g = p; b = q; break;
   }
-  return false;
 }
 
-static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h);
-
-static bool CsLoadBmp(const std::string &path, std::vector<uint8_t> &rgb, int &w, int &h)
+// var[0..3]: the ROM pictures red, blue, green, orange; out: the picture of new colour 4+k
+static void CsRecolor(const std::vector<uint8_t> var[4], int k, std::vector<uint8_t> &out)
 {
-  FILE *f = fopen(path.c_str(), "rb");
-  if (!f) return false;
-  std::vector<uint8_t> d; uint8_t buf[65536]; size_t n;
-  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) d.insert(d.end(), buf, buf + n);
-  fclose(f);
-  return CsParseBmp(d, rgb, w, h);
-}
-
-static bool CsParseBmp(const std::vector<uint8_t> &d, std::vector<uint8_t> &rgb, int &w, int &h)
-{
-  if (d.size() < 54 || d[0] != 'B' || d[1] != 'M') return false;
-  uint32_t off = d[10] | d[11] << 8 | d[12] << 16 | (uint32_t) d[13] << 24;
-  int32_t bw = (int32_t) (d[18] | d[19] << 8 | d[20] << 16 | (uint32_t) d[21] << 24), bh = (int32_t) (d[22] | d[23] << 8 | d[24] << 16 | (uint32_t) d[25] << 24);
-  unsigned bpp = d[28] | d[29] << 8;
-  if ((bpp != 24 && bpp != 32) || bw <= 0 || bh == 0) return false;
-  bool topDown = bh < 0; if (topDown) bh = -bh;
-  unsigned bypp = bpp / 8, row = (bw * bypp + 3) & ~3u;
-  if (off + (size_t) row * bh > d.size()) return false;
-  w = bw; h = bh; rgb.assign((size_t) w * h * 3, 0);
-  for (int y = 0; y < h; y++)
+  const CsNewColour &nc = kCsNew[k];
+  const std::vector<uint8_t> &red = var[0];
+  out = red;
+  for (size_t t = 0; t < 640 * 256; t++)
   {
-    const uint8_t *p = &d[off + (size_t) row * (topDown ? y : h - 1 - y)];
-    for (int x = 0; x < w; x++) { rgb[(y * w + x) * 3] = p[x * bypp + 2]; rgb[(y * w + x) * 3 + 1] = p[x * bypp + 1]; rgb[(y * w + x) * 3 + 2] = p[x * bypp]; }
+    const uint8_t *a = &red[t * 3];
+    bool costume = false;
+    for (int j = 1; j < 4 && !costume; j++)
+      for (int ch = 0; ch < 3; ch++)
+        if (std::abs((int) a[ch] - (int) var[j][t * 3 + ch]) > 16) { costume = true; break; }
+    if (!costume)
+      continue;
+    // colorsys.rgb_to_hsv: only s and v are used (the hue is the new colour's)
+    const double R = a[0] / 255.0, G = a[1] / 255.0, B = a[2] / 255.0;
+    const double maxc = (std::max)(R, (std::max)(G, B)), minc = (std::min)(R, (std::min)(G, B));
+    const double v = maxc, s = (minc == maxc) ? 0.0 : (maxc - minc) / maxc;
+    const double v2 = (std::min)(1.0, nc.valA + nc.valB * v), s2 = (std::min)(1.0, s * nc.satScale);
+    double r, g, b;
+    CsHsvToRgb(nc.hue, s2, v2, r, g, b);
+    out[t * 3] = (uint8_t) (int) (r * 255 + .5); out[t * 3 + 1] = (uint8_t) (int) (g * 255 + .5); out[t * 3 + 2] = (uint8_t) (int) (b * 255 + .5);
   }
-  return true;
 }
 
-// hdrSlot0: slot 0's 10 piece headers (the BMP layout); hdr: slots 0-7; orig: ROM costumes [character][colour]
+// hdrSlot0: slot 0's 10 piece headers (the picture layout); hdr: slots 0-7; orig: ROM costumes [character][colour]
 // 11/14 col8 (user): the game now gives same-character players colours 0-7 in pick order on any slot (red blue green
 // orange pink purple black white); the ROM costume is fetched with colour & 3. An upload to slot s is swapped when that
 // slot's colour byte (fa_player +0xA0 + s) is 4-7: ROM colour k -> new colour 4+k. Was: every upload to slots 4-7.
-void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][10], const uint16_t *const orig[4][4], const std::string &dir, const uint8_t *ram)
+void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][10], const uint16_t *const orig[4][4], const uint8_t *ram)
 {
   static const char *names[4] = { "spike", "white", "linda", "tenshin" };
-  static const char *cols[4] = { "pink", "purple", "grey", "white" };
   memcpy(s_csHdr, hdr, sizeof(s_csHdr)); s_csRam = ram;
   for (int c = 0; c < 4; c++) for (int k = 0; k < 4; k++) s_csOrig[c][k] = orig[c][k];
   unsigned bx0 = 4096, by0 = 4096;
   for (int i = 0; i < 10; i++) { bx0 = (std::min)(bx0, 32 * (hdrSlot0[i] & 0x3F)); by0 = (std::min)(by0, 32 * ((hdrSlot0[i] >> 7) & 0x1F)); }
+  unsigned ppx[10], ppy[10];
+  for (int i = 0; i < 10; i++) { ppx[i] = 32 * (hdrSlot0[i] & 0x3F) - bx0; ppy[i] = 32 * ((hdrSlot0[i] >> 7) & 0x1F) - by0; }
   unsigned loaded = 0;
-  // 11/17: the pictures come from the exe itself; a costume folder (dir) is only a fallback for a build without them
-  const std::vector<uint8_t> embedded = CsUnpackEmbedded();
-  unsigned fromExe = 0;
   for (int c = 0; c < 4; c++)
+  {
+    for (int k = 0; k < 4; k++)
+      for (int i = 0; i < 10; i++) s_csNew[c][k][i].clear();
+    if (!orig[c][0] || !orig[c][1] || !orig[c][2] || !orig[c][3]) { ErrorLog("CostumeSwap: ROM costumes of %s not found.", names[c]); continue; }
+    std::vector<uint8_t> var[4];
+    for (int j = 0; j < 4; j++) CsRomPicture(orig[c][j], ppx, ppy, var[j]);
     for (int k = 0; k < 4; k++)
     {
-      char fn[128]; snprintf(fn, sizeof(fn), "/%d_%s_col%d_%s.bmp", c, names[c], 4 + k, cols[k]);
-      std::vector<uint8_t> rgb; int w = 0, h = 0;
-      for (int i = 0; i < 10; i++) s_csNew[c][k][i].clear();
-      std::vector<uint8_t> bmp;
-      bool got = false;
-      if (CsFindEmbedded(embedded, fn + 1, bmp)) { got = CsParseBmp(bmp, rgb, w, h); if (got) fromExe++; }
-      if (!got) got = CsLoadBmp(dir + fn, rgb, w, h);
-      if (!orig[c][k] || !got || w < 640 || h < 256) { ErrorLog("CostumeSwap: cannot use %s (not built in, not in %s)", fn + 1, dir.c_str()); continue; }
+      std::vector<uint8_t> rgb;
+      CsRecolor(var, k, rgb);
+      const int w = 640;
       for (int i = 0; i < 10; i++)
       {
         const unsigned px = 32 * (hdrSlot0[i] & 0x3F) - bx0, py = 32 * ((hdrSlot0[i] >> 7) & 0x1F) - by0;
@@ -661,7 +654,7 @@ void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][1
           CsTileWalk(sz, sz, [&](unsigned idx, unsigned x, unsigned y) { ol[lv][y * sz + x] = src[so + idx]; });
           so += sz * sz;
         }
-        // new levels: top from the BMP, each smaller one the 2x2 average of the one above; top bit from the ROM
+        // new levels: top from the new picture, each smaller one the 2x2 average of the one above; top bit from the ROM
         std::vector<uint16_t> &out = s_csNew[c][k][i];
         out.assign(CS_PIECE + 4, 0);
         std::vector<uint32_t> r(128 * 128), g(128 * 128), b(128 * 128);
@@ -707,8 +700,9 @@ void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][1
       }
       loaded++;
     }
+  }
   g_costumeSwap = loaded > 0;
-  InfoLog("CostumeSwap: %u of 16 new costumes loaded (%u built into the exe, %u from %s)", loaded, fromExe, loaded - fromExe, dir.c_str());
+  InfoLog("CostumeSwap: %u of 16 new costumes made from the ROM", loaded);
 }
 
 static const uint16_t *CostumeSwapData(uint32_t header, const uint16_t *texData)

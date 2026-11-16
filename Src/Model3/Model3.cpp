@@ -8181,11 +8181,12 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     bool linkApplied = applyPatches("Spikeout8Link", s_spikeout8LinkPatches, sizeof(s_spikeout8LinkPatches) / sizeof(s_spikeout8LinkPatches[0]));
     if (linkApplied && m_config["Spikeout8Players"].ValueAsDefault<bool>(false))
       applyPatches("Spikeout8Players", s_spikeout8PlayersPatches, sizeof(s_spikeout8PlayersPatches) / sizeof(s_spikeout8PlayersPatches[0]));
-    // CostumeSwap (11/14, default on with 8 players): slots 4-7 get new costume colours from BMPs (CostumeDir, default
-    // ../costume = 8p\costume) instead of wrapping round to the 4 ROM colours. Real3D.cpp replaces the upload data.
+    // CostumeSwap (11/14, default on with 8 players): slots 4-7 get new costume colours instead of wrapping round to the
+    // 4 ROM colours. Real3D.cpp replaces the upload data. 11/17 (owner): the new colours are made at start-up from the
+    // ROM costumes below (no pictures in the exe or in a folder any more; CostumeDir is gone).
     if (linkApplied && m_config["Spikeout8Players"].ValueAsDefault<bool>(false) && m_config["CostumeSwap"].ValueAsDefault<bool>(true))
     {
-      extern void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][10], const uint16_t *const orig[4][4], const std::string &dir, const uint8_t *ram);
+      extern void Real3DCostumeSwapSetup(const uint32_t hdrSlot0[10], const uint32_t hdr[8][10], const uint16_t *const orig[4][4], const uint8_t *ram);
       auto C32 = [this](UINT32 off) { return *(const UINT32 *) &crom[off]; };   // host-order word of the CROM image
       uint32_t h0[10], h47[8][10]; const uint16_t *orig[4][4] = {};   // 11/14 col8: all 8 slots
       for (int i = 0; i < 10; i++) h0[i] = C32(0x600000 + 0xA1924 + 4 * i);   // slot 0's piece headers (the BMP layout)
@@ -8206,7 +8207,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
           orig[c][k] = (const uint16_t *) &crom[0x800000 + 7 * 0x800000 + (v & 0x7FFFFC)];   // bank byte 0x0D = banked CROM bank 7 (11/14)
         }
       }
-      if (ok) Real3DCostumeSwapSetup(h0, h47, orig, m_config["CostumeDir"].ValueAsDefault<std::string>("../costume"), ram);
+      if (ok) Real3DCostumeSwapSetup(h0, h47, orig, ram);
       else ErrorLog("CostumeSwap: unexpected CROM tables, not used.");
     }
     // HudColors (11/14, default on with 8 players): the ally names of slots 4-7 in pink / purple / grey / white. A
