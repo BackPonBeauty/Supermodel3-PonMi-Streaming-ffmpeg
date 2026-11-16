@@ -3,8 +3,8 @@
 #include "Supermodel.h"
 #include "FBO.h"
 #include "New3D/GLSLShader.h"
-#include "SharedMemManager.h"
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -68,16 +68,10 @@ public:
 	void InitFrameRingBuffer(int width, int height);
 	void UpdateFrameRingBuffer();
 	bool IsStreamingEnabled() const { return m_streamingEnabled; }
-	bool IsMultiViewEnabled() const { return m_multiViewEnabled; }
-	void ToggleMultiView();
 
 	// Pre-encode callback (renders ImGui overlay into fbo2 before encoding)
 	using PreEncodeCallback = std::function<void(GLuint fboID, int width, int height)>;
 	void SetPreEncodeCallback(PreEncodeCallback cb) { m_preEncodeCallback = cb; }
-
-	// Nickname access via shared memory
-	void WriteNicknames(const std::string& player, const std::string& spectator);
-	bool ReadNicknames(int playerIdx, std::string& outPlayer, std::string& outSpectator) const;
 private:
 	FBO m_fbo;
 	FBO m_fbo2;
@@ -115,15 +109,4 @@ private:
     IEncoder* m_encoder = nullptr;
     bool m_streamingEnabled = false;
     PreEncodeCallback m_preEncodeCallback;
-
-    // Shared memory multi-view (4-screen split)
-    int m_playerIndex = 0;
-    int m_shmW = 960;
-    int m_shmH = 540;
-    bool m_multiViewEnabled = false;
-    FBO m_shmFbo;
-    SharedMemManager* m_shmManager = nullptr;
-    std::vector<unsigned char> m_ownPixelBuffer;
-    std::vector<unsigned char> m_opponentPixelBuffers[4];
-    GLuint m_opponentTexs[4] = {0, 0, 0, 0};
 };

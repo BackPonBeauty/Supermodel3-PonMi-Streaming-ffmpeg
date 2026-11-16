@@ -120,7 +120,6 @@ SRC_FILES = \
 	Src/Graphics/FBO.cpp \
 	Src/Graphics/Render2D.cpp \
 	Src/Graphics/SuperAA.cpp \
-	Src/Graphics/SharedMemManager.cpp \
 	Src/Video/NvencEncoder.cpp \
 	Src/Video/AmfEncoder.cpp \
 	Src/Video/FfmpegEncoder.cpp \

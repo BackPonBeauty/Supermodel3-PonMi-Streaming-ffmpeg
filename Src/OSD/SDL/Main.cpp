@@ -119,11 +119,11 @@
 #include "Pkgs/imgui/imgui_impl_opengl3.h"
 
 // -------------------------------------------------------
-// XInput Remote Controller Manager (Integration: VB.NET -> C++)
+// Lobby slot state (Firebase). P1 (11/16): the ViGEm / XInput remote-controller parts were removed;
+// remote input comes back as a CInputSystem in P3 (design: RemoteInputSystem).
 // -------------------------------------------------------
 #ifdef SUPERMODEL_WIN32
 #include "Remote/RemoteSlotManager.h"
-// Singleton managing ViGEm & XInput listening on startup
 static RemoteSlotManager s_remoteSlotMgr;
 #endif
 
@@ -168,16 +168,9 @@ static bool lastLoadStatePressed = false;
 HandshakeServer g_handshake;
 HandshakeServer g_handshakeP2;
 
-// --- Debug panel / connect-notify / bitrate overlay ---
+// --- Debug panel / bitrate overlay ---
 static bool      s_debugPanelVisible = false;
 static IEncoder* s_debugEncoder      = nullptr;
-
-struct SlotNotification {
-    std::string message;
-    float expireTime;
-};
-static std::vector<SlotNotification> s_slotNotifications;
-static std::string s_prevNicks[4][2]; // [slot][0=player,1=spectator]
 
 struct BitrateNotification {
     std::string message;
@@ -1352,85 +1345,18 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   s_debugEncoder = streamingEnabled ? &superAA->GetEncoder() : nullptr;
 
-  // Meta-keys from remote clients (rising-edge)
-  s_remoteSlotMgr.SetMetaKeyCallback([](WORD newKeys, WORD prevKeys) {
-    WORD rose = newKeys & ~prevKeys;
-    if (rose & METAKEY_ALT_D)
-    {
-      s_debugPanelVisible = !s_debugPanelVisible;
-      printf("[Debug] Panel %s (remote Alt+D)\n", s_debugPanelVisible ? "ON" : "OFF");
-    }
-    if (rose & METAKEY_BITRATE_UP)
-    {
-      int newCeil = s_currentAvgBitrate + s_bitrateStep;
-      if (newCeil > s_bitrateMax) newCeil = s_bitrateMax;
-      if (newCeil != s_currentAvgBitrate)
-      {
-        s_currentAvgBitrate = newCeil;
-        printf("[Bitrate] Ceiling UP -> %d bps\n", s_currentAvgBitrate);
-        PushBitrateNotify(s_currentAvgBitrate, "manual UP");
-      }
-    }
-    if (rose & METAKEY_BITRATE_DOWN)
-    {
-      int newCeil = s_currentAvgBitrate - s_bitrateStep;
-      if (newCeil < s_bitrateMin) newCeil = s_bitrateMin;
-      if (newCeil != s_currentAvgBitrate)
-      {
-        s_currentAvgBitrate = newCeil;
-        printf("[Bitrate] Ceiling DOWN -> %d bps\n", s_currentAvgBitrate);
-        PushBitrateNotify(s_currentAvgBitrate, "manual DOWN");
-      }
-    }
-  });
+  // P1 (11/16): the remote meta keys (Alt+D, bitrate up/down) came in through the ViGEm/XInput receiver,
+  // which was removed. They come back through the new SessionServer in P4 (design SV-15, D-6).
 
   // Pre-encode callback: render debug panel / notifications into the stream
-  superAA->SetPreEncodeCallback([superAA, decoderCodec](GLuint fboID, int w, int h) {
+  superAA->SetPreEncodeCallback([decoderCodec](GLuint fboID, int w, int h) {
     if (!ImGui::GetCurrentContext())
       return;
 
     float now = SDL_GetTicks() / 1000.0f;
 
-    // Nick change detection
-    for (int pi = 0; pi < 4; ++pi)
-    {
-      std::string pNick, sNick;
-      superAA->ReadNicknames(pi, pNick, sNick);
-      bool playerChanged    = (pNick != s_prevNicks[pi][0]);
-      bool spectatorChanged = (sNick != s_prevNicks[pi][1]);
-
-      std::string slot = "P" + std::to_string(pi + 1);
-      bool promoted = spectatorChanged && playerChanged &&
-                      !s_prevNicks[pi][1].empty() && pNick == s_prevNicks[pi][1];
-
-      if (playerChanged) {
-        if (!s_prevNicks[pi][0].empty())
-          s_slotNotifications.push_back({slot + " " + s_prevNicks[pi][0] + " : disconnected", now + 7.0f});
-        if (promoted)
-          s_slotNotifications.push_back({slot + " " + pNick + " : connected (promoted)", now + 7.0f});
-        else if (!pNick.empty())
-          s_slotNotifications.push_back({slot + " " + pNick + " : connected", now + 7.0f});
-        s_prevNicks[pi][0] = pNick;
-      }
-      if (spectatorChanged) {
-        bool silentlyCleared = sNick.empty() && playerChanged && pNick.empty();
-        if (!promoted && !silentlyCleared) {
-          if (!sNick.empty())
-            s_slotNotifications.push_back({slot + " " + sNick + " : spectating", now + 7.0f});
-          else if (!s_prevNicks[pi][1].empty())
-            s_slotNotifications.push_back({slot + " " + s_prevNicks[pi][1] + " : left", now + 7.0f});
-        }
-        s_prevNicks[pi][1] = sNick;
-      }
-    }
-    s_slotNotifications.erase(
-      std::remove_if(s_slotNotifications.begin(), s_slotNotifications.end(),
-                     [now](const SlotNotification &n){ return now > n.expireTime; }),
-      s_slotNotifications.end());
-
-    bool hasNotify  = !s_slotNotifications.empty();
     bool hasBitrate = (now < s_bitrateNotify.expireTime);
-    bool needDraw   = s_debugPanelVisible || hasNotify || hasBitrate;
+    bool needDraw   = s_debugPanelVisible || hasBitrate;
     if (!needDraw) return;
 
     GLint prevFBO = 0;
@@ -1448,7 +1374,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     if (s_debugPanelVisible)
     {
       ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(260.0f, 310.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(260.0f, 60.0f), ImGuiCond_Always);
       ImGui::SetNextWindowBgAlpha(0.6f);
       ImGui::Begin("##debugpanel_stream", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -1460,47 +1386,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.8f, 1.0f), "UDP Video TX: %.2f Mbps", mbps);
       }
       ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Codec: %s", decoderCodec.c_str());
-      ImGui::Separator();
-      for (int pi = 0; pi < 4; ++pi)
-      {
-        std::string pNick, sNick;
-        superAA->ReadNicknames(pi, pNick, sNick);
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "P%d", pi + 1);
-        if (!pNick.empty())
-          ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "  Player   : %s", pNick.c_str());
-        else
-          ImGui::TextDisabled("  Player   : ---");
-        if (!sNick.empty())
-          ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "  Spectator: %s", sNick.c_str());
-        else
-          ImGui::TextDisabled("  Spectator: ---");
-        if (pi < 3) ImGui::Spacing();
-      }
-      ImGui::End();
-    }
-
-    // Connect/Disconnect notification overlay (bottom-left, 7s)
-    if (hasNotify)
-    {
-      float notifyH = s_slotNotifications.size() * 22.0f + 12.0f;
-      ImGui::SetNextWindowPos(ImVec2(10.0f, (float)h - notifyH - 10.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(320.0f, notifyH), ImGuiCond_Always);
-      ImGui::SetNextWindowBgAlpha(0.55f);
-      ImGui::Begin("##notify_overlay", nullptr,
-                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs |
-                   ImGuiWindowFlags_NoSavedSettings);
-      for (const auto &n : s_slotNotifications)
-      {
-        float remain = n.expireTime - now;
-        float alpha  = remain < 1.5f ? remain / 1.5f : 1.0f;
-        bool connected  = n.message.find(": connected")  != std::string::npos;
-        bool spectating = n.message.find(": spectating") != std::string::npos;
-        ImVec4 col = connected  ? ImVec4(0.0f, 1.0f, 1.0f, alpha) :
-                     spectating ? ImVec4(1.0f, 0.8f, 0.2f, alpha) :
-                                  ImVec4(0.7f, 0.7f, 0.7f, alpha);
-        ImGui::TextColored(col, "%s", n.message.c_str());
-      }
       ImGui::End();
     }
 
@@ -1555,7 +1440,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
                               s_remoteSlotMgr.SetSlotClientCount(1, (int)clientIPs.size());
                               std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
                               std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              superAA->WriteNicknames(playerNick, spectatorNick);
                               s_remoteSlotMgr.SetSlotPlayer(1, playerNick);
                               s_remoteSlotMgr.SetSlotSpectator(1, spectatorNick);
 #endif
@@ -1578,7 +1462,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
                                 s_remoteSlotMgr.SetSlotClientCount(2, (int)clientIPs.size());
                                 std::string p2player    = clientIPs.size() >= 1 ? g_handshakeP2.GetDiscordNick(clientIPs[0]) : "";
                                 std::string p2spectator = clientIPs.size() >= 2 ? g_handshakeP2.GetDiscordNick(clientIPs[1]) : "";
-                                superAA->WriteNicknames(p2player, p2spectator);
                                 s_remoteSlotMgr.SetSlotPlayer(2, p2player);
                                 s_remoteSlotMgr.SetSlotSpectator(2, p2spectator);
 #endif
@@ -1603,7 +1486,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
                               s_remoteSlotMgr.SetSlotClientCount(linkplay, (int)clientIPs.size());
                               std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
                               std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              superAA->WriteNicknames(playerNick, spectatorNick);
                               s_remoteSlotMgr.SetSlotPlayer(linkplay, playerNick);
                               s_remoteSlotMgr.SetSlotSpectator(linkplay, spectatorNick);
 #endif
@@ -1863,10 +1745,6 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       else if (Inputs->uiOverlay->Pressed())
       {
         superAA->ToggleOverlay();
-      }
-      else if (Inputs->uiToggleMultiView->Pressed())
-      {
-        superAA->ToggleMultiView();
       }
       else if (Inputs->uiReset->Pressed())
       {
@@ -3223,21 +3101,7 @@ int main(int argc, char **argv)
       RelaunchHidden(argc, argv);
     }
 
-    // --- Before GUI display: If streaming=true, initialize ViGEm + create virtual controller ---
-#ifdef SUPERMODEL_WIN32
-    {
-      bool streaming = fConfig2["Streaming"].ValueAsDefault<bool>(false);
-      if (streaming)
-      {
-        printf("[Main] Streaming=true: initializing ViGEm before GUI...\n");
-        s_remoteSlotMgr.InitViGEm();
-        s_remoteSlotMgr.AddVirtualController();
-      }
-    }
-    cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2, &s_remoteSlotMgr);
-#else
     cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2);
-#endif
 
     if (cmd_line.rom_files.empty())
     {
@@ -3385,16 +3249,11 @@ int main(int argc, char **argv)
 
     if (shouldPostFirebase)
     {
-        // 1. ストリーミングが有効な場合のみ、仮想コントローラの準備とUDP待機を開始
-        printf("[Main] Launch: streaming=true linkplay=%d -> StartListening\n", linkplay);
-        if (!s_remoteSlotMgr.IsViGEmReady())
-        {
-            s_remoteSlotMgr.InitViGEm();
-            s_remoteSlotMgr.AddVirtualController();
-        }
-        s_remoteSlotMgr.StartListening(linkplay);
+        // P1 (11/16): the ViGEm virtual pad and the XInput listener were removed (remote input: P3/P4).
+        // Only the UPnP port opening of the old StartListening() is kept.
+        s_remoteSlotMgr.StartStreaming(linkplay);
 
-        // 2. メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
+        // メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
         std::string romPath = cmd_line.rom_files[0];
         size_t sep = romPath.find_last_of("/\\");
         if (sep != std::string::npos)
@@ -3530,7 +3389,7 @@ int main(int argc, char **argv)
 
 Exit:
 #ifdef SUPERMODEL_WIN32
-  // Shutdown RemoteSlotManager (stops ViGEm & UDP reception)
+  // Shutdown RemoteSlotManager (closes UPnP ports, stops the Firebase heartbeat)
   s_remoteSlotMgr.Shutdown();
 #endif
   delete Inputs;

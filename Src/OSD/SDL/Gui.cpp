@@ -41,9 +41,7 @@
 
 #ifdef _WIN32
 #include "../Src/OSD/Windows/DirectInputSystem.h"
-#include "../Src/Remote/RemoteSlotManager.h"
 #endif
-#include <RemoteSlotManager.h>
 
 static std::vector<std::string> resolutions;
 static int selectedResIndex = 0;
@@ -291,7 +289,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
          int &musicVol, int &sfxVol, int &balance, bool &vEmulateSound,
          bool &vEmulateDSB, bool &vFlipStereo, bool &vLegacySoundDSP,
          int &selectedInputType, int &selectedCrosshair, int &selectedStyle,
-          bool &vForceFeedback, bool &vNetwork, bool &vSimulateNet, bool &vStreaming, std::string &vCodec, RemoteSlotManager* pRemote)
+          bool &vForceFeedback, bool &vNetwork, bool &vSimulateNet, bool &vStreaming, std::string &vCodec)
 {
     // Calculate base scale
     float scale = io.DisplaySize.y / 600.0f;
@@ -1039,19 +1037,6 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     if (ImGui::Checkbox("Streaming", &vStreaming))
                     {
                         saveSettings = true;
-#ifdef SUPERMODEL_WIN32
-                        if (pRemote != nullptr)
-                        {
-                            if (vStreaming)
-                            {
-                                pRemote->AddVirtualController();
-                            }
-                            else
-                            {
-                                pRemote->RemoveVirtualController();
-                            }
-                        }
-#endif
                     }
 
                     ImGui::Spacing();
@@ -1708,12 +1693,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 }
 
 // --- Entry Point ---
-#ifdef SUPERMODEL_WIN32
-std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Node &config, RemoteSlotManager* pRemote)
-#else
 std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Node &config)
-#define pRemote nullptr
-#endif
 {
     if (!resLoaded)
     {
@@ -1991,7 +1971,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
             vNoWhiteFlash, vHideCMD, vDefaultScanline, vTrueHz, superSampling, selectedCRT, selectedUpscale, ppcFreq, WindowXPosition, WindowYPosition, Scanline, Barrel,
             musicVol, sfxVol, balance, vEmulateSound, vEmulateDSB, vFlipStereo,
             vLegacySoundDSP, selectedInputType, selectedCrosshair, selectedStyle,
-            vForceFeedback, vNetwork, vSimulateNet, vStreaming, vCodec, pRemote);
+            vForceFeedback, vNetwork, vSimulateNet, vStreaming, vCodec);
         if (exit)
         {
             running = false;
