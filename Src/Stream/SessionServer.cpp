@@ -470,6 +470,21 @@ void SessionServer::InputLoop()
       printf("[Session] Slot %d: first INPUT received (keys=%04x buttons=%08x)\n", m_slot, in.keys, in.buttons);
       firstInputLogged = true;
     }
+    // For checking: the first 20 changes of keys / buttons / hat (axes change all the time, so not logged)
+    {
+      static uint16_t prevKeys = 0;
+      static uint32_t prevButtons = 0;
+      static uint8_t prevHat = 0;
+      static int logged = 0;
+      if (logged < 20 && (in.keys != prevKeys || in.buttons != prevButtons || in.hat != prevHat))
+      {
+        printf("[Session] Slot %d: input keys=%04x buttons=%08x hat=%x\n", m_slot, in.keys, in.buttons, in.hat);
+        logged++;
+      }
+      prevKeys = in.keys;
+      prevButtons = in.buttons;
+      prevHat = in.hat;
+    }
     if (risen && m_cb.onMetaKeys)
       m_cb.onMetaKeys(risen);
   }

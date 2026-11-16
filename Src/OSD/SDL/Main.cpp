@@ -88,6 +88,8 @@
 #include "GameLoader.h"
 #include "SDLInputSystem.h"
 #include "Stream/RemoteInputSystem.h"
+#include "Stream/Lobby.h"
+#include "Stream/StreamClient.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
 #ifndef SUPERMODEL_OSX
@@ -3027,6 +3029,35 @@ int main(int argc, char **argv)
   // Before command line is parsed, console logging only
   SetLogger(std::make_shared<CConsoleErrorLogger>());
 
+  // Streaming (P5): test aid only, not the user entry (that is GUI -> spikeofe -> lobby, CL-02):
+  //   -stream-test-connect=HOST:SLOT[:NAME]  connects the stream client directly, without the GUI.
+  for (int i = 1; i < argc; i++)
+  {
+    const char *opt = "-stream-test-connect=";
+    if (strncmp(argv[i], opt, strlen(opt)) == 0)
+    {
+      std::string spec = argv[i] + strlen(opt);
+      StreamConnectRequest req;
+      req.requested = true;
+      req.name = "tester";
+      size_t c1 = spec.find(':');
+      req.host = spec.substr(0, c1);
+      if (c1 != std::string::npos)
+      {
+        size_t c2 = spec.find(':', c1 + 1);
+        req.slot = atoi(spec.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1).c_str());
+        if (c2 != std::string::npos)
+          req.name = spec.substr(c2 + 1);
+      }
+      if (req.slot < 1 || req.slot > 8)
+        req.slot = 1;
+      std::string message;
+      RunStreamClient(req, message);
+      printf("[Client] test connect finished: %s\n", message.c_str());
+      return 0;
+    }
+  }
+
   // Load config and parse command line
   auto cmd_line = ParseCommandLine(argc, argv);
   if (cmd_line.error)
@@ -3076,7 +3107,21 @@ int main(int argc, char **argv)
       RelaunchHidden(argc, argv);
     }
 
-    cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2);
+    // Streaming (P5): GUI -> (spikeofe) lobby -> stream client -> back to the lobby, until a ROM is
+    // launched (normal play, or "skip" in the lobby) or the GUI is closed.
+    for (;;)
+    {
+      cmd_line.rom_files = RunGUI(s_configFilePath, fConfig2);
+      StreamConnectRequest &request = Lobby::Request();
+      if (!request.requested)
+        break;
+      StreamConnectRequest req = request;
+      request.requested = false;
+      std::string message;
+      if (RunStreamClient(req, message) == StreamClientExit::QuitApp)
+        return 0;
+      Lobby::Open(message);   // show the lobby again (with why the session ended)
+    }
 
     if (cmd_line.rom_files.empty())
     {

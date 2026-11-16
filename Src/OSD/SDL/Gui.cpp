@@ -18,6 +18,7 @@
 #include "../Src/OSD/SDL/SDLInputSystem.h"
 #include "../Src/Inputs/Inputs.h"
 #include "Main.h"
+#include "Stream/Lobby.h"
 #include "Font01.h"
 #include <ctime>   // for time, localtime, strftime
 #include <fstream> // for ofstream
@@ -190,6 +191,19 @@ void ClosePreviewWindow()
 }
 
 // --- Startup Logic ---
+// Streaming (P5): name of the selected game (the lobby opens only for spikeofe)
+static std::string GetSelectedGameName(int selectedGame, const std::map<std::string, Game> &games)
+{
+    int index = 0;
+    for (auto &pair : games)
+    {
+        if (index == selectedGame)
+            return pair.second.name;
+        index++;
+    }
+    return "";
+}
+
 static std::string GetRomPath(int selectedGame, const std::map<std::string, Game> &games, Util::Config::Node &config)
 {
     if (selectedGame >= 0)
@@ -1557,9 +1571,17 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         {
             if (CheckRomExists(selectedGameIndex, games, config))
             {
-                exitLaunch = true;
-                exit = true;
                 saveSettings = true;
+                if (GetSelectedGameName(selectedGameIndex, games) == "spikeofe")
+                {
+                    // Streaming (P5, CL-02): Spikeout goes to the lobby first (connect / skip to play locally)
+                    Lobby::Open();
+                }
+                else
+                {
+                    exitLaunch = true;
+                    exit = true;
+                }
             }
             else
             {
@@ -1964,6 +1986,26 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
+        // Streaming (P5): the lobby replaces the settings screen while it is open
+        if (Lobby::IsOpen())
+        {
+            Lobby::Action action = Lobby::Draw(1.0f);
+            if (action == Lobby::Action::Connect)
+            {
+                Lobby::Close();
+                exitLaunch = false;     // no ROM launch: Main runs the stream client (Lobby::Request())
+                exit = true;
+            }
+            else if (action == Lobby::Action::Skip)
+            {
+                Lobby::Close();
+                exitLaunch = true;      // CL-02b: the normal local spikeofe
+                exit = true;
+            }
+            else if (action == Lobby::Action::Back)
+                Lobby::Close();
+        }
+        else
         // GUI(io, config, games, selectedGame, exit, exitLaunch, saveSettings, window,selectedResIndex);
         GUI(io, config, games, selectedGame, exit, exitLaunch, saveSettings, window,
             selectedResIndex, engineSelection, vVsync, vQuadRendering, vGPUMultiThreaded,
