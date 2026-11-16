@@ -213,31 +213,30 @@ Click **"More info" → "Run anyway"** to proceed.
 
 ## 📜 License
 
-MIT License
+This software is distributed under the **GNU General Public License version 3 (GPL v3)**. The full text is in [LICENSE](LICENSE).
 
-Copyright (c) 2026 BackPonBeauty
+- It is based on [Supermodel3](https://github.com/trzy/Supermodel), which is GPL v3, so this modified program as a whole is GPL v3 as well.
+- Anyone may use, modify and redistribute it. When you distribute it (modified or not), provide the source under GPL v3 too.
+- The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt).
+- No game ROM is included.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+```
+Supermodel3-PonMi
+Copyright (C) 2026 BackPonBeauty
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Based on Supermodel3 (https://github.com/trzy/Supermodel)
+Copyright (C) 2003-2026 The Supermodel Team
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-Based on the original [Supermodel3](https://github.com/trzy/Supermodel)  
-License: GPL Ver.3  
-Copyright 2003-2026 The Supermodel Team
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+```
 
 ## Included Libraries
 
@@ -558,31 +557,30 @@ H.264 は古くてスペックが低いPCでもほぼ確実に動くのが強み
 
 ## 📜 ライセンス
 
-MIT License
+このソフトウェアは **GNU General Public License version 3（GPL v3）** で配布します。全文は [LICENSE](LICENSE) にあります。
 
-Copyright (c) 2026 BackPonBeauty
+- もとにしている [Supermodel3](https://github.com/trzy/Supermodel) が GPL v3 なので、それを改造したこのソフトウェア全体も GPL v3 です。
+- 誰でも自由に使い、改造し、配ることができます。配るとき（改造したものも）は、ソースも GPL v3 で公開してください。
+- 使っているライブラリのライセンスは、下の一覧と [PonMi_LICENSE.txt](PonMi_LICENSE.txt) にまとめています。
+- ゲームの ROM は含まれていません。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+```
+Supermodel3-PonMi
+Copyright (C) 2026 BackPonBeauty
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Based on Supermodel3 (https://github.com/trzy/Supermodel)
+Copyright (C) 2003-2026 The Supermodel Team
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-Based on the original [Supermodel3](https://github.com/trzy/Supermodel)  
-License: GPL Ver.3  
-Copyright 2003-2026 The Supermodel Team
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+```
 
 ## Included Libraries
 
