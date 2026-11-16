@@ -45,11 +45,14 @@ namespace StreamSecrets
         else if (k == "FirebaseDbUrl")       keys.firebaseDbUrl = v;
         else if (k == "DiscordClientId")     keys.discordClientId = v;
         else if (k == "DiscordGuildId")      keys.discordGuildId = v;
+        else if (k == "DiscordBotToken")     { keys.discordBotToken = v; if (keys.discordBotToken.compare(0, 4, "Bot ") == 0) keys.discordBotToken = Trim(keys.discordBotToken.substr(4)); }
+        else if (k == "DiscordChannelId")    keys.discordChannelId = v;
         else if (k == "DiscordRedirectPort") { int p = atoi(v.c_str()); if (p > 0 && p < 65536) keys.discordRedirectPort = p; }
       }
-      printf("[Keys] Config/StreamingKeys.ini loaded (Firebase: %s, Discord: %s)\n",
+      printf("[Keys] Config/StreamingKeys.ini loaded (Firebase: %s, Discord: %s, Discord post: %s)\n",
              (!keys.firebaseApiKey.empty() && !keys.firebaseDbUrl.empty()) ? "yes" : "no",
-             (!keys.discordClientId.empty() && !keys.discordGuildId.empty()) ? "yes" : "no");
+             (!keys.discordClientId.empty() && !keys.discordGuildId.empty()) ? "yes" : "no",
+             (!keys.discordBotToken.empty() && !keys.discordChannelId.empty()) ? "yes" : "no");
     });
     return keys;
   }
@@ -58,6 +61,12 @@ namespace StreamSecrets
   {
     const Keys &k = Get();
     return !k.firebaseApiKey.empty() && !FirebaseDbHost().empty();
+  }
+
+  bool HasDiscordBot()
+  {
+    const Keys &k = Get();
+    return !k.discordBotToken.empty() && !k.discordChannelId.empty();
   }
 
   std::wstring FirebaseDbHost()

@@ -17,6 +17,7 @@
 #include <functional>
 #include "FirebaseMatchingCpp.h"
 #include "UPnPHelper.h"
+#include "Stream/DiscordNotifier.h"
 
 using StatusCallback = std::function<void(const std::string &message)>;
 
@@ -53,7 +54,10 @@ private:
     void UpdateAvailableSlots();
     void NotifyStatus(const std::string &msg);
 
+    void StartDiscordPost();
+
     FirebaseMatchingCpp m_firebase;
+    DiscordNotifier m_discord;   // test stage: slot status in a Discord channel (DiscordNotifier.h)
 
     std::string m_hostId;
     std::string m_externalIp;

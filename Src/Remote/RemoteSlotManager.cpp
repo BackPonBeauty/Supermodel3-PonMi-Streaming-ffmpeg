@@ -38,6 +38,9 @@ void RemoteSlotManager::Shutdown()
             UPnPHelper::CloseStreamingPorts(m_linkplay);
     }
 
+    // Discord status message: delete it first (it reads the slots from Firebase)
+    m_discord.Stop();
+
     // P6: take this server's slot off the lobby at once (instead of waiting for the 10-minute stale cleanup)
     if (m_firebase.IsInitialized() && !m_hostId.empty())
     {
@@ -122,12 +125,49 @@ void RemoteSlotManager::StartFirebaseAsync(const std::string &gameTitle, const s
             m_firebase.CleanupStaleHosts();
             UpdateAvailableSlots();
             m_firebase.StartHeartbeat(m_hostId);
+            StartDiscordPost();
         }
         else
         {
             printf("[RemoteSlotManager] Firebase init failed\n");
         } })
         .detach();
+}
+
+// ---------------------------------------------------------------------------
+// Discord status post (test stage, 2026-11-16): one server per host posts the status of all slots
+// ini DiscordPost: -1 = only the slot-1 server (default), 0 = off, 1 = on
+// ---------------------------------------------------------------------------
+void RemoteSlotManager::StartDiscordPost()
+{
+    if (!DiscordNotifier::Configured() || m_shutdownCalled)
+        return;
+    extern Util::Config::Node s_runtime_config;
+    int mode = s_runtime_config["DiscordPost"].ValueAsDefault<int>(-1);
+    bool post = (mode == 1) || (mode < 0 && (m_linkplay == 1 || m_linkplay == 0));
+    if (!post)
+        return;
+    m_discord.Start([this](DiscordHostStatus &out) -> bool
+                    {
+        std::vector<LobbyHostCpp> hosts;
+        if (!m_firebase.FetchHosts(hosts))
+            return false;
+        for (const LobbyHostCpp &h : hosts)
+        {
+            if (h.key != m_hostId)
+                continue;
+            out.servername = h.servername;
+            out.gametitle = h.gametitle;
+            out.ip = h.ip;
+            for (int n = 1; n <= 8; n++)
+            {
+                out.present[n] = h.slots[n].present;
+                out.available[n] = h.slots[n].available;
+                out.player[n] = h.slots[n].player;
+            }
+            return true;
+        }
+        return false; });
 }
 
 // ---------------------------------------------------------------------------
