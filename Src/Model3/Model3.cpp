@@ -5115,6 +5115,12 @@ UINT8 CModel3::ReadInputs(unsigned reg)
       data &= ~(Inputs->service[0]->value<<3);  // Service A
       data &= ~(Inputs->start[0]->value<<4);    // Start 1
       data &= ~(Inputs->start[1]->value<<5);    // Start 2
+      // 11/16 (owner): Shift + Beat + Charge + Jump held with Start opens the 3-minute mode (outside the link session).
+      // While all four are held, Start does not reach the game. Fixed rule, no ini switch. Shift + Start (ally stats)
+      // and every other use of Start are untouched.
+      if ((m_game.inputs & Game::INPUT_SPIKEOUT) && Inputs->shift->value && Inputs->beat->value &&
+          Inputs->charge->value && Inputs->jump->value)
+        data |= 0x10;
       data = ApplyTestInputs(0x04, data);
       if (g_floorDump)   // 11/13 FloorDump: coin on this cabinet -> ask all cabinets to dump (see SpikeoutFloorDumpTick)
       {
@@ -7103,9 +7109,24 @@ void CModel3::RunMainBoardFrame(void)
 	}
 	if (g_spikeoutP1Invincible && !SpikeoutAttract(ram) && (*(const UINT32 *) &ram[0x1A0000] & 1))
 		*(UINT16 *) &ram[(0x1A0000 + 0x3F22) ^ 2] = 0xD8;   // the game's own spawn invincibility (0x1E85C), ticks down at 0x1E384
-	// FixTimer (hold the per-player timers at 99) was removed on 11/16 (owner): the countdown runs and a time-out
-	// ends the game as in the original. The timers: 0x1062B0 (4 players) / 0x106E00 with the 8-player patch
-	// (T8 in phase2.py), ticked once a frame at 0x5B604, shown as value>>6 seconds, 0x18FF = 99 (0x5CB64), link-synced.
+	// Per-player timers (time-out = game over): 0x1062B0 (4 players) / 0x106E00 with the 8-player patch (T8 in
+	// phase2.py), ticked once a frame at 0x5B604, shown as value>>6 seconds, 0x18FF = 99 (0x5CB64), link-synced.
+	// The FixTimer ini switch was removed on 11/16. 11/16 later (owner): with 5 or more players in the game the timers
+	// are held at 99; with 4 or fewer they count down as in the original. The count is the in-game mask 0x140128 (the
+	// same word the 5-8 player heal / damage caves count; the same on every node, so all nodes hold or run together).
+	// Zero means "not started", so it is left alone. Fixed rule, no ini switch.
+	if (g_spikeofe8task)
+	{
+		UINT32 inGame = *(const UINT32 *) &ram[0x140128];
+		if (__builtin_popcount(inGame) >= 5)
+		{
+			for (unsigned i = 0; i < 8; i++)
+			{
+				UINT16 *t = (UINT16 *) &ram[(0x106E00 + i * 2) ^ 2];
+				if (*t) *t = 0x18FF;
+			}
+		}
+	}
 
 	/* Per-player stat dump (StateTrace=1): every 60 frames, dump each slot's Rob combat-stat
 	   region (0x1A0000+slot*0x4000 + 0x3F00..0x3F80) and relocated save record

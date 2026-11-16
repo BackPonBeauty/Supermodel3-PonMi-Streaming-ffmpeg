@@ -1578,6 +1578,13 @@ static const Spikeout8LinkPatch s_spikeout8PlayersPatches[] =
   { 0x03FA8, 0x00000000, 0x7CB589AE },  // cave join list: stbx r5, r21, r17
   { 0x03FAC, 0x00000000, 0x3A310001 },  // cave join list: addi r17, r17, 1
   { 0x03FB0, 0x00000000, 0x4800E9DC },  // cave join list: b 0x1298c
+  // 11/16 night (owner): GAME SELECT ("which game to join?", mode 5/3, 0x73E78 -> 0x73F6C; work *(SDA -0x3EC8)):
+  // the selection +0x14 starts at 0 = the first game in the list (GAME A); the lever adds -1/+1 at 0x74098, and an
+  // empty / closed (0x0F) entry falls through to -1 = "start from the beginning" (a new, separate game). Found by
+  // comparing save states (GAME A / B / new: +0x14 = 0 / 1 / -1). The lever no longer moves it: with a session the
+  // pick is always GAME A; with none (or A closed) the original check still gives "start from the beginning".
+  // (The 8-player patch's "route voter" entries above are this same list, widened to 8 candidates.)
+  { 0x74098, 0x7E101A14, 0x60000000 },  // game select: add r16, r16, r3 (lever) -> nop
 };
 
 #endif  // INCLUDED_SPIKEOUT8LINK_H
