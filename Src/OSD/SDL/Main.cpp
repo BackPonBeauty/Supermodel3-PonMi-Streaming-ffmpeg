@@ -87,6 +87,7 @@
 #include "OSD/FileSystemPath.h"
 #include "GameLoader.h"
 #include "SDLInputSystem.h"
+#include "Stream/RemoteInputSystem.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
 #ifndef SUPERMODEL_OSX
@@ -2262,7 +2263,7 @@ Util::Config::Node DefaultConfig()
   config.Set("NoWhiteFlash", false, "Video");
   config.Set("FlipStereo", false, "Sound");
 #ifdef SUPERMODEL_WIN32
-  config.Set<std::string>("InputSystem", "dinput", "Core", "", "", {"sdl", "sdlgamepad", "dinput", "xinput", "rawinput"});
+  config.Set<std::string>("InputSystem", "dinput", "Core", "", "", {"sdl", "sdlgamepad", "dinput", "xinput", "rawinput", "none"});
   // DirectInput ForceFeedback
   config.Set("DirectInputConstForceLeftMax", 100, "ForceFeedback", 0, 100);
   config.Set("DirectInputConstForceRightMax", 100, "ForceFeedback", 0, 100);
@@ -3227,6 +3228,8 @@ int main(int argc, char **argv)
   std::shared_ptr<Debugger::CSupermodelDebugger> Debugger;
 #endif // SUPERMODEL_DEBUGGER
   std::string selectedInputSystem = s_runtime_config["InputSystem"].ValueAs<std::string>();
+  for (char &c : selectedInputSystem)   // "NONE" (streaming server, P3) is usually written in capitals
+    c = (char) tolower((unsigned char) c);
 
   aaValue = s_runtime_config["Supersampling"].ValueAs<int>();
   CRTcolors = (CRTcolor)s_runtime_config["CRTcolors"].ValueAs<int>();
@@ -3288,6 +3291,10 @@ int main(int argc, char **argv)
     InputSystem = std::shared_ptr<CInputSystem>(new CSDLInputSystem(s_runtime_config, false));
   else if (selectedInputSystem == "sdlgamepad")
     InputSystem = std::shared_ptr<CInputSystem>(new CSDLInputSystem(s_runtime_config, true));
+  else if (selectedInputSystem == "none")
+    // Streaming server (P3, requirements IN-06/IN-07): ignore this PC's keyboard and pads (except ESCAPE);
+    // the client's input arrives through CRemoteInputSystem::SetRemoteState().
+    InputSystem = std::shared_ptr<CInputSystem>(new CRemoteInputSystem(s_runtime_config));
 #ifdef SUPERMODEL_WIN32
   else if (selectedInputSystem == "dinput")
     InputSystem = std::shared_ptr<CInputSystem>(new CDirectInputSystem(s_runtime_config, s_window, false, false));

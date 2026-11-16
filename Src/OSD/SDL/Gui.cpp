@@ -932,7 +932,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     float labelWidth = 150.0f * scale; // Align label widths
 
                     // --- Input Type ---
-                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput","SDL"};
+                    const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput","SDL","NONE (streaming server)"};
                     // static int selectedInputType = 0; // Link with config
                     ImGui::Text("Input Type");
                     ImGui::SameLine(labelWidth);
@@ -1776,6 +1776,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     int selectedInputType = (inSys == "xinput") ? 0 : (inSys == "dinput") ? 1
                                                   : (inSys == "rawinput") ? 2
                                                   : (inSys == "sdl" || inSys == "sdlgamepad") ? 3
+                                                  : (inSys == "none" || inSys == "NONE") ? 4   // P3: streaming server
                                                                           : 2;   // 11/11: "sdl" was read as Rawinput
 
     int selectedCrosshair = (int)config["Crosshairs"].ValueAs<int64_t>();
@@ -2078,6 +2079,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
         // --- Control / Network ---
         u["InputSystem"] = (selectedInputType == 0) ? "xinput" : (selectedInputType == 1) ? "dinput"
                          : (selectedInputType == 3) ? (inSys == "sdlgamepad" ? "sdlgamepad" : "sdl")   // 11/11: SDL was saved as rawinput
+                         : (selectedInputType == 4) ? "NONE"                                           // P3: streaming server
                                                                                           : "rawinput";
 
         u["Crosshairs"] = std::to_string(selectedCrosshair);

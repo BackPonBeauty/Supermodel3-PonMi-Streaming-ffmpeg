@@ -164,6 +164,7 @@ SRC_FILES = \
 	Src/Inputs/ReplayRecorder.cpp \
 	Src/Inputs/ReplayPlayer.cpp \
 	Src/OSD/SDL/SDLInputSystem.cpp \
+	Src/Stream/RemoteInputSystem.cpp \
 	Src/OSD/SDL/Crosshair.cpp \
 	Src/OSD/Outputs.cpp \
 	Src/Sound/MPEG/MpegAudio.cpp \
