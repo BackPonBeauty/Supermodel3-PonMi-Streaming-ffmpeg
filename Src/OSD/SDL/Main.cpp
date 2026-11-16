@@ -3107,6 +3107,30 @@ int main(int argc, char **argv)
       RelaunchHidden(argc, argv);
     }
 
+#ifdef _WIN32
+    // 11/16 (owner): only one client per PC. A start without a ROM (settings GUI -> lobby -> stream client) takes a
+    // named mutex; servers started by the launcher with a ROM never get here, so they stay multi-instance.
+    // Checked after the HideCMD relaunch (the first process exits there). No setting lifts it (distribution build:
+    // a player must not take several slots).
+    {
+      HANDLE clientMutex = CreateMutexA(nullptr, FALSE, "Local\\SupermodelPonMi_StreamClient");
+      if (clientMutex && GetLastError() == ERROR_ALREADY_EXISTS)
+      {
+        HWND other = FindWindowA(nullptr, "Supermodel-PonMi-Edition");
+        if (other)
+        {
+          ShowWindow(other, SW_RESTORE);
+          SetForegroundWindow(other);
+        }
+        MessageBoxA(nullptr, "Supermodel (client / lobby) is already running on this PC.\nOnly one client can run at a time.",
+                    "Supermodel", MB_OK | MB_ICONINFORMATION);
+        CloseHandle(clientMutex);
+        return 0;
+      }
+      // the handle stays open while this process runs (Windows closes it on exit)
+    }
+#endif
+
     // Streaming (P5): GUI -> (spikeofe) lobby -> stream client -> back to the lobby, until a ROM is
     // launched (normal play, or "skip" in the lobby) or the GUI is closed.
     for (;;)

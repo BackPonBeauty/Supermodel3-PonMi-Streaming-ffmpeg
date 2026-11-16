@@ -82,6 +82,7 @@ private:
   std::string m_playerName;
   std::string m_playerId;                 // Discord user ID (empty without login)
   std::string m_pendingName, m_pendingId; // result of the Discord check (session thread only)
+  void *m_userLock = nullptr;             // HANDLE of the named mutex "this Discord user is connected here"
   uint64_t m_lastHb = 0;
   uint64_t m_lastKeyReq = 0;
   bool m_haveSeq = false;

@@ -91,6 +91,7 @@ namespace
     case R_CODEC:             return "Refused: this client cannot decode the server's video codec.";
     case R_LOGIN_UNAVAILABLE: return "Refused: the server could not check your Discord login now. Please try again later.";
     case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
+    case R_ALREADY_CONNECTED: return "Refused: your Discord account is already connected to another slot of this host.";
     default:                  return "Refused by the server.";
     }
   }

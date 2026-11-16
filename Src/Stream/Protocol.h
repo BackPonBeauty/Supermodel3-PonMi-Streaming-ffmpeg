@@ -57,7 +57,8 @@ namespace StreamProto
     R_CODEC = 5,            // the client cannot decode the codec this server encodes
     R_BAD_REQUEST = 6,
     R_LOGIN_UNAVAILABLE = 7, // the host could not ask Discord now (network, rate limit) / not set up on the host
-    R_LOGIN_INVALID = 8      // Discord said the token is invalid or expired
+    R_LOGIN_INVALID = 8,     // Discord said the token is invalid or expired
+    R_ALREADY_CONNECTED = 9  // this Discord account is already in another slot of this host
   };
 
   enum CodecBits : uint8_t { CODEC_H264 = 1, CODEC_H265 = 2 };

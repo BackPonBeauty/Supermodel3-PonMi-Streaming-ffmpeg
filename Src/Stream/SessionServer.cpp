@@ -142,6 +142,11 @@ void SessionServer::Stop()
   if (m_sessionSock != INVALID_SOCKET) { closesocket(m_sessionSock); m_sessionSock = INVALID_SOCKET; }
   if (m_inputSock != INVALID_SOCKET) { closesocket(m_inputSock); m_inputSock = INVALID_SOCKET; }
   m_connected.store(false);
+  if (m_userLock)
+  {
+    CloseHandle((HANDLE) m_userLock);
+    m_userLock = nullptr;
+  }
 }
 
 std::string SessionServer::GetPlayerName()
@@ -216,6 +221,11 @@ void SessionServer::Disconnect(const char *why)
     printf("[Session] Slot %d: %s disconnected (%s) -> standing still\n", m_slot, m_playerName.c_str(), why);
     m_playerName.clear();
     m_playerId.clear();
+    if (m_userLock)
+    {
+      CloseHandle((HANDLE) m_userLock);   // the Discord account may connect again (here or to another slot)
+      m_userLock = nullptr;
+    }
     m_key = 0;
     m_haveSeq = false;
     m_lastMeta = 0;
@@ -316,6 +326,25 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
     {
       reject(R_LOGIN_REQUIRED, "no login from the internet");
       return;
+    }
+
+    // 11/16 (owner): one Discord account = one slot of this host. Every slot is its own process on this PC, so a
+    // named mutex per Discord user ID is held while that user is connected; a second slot finds it and refuses.
+    // No setting lifts it (distribution build).
+    if (hello.login == LOGIN_DISCORD && !m_pendingId.empty())
+    {
+      std::string lockName = "Local\\SupermodelPonMi_DiscordUser_" + m_pendingId;
+      HANDLE h = CreateMutexA(nullptr, FALSE, lockName.c_str());
+      if (h && GetLastError() == ERROR_ALREADY_EXISTS)
+      {
+        CloseHandle(h);
+        reject(R_ALREADY_CONNECTED, "this Discord account is already connected to another slot of this host");
+        return;
+      }
+      std::lock_guard<std::mutex> lock(m_lock);
+      if (m_userLock)
+        CloseHandle((HANDLE) m_userLock);
+      m_userLock = h;
     }
   }
 
