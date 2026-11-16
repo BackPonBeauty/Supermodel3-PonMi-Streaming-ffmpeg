@@ -8,7 +8,9 @@
 #include "Lobby.h"
 #include "Secrets.h"
 #include "DiscordAuth.h"
+#include "Version.h"
 #include "Remote/FirebaseMatchingCpp.h"
+#include <shellapi.h>
 #include "Pkgs/imgui/imgui.h"
 #include <atomic>
 #include <cstdio>
@@ -39,6 +41,11 @@ namespace Lobby
   static std::string s_myExternalIp, s_myLanIp;
   static std::atomic<bool> s_refresh{true};
   static std::atomic<bool> s_listThreadStarted{false};
+
+  // 11/16: version check (Stream/Version.h). Guarded by s_listLock.
+  static bool s_updateRequired = false;
+  static long long s_newestBuild = 0;
+  static std::string s_updateUrl;
 
   static void SetListStatus(const std::string &s)
   {
@@ -77,6 +84,16 @@ namespace Lobby
           SetListStatus("Lobby unavailable (Firebase sign-in failed). Direct connection still works.");
           continue;
         }
+      }
+      // 11/16: newest build published by the owner (/main5). Older than that -> no connecting (update first).
+      long long newest = 0;
+      std::string url;
+      if (fb.FetchMain5Version(newest, url))
+      {
+        std::lock_guard<std::mutex> lock(s_listLock);
+        s_newestBuild = newest;
+        s_updateUrl = url.empty() ? StreamVersion::kDefaultDownloadUrl : url;
+        s_updateRequired = newest > StreamVersion::kBuild;
       }
       std::vector<LobbyHostCpp> hosts;
       bool ok = fb.FetchHosts(hosts);
@@ -198,6 +215,28 @@ namespace Lobby
       ImGui::Spacing();
     }
 
+    // 11/16: an older build than the one published in Firebase may not connect (playing locally still works)
+    bool updateRequired;
+    long long newestBuild;
+    std::string updateUrl;
+    {
+      std::lock_guard<std::mutex> lock(s_listLock);
+      updateRequired = s_updateRequired;
+      newestBuild = s_newestBuild;
+      updateUrl = s_updateUrl;
+    }
+    if (updateRequired)
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "This Supermodel is too old (build %lld, newest %lld). Please update to connect.",
+                         StreamVersion::kBuild, newestBuild);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("DOWNLOAD PAGE"))
+        ShellExecuteA(nullptr, "open", updateUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+      ImGui::Spacing();
+    }
+    else
+      ImGui::TextDisabled("build %lld", StreamVersion::kBuild);
+
     // --- Discord login (P6b, CL-07): needed to join hosts over the internet ---
     {
       DiscordAuth::State st = DiscordAuth::GetState();
@@ -284,7 +323,10 @@ namespace Lobby
             {
               ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.55f, 0.25f, 1.0f));
               ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.35f, 1.0f));
-              if (ImGui::Button(label, ImVec2(28.0f * scale, 0)))
+              ImGui::BeginDisabled(updateRequired);
+              bool clicked = ImGui::Button(label, ImVec2(28.0f * scale, 0));
+              ImGui::EndDisabled();
+              if (clicked && !updateRequired)
               {
                 std::string addr = ChooseAddress(h);
                 snprintf(s_hostBuf, sizeof(s_hostBuf), "%s", addr.c_str());
@@ -348,7 +390,10 @@ namespace Lobby
     ImGui::Spacing();
     ImGui::Spacing();
     float btnW = 220.0f * scale, btnH = 44.0f * scale;
-    if (ImGui::Button("CONNECT", ImVec2(btnW, btnH)) && s_hostBuf[0] != '\0')
+    ImGui::BeginDisabled(updateRequired);
+    bool connectClicked = ImGui::Button("CONNECT", ImVec2(btnW, btnH));
+    ImGui::EndDisabled();
+    if (connectClicked && !updateRequired && s_hostBuf[0] != '\0')
     {
       s_request.requested = true;
       s_request.host = s_hostBuf;

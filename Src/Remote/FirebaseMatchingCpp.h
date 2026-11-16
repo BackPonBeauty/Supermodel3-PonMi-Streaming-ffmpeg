@@ -107,6 +107,10 @@ public:
     // Lobby (P6): all hosts, without the ones not updated for 10+ minutes (LB-01/LB-06)
     bool FetchHosts(std::vector<LobbyHostCpp> &out);
 
+    // 11/16: the newest main5 build published by the owner at /main5 (supermodel = build number, url = download
+    // page, optional). Returns false if it could not be read; supermodel = 0 when the key is not there yet.
+    bool FetchMain5Version(long long &supermodel, std::string &url);
+
     // Get external IP address (uses api.ipify.org)
     static std::string GetExternalIp();
     // P6: this PC's address on its local network (no packet is sent)

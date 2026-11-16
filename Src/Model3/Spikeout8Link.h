@@ -1010,6 +1010,17 @@ static const Spikeout8LinkPatch s_spikeout8PlayersPatches[] =
   { 0x03920, 0x00000000, 0x3CC00016 },  // cave: ally HUD kill display
   { 0x03924, 0x00000000, 0x60C60170 },  // cave: ally HUD kill display
   { 0x03928, 0x00000000, 0x48018A14 },  // cave: ally HUD kill display
+  // 11/16 (user: "SHIFT+START shows only 4 of 8 allies"): the ally stats pages (0x1C230) step a timer at +0xA4 from 0x140
+  // by 0x80 frames per player (index = (t-0x141)/0x80) and stopped at 0x340 = 4 players. 0x540 = 8 players (absent ones
+  // are skipped by the in-game-mask test at 0x1C2CC as before).
+  { 0x1C26C, 0x2D030340, 0x2D030540 },  // ally stats: cmpwi cr2, r3, 0x540 (end after 8 players)
+  { 0x1C5E0, 0x2C830340, 0x2C830540 },  // ally stats (skip): cmpwi cr1, r3, 0x540
+  //    The KO / PK page still read the old 4-byte arrays (+0xA8/+0xAC) that the 8-player code no longer writes (KO/PK
+  //    moved to 0x1601E0 / 0x1601E8, 8 bytes each). Read the moved arrays: r4 = 0x160000 + player.
+  { 0x1C4F0, 0x386C00A8, 0x3C800016 },  // ally stats KO/PK: lis r4, 0x16
+  { 0x1C4F4, 0x388C00AC, 0x7C848A14 },  // ally stats KO/PK: add r4, r4, r17
+  { 0x1C4F8, 0x7C6388AE, 0x886401E0 },  // ally stats KO/PK: lbz r3, 0x1E0(r4) (KO[player])
+  { 0x1C4FC, 0x7C8488AE, 0x888401E8 },  // ally stats KO/PK: lbz r4, 0x1E8(r4) (PK[player])
   { 0x59AD8, 0x908DC0DC, 0x4BFA9D88 },  // stage init: clear 8-player kill tables
   { 0x03860, 0x00000000, 0x908DC0DC },  // cave: stage clear kill tables
   { 0x03864, 0x00000000, 0x3CA00016 },  // cave: stage clear kill tables

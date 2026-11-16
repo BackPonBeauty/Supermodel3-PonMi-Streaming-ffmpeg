@@ -938,4 +938,29 @@ bool FirebaseMatchingCpp::FetchHosts(std::vector<LobbyHostCpp> &out)
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// 11/16: newest main5 build (/main5, written by the owner in the console)
+// ---------------------------------------------------------------------------
+bool FirebaseMatchingCpp::FetchMain5Version(long long &supermodel, std::string &url)
+{
+    supermodel = 0;
+    url.clear();
+    if (!m_initialized)
+        return false;
+    std::string path = "/main5.json?auth=" + m_idToken;
+    std::string resp = HttpGet(StreamSecrets::FirebaseDbHost(), std::wstring(path.begin(), path.end()), m_idToken);
+    if (resp.empty())
+        return false;
+    MiniJson::Value root;
+    if (!MiniJson::Parse(resp, root))
+        return false;
+    if (root.type != MiniJson::Value::Object)
+        return true;   // "null": not published yet
+    supermodel = (long long) root.GetNumber("supermodel");
+    if (supermodel == 0)
+        supermodel = atoll(root.GetString("supermodel").c_str());   // also accept "20261116" typed as a string
+    url = root.GetString("url");
+    return true;
+}
+
 #endif // SUPERMODEL_WIN32

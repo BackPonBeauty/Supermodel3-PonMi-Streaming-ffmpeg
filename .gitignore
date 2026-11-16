@@ -381,3 +381,6 @@ Config/StreamingKeys.ini
 **/Config/StreamingKeys.ini
 **/Config/DiscordLogin.ini
 **/Config/DiscordMessage.txt
+
+# local backups before edits (CLAUDE.md rule)
+*.bak_*

@@ -90,6 +90,7 @@
 #include "Stream/RemoteInputSystem.h"
 #include "Stream/Lobby.h"
 #include "Stream/StreamClient.h"
+#include "Stream/Version.h"
 #include "SDLIncludes.h"
 #include "Debugger/SupermodelDebugger.h"
 #ifndef SUPERMODEL_OSX
@@ -3028,6 +3029,17 @@ int main(int argc, char **argv)
 
   // Before command line is parsed, console logging only
   SetLogger(std::make_shared<CConsoleErrorLogger>());
+
+  // 11/16: "-build-version" prints this build's number (Stream/Version.h) for the launcher's version check.
+  for (int i = 1; i < argc; i++)
+  {
+    if (strcmp(argv[i], "-build-version") == 0)
+    {
+      printf("BUILD=%lld\n", StreamVersion::kBuild);
+      fflush(stdout);
+      return 0;
+    }
+  }
 
   // Streaming (P5): test aid only, not the user entry (that is GUI -> spikeofe -> lobby, CL-02):
   //   -stream-test-connect=HOST:SLOT[:NAME]  connects the stream client directly, without the GUI.
