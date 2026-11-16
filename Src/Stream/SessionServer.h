@@ -4,7 +4,10 @@
  * Streaming (P4, 2026-11-16): one slot's session on the server (design 4.2, requirements SV-01..16).
  * Replaces the old HandshakeServer (text HELLO/OK, spectators, LinkPlay=0 two-slot mode, 1-min idle kick).
  *
- *   empty --HELLO ok--> connected --BYE / no HB for 6 s--> standing (nobody) --HELLO--> connected ...
+ *   empty --HELLO ok--> connected --BYE / no HB for 6 s / no input for 3 min--> standing (nobody) --HELLO--> ...
+ *
+ * - Idle kick (SV-17): if the game input (keys, buttons, hat, or an axis by kIdleAxisMove) does not change for
+ *   3 minutes, the client is warned during the last 30 s and then removed. Not configurable.
  *
  * - One client per slot (no spectators). A second client gets REJECT(slot busy).
  * - Version check; login: Discord is verified in P6 (until then refused unless from this PC / home network);
@@ -59,6 +62,9 @@ private:
   void HandleHello(const char *buf, int len, const sockaddr_in &from);
   void Disconnect(const char *why);
   void Kick();   // P7: T_KICK from the launcher on this PC
+  void SendNotice(const char *text);
+  void SendNoticeAndBye(const char *text, const char *why);
+  void CheckIdle();   // SV-17: no input change for kIdleKickMs -> removed
   void SendTo(const void *data, int len, const sockaddr_in &to);
   bool FromClient(const sockaddr_in &from, uint32_t key);
   bool ValidateMediaHello(const char *buf, int len, const sockaddr_in &from);
@@ -88,6 +94,15 @@ private:
   bool m_haveSeq = false;
   uint16_t m_lastSeq = 0;
   uint8_t m_lastMeta = 0;
+
+  // Idle kick (SV-17): the input at the last activity, and when it was
+  uint64_t m_lastActivity = 0;
+  uint64_t m_lastIdleWarn = 0;
+  bool m_haveActInput = false;
+  uint16_t m_actKeys = 0;
+  uint32_t m_actButtons = 0;
+  uint8_t m_actHat = 0;
+  int16_t m_actAxes[6] = {};
 
   std::atomic<float> m_lossRate{0.0f};
   std::atomic<uint32_t> m_lastStatusTime{0};

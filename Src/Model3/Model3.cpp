@@ -272,7 +272,6 @@ static bool g_spikeoutIdleLog = false;   // 11/13 IdleSkipLog=1 -> idlelog.txt
 // generated input replaces the human bits in ReadInputs(0x08); the net board shares it like any
 // player input, so no ROM change and no desync. Robs: 0x1A0000+slot*0x4000, pos floats at +0x380
 // (x) / +0x388 (z), active = flags(+0x00) bit0; players are slots 0-7, enemies 8+.
-static bool g_spikeoutFixTimer = false; // FixTimer=1: hold running game timers at 99 (must be set on every cabinet)
 static bool g_spikeoutP1Invincible = false; // P1Invincible=1: keep player 1 invincible, to record waypoints (must be set on every cabinet)
 static bool g_spikeoutAI = false;
 #include <atomic>
@@ -7104,19 +7103,9 @@ void CModel3::RunMainBoardFrame(void)
 	}
 	if (g_spikeoutP1Invincible && !SpikeoutAttract(ram) && (*(const UINT32 *) &ram[0x1A0000] & 1))
 		*(UINT16 *) &ram[(0x1A0000 + 0x3F22) ^ 2] = 0xD8;   // the game's own spawn invincibility (0x1E85C), ticks down at 0x1E384
-	if (g_spikeoutFixTimer)
-	{
-		// Per-player timers, ticked once a frame at 0x5B604 and shown as value>>6 seconds. 0x18FF is
-		// the game's own 99 (0x5CB64). The 8-player patch moves them to 0x106E00 (T8 in phase2.py).
-		// Zero means not started, so it is left alone. The timers are link-synced: same on all nodes.
-		UINT32 base = g_spikeofe8task ? 0x106E00 : 0x1062B0;
-		unsigned n = g_spikeofe8task ? 8 : 4;
-		for (unsigned i = 0; i < n; i++)
-		{
-			UINT16 *t = (UINT16 *) &ram[(base + i * 2) ^ 2];
-			if (*t) *t = 0x18FF;
-		}
-	}
+	// FixTimer (hold the per-player timers at 99) was removed on 11/16 (owner): the countdown runs and a time-out
+	// ends the game as in the original. The timers: 0x1062B0 (4 players) / 0x106E00 with the 8-player patch
+	// (T8 in phase2.py), ticked once a frame at 0x5B604, shown as value>>6 seconds, 0x18FF = 99 (0x5CB64), link-synced.
 
 	/* Per-player stat dump (StateTrace=1): every 60 frames, dump each slot's Rob combat-stat
 	   region (0x1A0000+slot*0x4000 + 0x3F00..0x3F80) and relocated save record
@@ -8045,7 +8034,6 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     g_ppcTraceCallTarget = traceCall;
   unsigned watchStart = 0, watchLen = 0;
   g_ppcStateTrace = (game.name == "spikeofe" && m_config["StateTrace"].ValueAsDefault<bool>(false));
-  g_spikeoutFixTimer = (game.name == "spikeofe" && m_config["FixTimer"].ValueAsDefault<bool>(false));
   g_spikeoutP1Invincible = (game.name == "spikeofe" && m_config["P1Invincible"].ValueAsDefault<bool>(false));
   g_spikeoutAI = (game.name == "spikeofe" && m_config["AIPlayer"].ValueAsDefault<bool>(false));
   g_spikeoutInputLog = (game.name == "spikeofe" && !g_spikeoutAI && m_config["InputLog"].ValueAsDefault<bool>(false));

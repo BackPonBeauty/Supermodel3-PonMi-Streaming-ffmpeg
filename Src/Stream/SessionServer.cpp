@@ -11,6 +11,7 @@
 #include <mswsock.h>
 #include <windows.h>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <string>
 
@@ -192,23 +193,71 @@ bool SessionServer::ValidateMediaHello(const char *buf, int len, const sockaddr_
   return FromClient(from, h.key);
 }
 
-void SessionServer::Kick()
+void SessionServer::SendNotice(const char *text)
 {
   if (!m_connected.load())
     return;
   Notice notice = {};
-  Header bye;
   sockaddr_in to;
   {
     std::lock_guard<std::mutex> lock(m_lock);
     FillHeader(notice.h, T_NOTICE, m_key);
+    to = m_clientAddr;
+  }
+  snprintf(notice.text, sizeof(notice.text), "%s", text);
+  SendTo(&notice, sizeof(notice), to);
+}
+
+void SessionServer::SendNoticeAndBye(const char *text, const char *why)
+{
+  if (!m_connected.load())
+    return;
+  Header bye;
+  sockaddr_in to;
+  {
+    std::lock_guard<std::mutex> lock(m_lock);
     FillHeader(bye, T_BYE, m_key);
     to = m_clientAddr;
   }
-  snprintf(notice.text, sizeof(notice.text), "You were removed from the slot by the host.");
-  SendTo(&notice, sizeof(notice), to);
+  SendNotice(text);
   SendTo(&bye, sizeof(bye), to);
-  Disconnect("kicked by the host");
+  Disconnect(why);
+}
+
+void SessionServer::Kick()
+{
+  SendNoticeAndBye("You were removed from the slot by the host.", "kicked by the host");
+}
+
+// SV-17: called from the session loop (about every 200 ms)
+void SessionServer::CheckIdle()
+{
+  if (!m_connected.load())
+    return;
+  uint64_t now = NowMs();
+  uint64_t idle;
+  bool warn = false;
+  {
+    std::lock_guard<std::mutex> lock(m_lock);
+    idle = now - m_lastActivity;
+    if (idle >= kIdleWarnMs && idle < kIdleKickMs && now - m_lastIdleWarn >= kIdleWarnEveryMs)
+    {
+      m_lastIdleWarn = now;
+      warn = true;
+    }
+  }
+  if (idle >= kIdleKickMs)
+  {
+    SendNoticeAndBye("Disconnected: no input for 3 minutes.", "no input for 3 minutes");
+    return;
+  }
+  if (warn)
+  {
+    char text[64];
+    unsigned left = (unsigned) ((kIdleKickMs - idle + 999) / 1000);
+    snprintf(text, sizeof(text), "No input: you will be disconnected in %u s.", left);
+    SendNotice(text);
+  }
 }
 
 void SessionServer::Disconnect(const char *why)
@@ -362,6 +411,9 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
       m_lastKeyReq = 0;
       m_haveSeq = false;
       m_lastMeta = 0;
+      m_lastActivity = NowMs();
+      m_lastIdleWarn = 0;
+      m_haveActInput = false;
       m_connected.store(true);
     }
     FillHeader(w.h, T_WELCOME, m_key);
@@ -404,6 +456,7 @@ void SessionServer::SessionLoop()
       }
       if (NowMs() - last > kDropTimeoutMs)
         Disconnect("no heartbeat for 6 s");
+      CheckIdle();
     }
 
     if (n <= 0)
@@ -529,6 +582,23 @@ void SessionServer::InputLoop()
       m_lastSeq = in.seq;
       risen = in.meta & ~m_lastMeta;
       m_lastMeta = in.meta;
+
+      // SV-17: activity = the game input changed (meta keys like Alt+D do not count)
+      bool moved = !m_haveActInput || in.keys != m_actKeys || in.buttons != m_actButtons || in.hat != m_actHat;
+      for (int a = 0; a < 6 && !moved; a++)
+        moved = std::abs((int) in.axes[a] - (int) m_actAxes[a]) >= kIdleAxisMove;
+      if (moved)
+      {
+        bool first = !m_haveActInput;
+        m_haveActInput = true;
+        m_actKeys = in.keys;
+        m_actButtons = in.buttons;
+        m_actHat = in.hat;
+        for (int a = 0; a < 6; a++)
+          m_actAxes[a] = in.axes[a];
+        if (!first)
+          m_lastActivity = NowMs();   // the first packet only sets the reference (holding a key from the start is not activity)
+      }
     }
 
     if (CRemoteInputSystem *ri = CRemoteInputSystem::GetInstance())

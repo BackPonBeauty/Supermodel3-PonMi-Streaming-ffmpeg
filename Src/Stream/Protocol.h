@@ -67,6 +67,12 @@ namespace StreamProto
 
   constexpr uint32_t kHeartbeatIntervalMs  = 2000;
   constexpr uint32_t kDropTimeoutMs        = 6000;   // requirement SV-08 (Q34)
+  // Idle kick (SV-17, 2026-11-16): no change of the game input for 3 minutes -> NOTICE + BYE, the slot is freed.
+  // Fixed in the code on purpose (no ini switch): a player must not be able to sit in a slot forever.
+  constexpr uint32_t kIdleKickMs           = 180000;
+  constexpr uint32_t kIdleWarnMs           = 150000; // from here a warning NOTICE every kIdleWarnEveryMs
+  constexpr uint32_t kIdleWarnEveryMs      = 5000;
+  constexpr int      kIdleAxisMove         = 8000;   // an axis counts as moved only by this much (stick noise is far less)
   constexpr uint32_t kKeyReqMinIntervalMs  = 200;
   constexpr uint32_t kInputIntervalMs      = 8;
   constexpr int      kMaxNameLength        = 32;

@@ -101,7 +101,8 @@ namespace
   {
     std::atomic<bool> running{true};
     std::string stopMessage;
-    std::string serverNotice;   // last NOTICE text (shown when the server ends the session)
+    std::string serverNotice;   // last NOTICE text (on screen for a while; the leave message if BYE follows soon)
+    uint64_t serverNoticeTime = 0;   // NowMs() when it came (guarded by stopLock)
     std::mutex stopLock;
 
     SOCKET sessSock = INVALID_SOCKET, videoSock = INVALID_SOCKET, audioSock = INVALID_SOCKET;
@@ -244,11 +245,19 @@ namespace
         Notice nt;
         memcpy(&nt, buf, sizeof(nt));
         nt.text[sizeof(nt.text) - 1] = '\0';
+        std::lock_guard<std::mutex> lock(c->stopLock);
         c->serverNotice = nt.text;
+        c->serverNoticeTime = NowMs();
       }
       else if (h.type == T_BYE)
       {
-        c->Stop(c->serverNotice.empty() ? "The server ended the session." : c->serverNotice);
+        std::string why;
+        {
+          std::lock_guard<std::mutex> lock(c->stopLock);
+          if (!c->serverNotice.empty() && NowMs() - c->serverNoticeTime < 3000)
+            why = c->serverNotice;   // the reason sent right before BYE (kick, no input)
+        }
+        c->Stop(why.empty() ? "The server ended the session." : why);
         break;
       }
     }
@@ -776,6 +785,25 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
       else
       {
         ImGui::GetBackgroundDrawList()->AddText(ImVec2(20, 20), IM_COL32(255, 255, 255, 255), "Connected. Waiting for video...");
+      }
+      // Server notices (e.g. the idle-kick warning, SV-17): shown for 6 s, centered near the top
+      {
+        std::string text;
+        {
+          std::lock_guard<std::mutex> lock(c->stopLock);
+          if (!c->serverNotice.empty() && now - c->serverNoticeTime < 6000)
+            text = c->serverNotice;
+        }
+        if (!text.empty())
+        {
+          ImGui::SetNextWindowPos(ImVec2(ww * 0.5f, wh * 0.12f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+          ImGui::SetNextWindowBgAlpha(0.75f);
+          ImGui::Begin("##notice", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                            ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                                            ImGuiWindowFlags_NoFocusOnAppearing);
+          ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", text.c_str());
+          ImGui::End();
+        }
       }
       if (showStats)
       {
