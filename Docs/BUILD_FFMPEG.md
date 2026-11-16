@@ -107,7 +107,6 @@ mingw32-make -f Makefiles/Makefile.Win32 -j8
 
 > For NVENC, the CUDA header (`cuda.h`, from the CUDA Toolkit) is used at build time only (`CUDA_INC_DIR` in `Makefiles/Makefile.Win32`). The CUDA Toolkit is not needed to run the program.
 > The Firebase and Discord keys are embedded into the exe at build time from `Config/StreamingKeys.ini` (not in git; see `Config/StreamingKeys.example.ini` for its format). The build also works without this file; the program then runs without Firebase and Discord.
-> The recoloured costume pictures (`Config/costume/`) are not in git either. Without them the build still works (an empty set is embedded).
 
 ---
 

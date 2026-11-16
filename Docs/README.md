@@ -1,75 +1,79 @@
-# 🎮 Supermodel3-PonMi-Streaming v2.0.0 - Built-in WAN Streaming
+# 🎮 Supermodel3-PonMi-Streaming-ffmpeg — Spikeout FE 8-link & WAN streaming
 
-**No extra tools required. Just launch, share your slot, and play.**
+**Start a host in the launcher, pick a slot in the lobby, and play.**
+**StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
----
-
-## 🆕 What's New in v2.0.0
-
-- **Streaming built directly into the emulator** — XinputReciever is no longer required
-- **Firebase automatic matchmaking** — hosts are discovered automatically, no manual IP entry needed
-- **UPnP automatic port forwarding** — no router configuration required in most cases
-- **Ping display** — latency to each host is shown in the host list
-- **NVENC H.264 / H.265 low-latency streaming** — ~5.8ms encode latency on RTX 20 series or later
-- **Up to 4-player WAN link play** (mix of local and remote players supported)
+> Build 20261116 / PonLuncher 2.0.0
 
 ---
 
-## ✅ Confirmed Working Titles
+## 🆕 What's new
 
-- **Spikeout Final Edition** (spikeofe) — 4-link play confirmed
-- Virtua Fighter 3tb (single instance)
+- **Spikeout Final Edition with up to 8 players** (2–8 links). Bots can play the cabinets nobody is using
+- **The client is the same supermodel.exe** — no StreamReceiver. Open the lobby from the setup screen and connect
+- **New launcher, PonLuncher** — choose the number of links, the mode of each slot (stream, local, bot), the codec and so on, then press START
+- **Discord sign-in** — only members of the designated Discord server can host and join
+- **Entry tickets** — your Discord token never goes to the host. A small server checks your membership and gives you a signed, single-use ticket for that host and slot
+- **Firebase lobby** — hosts and free slots are listed automatically. No IP address to type
+- **Game progress in the lobby and on Discord** — each running game is shown as stage, area and number of players (GAME A, GAME B, …)
+- **Discord status post** — the host's free and used slots are posted to a Discord channel and kept up to date (Slot 1–4 and Slot 5–8 in two columns)
+- **Automatic port forwarding with UPnP** — in most homes no router setup is needed
+- **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
+- **H.264 / H.265** video, Opus audio
+- **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one slot per Discord account, old versions cannot connect
+
+### Spikeout FE changes
+
+- **5–8 players:** players 5–8 get their own costume colours (built into supermodel.exe, no `costume` folder), their own name colours on the HUD, and the KO / PK counters and ally stats for 8 players
+- **Joining a running game:** a player who joins always joins **GAME A**, the game already in progress
+- **Time limit:** with 5 or more players in a game, the in-game countdown is held at 99. With 4 or fewer it runs as in the original
+- **3-minute mode is blocked:** pressing START while holding Shift + Beat + Charge + Jump does nothing
+- **Enemy textures:** when someone joins, enemy textures that could not be loaded are loaded again (no more black enemies until the next area)
+- **Bots** can tell humans from bots through the link itself (no helper files). Their character is chosen in the launcher (BOT CHAR), and they can pick a random character when they continue
 
 ---
 
-## ⚙️ Specifications & Limitations
+## ✅ Tested titles
 
-- **XInput only** — titles requiring mouse or light gun input are not supported
-- **Up to 3 connections per instance** — one player + up to 2 spectators, or 3 spectators
-- If the player disconnects, the next spectator in line becomes the player
-- **Auto-disconnect** — clients with no XInput input for 1 minute will be disconnected
+- **Spikeout Final Edition** (spikeofe) — 2–8 links; 8 players over the internet confirmed
 
 ---
 
-## 📦 Package Contents
+## ⚙️ Specifications and limits
 
-This package is configured for **Spikeout Final Edition (spikeofe) 4-link play**.
+- **One player per slot** (no spectators). A slot in use cannot be joined
+- **When a player disconnects, their character stands still** (it does not become a bot). The next person who joins that slot takes control
+- **3 minutes without input disconnects you automatically** (a warning is shown for the last 30 seconds)
+- **Connecting over the internet requires Discord sign-in.** Without sign-in you can only connect from the same PC or your home network
+- **The client needs the ROM too** (the lobby opens when Spikeout FE is selected)
+- **Connect your controllers before starting** so Windows recognises them (controllers connected later are not detected)
+- The client uses the first controller
+- Streaming 8 slots at once puts a heavy load on the host. For 8 links a lower resolution (960×540 or 640×360) is recommended (tested: 8 links at 640×360 on an RTX 3060 host)
+- The room password option is turned off in the launcher for now (all rooms are public)
+
+---
+
+## 📦 Package contents (host)
 
 ```
-Spikeofe_4links_Sample_20260613.zip
-├── 01/
+spikeout8/
+├── host/
+│   ├── PonLuncher.exe          ← launcher (start here)
 │   ├── supermodel.exe
-│   └── Config/
-│       └── Supermodel.ini   ← Slot P1
-├── 02/                       ← Slot P2
-├── 03/                       ← Slot P3
-├── 04/                       ← Slot P4
-├── ROMs/                     ← Place your ROM files here
-├── 4lnkstart.bat             ← Launch all 4 instances
-├── 4lnkstart with cmd.bat    ← Launch all 4 instances (with console window)
-└── README.md
+│   ├── Config/
+│   │   ├── Supermodel_01.ini   ← slot 1 (… Supermodel_08.ini)
+│   │   └── …
+│   ├── NVRAM/
+│   ├── Roms/                   ← put your ROM files here
+│   └── Assets/
+└── waypoints.txt               ← routes for the bots
 ```
 
-### Streaming Configuration Patterns
+A client only needs the same `supermodel.exe`, `Config/Supermodel.ini` and `Roms/`.
 
-**All remote** (host does not play)
+> ⚠️ ROM files are not included. Use ROMs you own.
 
-| Slot | Streaming |
-|------|-----------|
-| 01–04 | `Streaming = 1` |
-
-> StreamReceiver is not required on the host side.
-
-**P1 local + P2–P4 remote** (host plays as P1)
-
-| Slot | Streaming |
-|------|-----------|
-| 01 | `Streaming = 0` |
-| 02–04 | `Streaming = 1` |
-
-> ⚠️ Connect your XInput controller and make sure Windows recognizes it before launching.
-
-> ⚠️ ROM files are not included. Please obtain them legally on your own.
+PonLuncher is distributed as a program only; its source is not part of this repository.
 
 ---
 
@@ -79,149 +83,289 @@ Spikeofe_4links_Sample_20260613.zip
 
 | Item | Requirement |
 |------|-------------|
-| OS | Windows 10/11 64-bit |
-| GPU | NVIDIA RTX 20 series or later (NVENC required) |
-| Driver | CUDA 13.0 compatible or later |
-| Other | ViGEmBus |
-| Router | UPnP enabled (or manual port forwarding) |
-| Network | 20 Mbps upload or faster recommended |
+| OS | Windows 10 / 11, 64-bit |
+| CPU | Intel Core i7 or AMD Ryzen 7 or better (single-thread speed matters) |
+| GPU | NVIDIA (NVENC) recommended. Other GPUs stream with FFmpeg (CPU) |
+| Discord | Member of the designated Discord server |
+| Router | UPnP enabled (or forward the ports by hand) |
+| Connection | 20 Mbps upload or more recommended (more players need more) |
 
-- [ViGEmBus](https://github.com/nefarius/ViGEm.Bus/releases) — Virtual gamepad driver
+### Client
 
-> Tested on: Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / 10GbE / Windows 11  
-> Minimum recommended: Core i5 9th gen or later
+| Item | Requirement |
+|------|-------------|
+| OS | Windows 10 / 11, 64-bit |
+| Discord | Member of the designated Discord server (over the internet) |
+| Other | The ROM file, an XInput or DirectInput controller (a keyboard also works) |
 
----
-
-## 🔌 Port Numbers
-
-| Slot | XInput | HS/HB | Video | Audio |
-|------|--------|-------|-------|-------|
-| P1 | 5000 | 5001 | 5002 | 5003 |
-| P2 | 5004 | 5005 | 5006 | 5007 |
-| P3 | 5008 | 5009 | 5010 | 5011 |
-| P4 | 5012 | 5013 | 5014 | 5015 |
+> Test machine: Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / Windows 11 (hosting also tested on an RTX 3060 PC)
 
 ---
 
-## 🚀 Setup (Host)
+## 🔌 Ports (UDP)
 
-### 1. Install ViGEmBus
+Slot n uses 4 ports starting at `55000 + (n − 1) × 4`.
 
-Download and install the latest release from [ViGEmBus Releases](https://github.com/nefarius/ViGEm.Bus/releases).
-
-### 2. Allow through Windows Firewall
-
-Allow `supermodel.exe` through Windows Firewall for both private and public networks.
-
-### 3. Configure Supermodel.ini
-
-Set the following in each slot's `Config/Supermodel.ini`:
-
-```ini
-Streaming = 1
-LinkPlay = 1   ; your slot number (1–4)
-```
-
-#### LinkPlay values
-
-| Value | Description | Virtual controllers created |
-|-------|-------------|----------------------------|
-| `0` | Single title — streams both P1 and P2 from one instance | 2 (P1 + P2) |
-| `1` | Link play slot 1 (P1) / Single title: P1 local + P2 streaming | 1 |
-| `2` | Link play slot 2 (P2) | 1 |
-| `3` | Link play slot 3 (P3) | 1 |
-| `4` | Link play slot 4 (P4) | 1 |
-
-> For single-title streaming (e.g. a 2-player cabinet), use `LinkPlay = 0`. Two virtual controllers will be created on the client side.
-
-> For single-title with P1 played locally on the host, use `LinkPlay = 1` and `Streaming = 1`. Connect your XInput controller before launching.
-
-### 4. Place your ROM
-
-Place your ROM files in the **`ROMs/`** folder at the root of the package. The sample `Supermodel.ini` in each slot is already configured to point to this directory.
-
-### 5. Launch supermodel.exe
-
-Run **`4lnkstart.bat`** to launch all 4 instances at once. This is the recommended way to start.
-
-> `4lnkstart with cmd.bat` opens a console window for debugging purposes.
+| Slot | Input | Session | Video | Audio |
+|------|-------|---------|-------|-------|
+| 1 | 55000 | 55001 | 55002 | 55003 |
+| 2 | 55004 | 55005 | 55006 | 55007 |
+| 3 | 55008 | 55009 | 55010 | 55011 |
+| 4 | 55012 | 55013 | 55014 | 55015 |
+| 5 | 55016 | 55017 | 55018 | 55019 |
+| 6 | 55020 | 55021 | 55022 | 55023 |
+| 7 | 55024 | 55025 | 55026 | 55027 |
+| 8 | 55028 | 55029 | 55030 | 55031 |
 
 ---
 
-> Streaming instances can be minimized — audio can also be muted in Windows mixer. This will not affect streaming performance.
+## 🚀 Hosting
 
-Clients use [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) to join.
+### 1. Allow it in Windows Firewall
 
----
+Allow `supermodel.exe` on both private and public networks.
 
-## 🔧 Configuration
+### 2. Add the ROM
 
-### Video Codec (`Supermodel.ini`)
+Put the ROM file (`spikeofe.zip` etc.) in `host/Roms/`.
 
-You can select the video codec used for streaming by editing `Config/Supermodel.ini`:
+### 3. Start PonLuncher
 
-```ini
-Decoder = H265   ; Use H.265 (HEVC) — better quality at lower bitrate
-Decoder = H264   ; Use H.264 (AVC)  — wider compatibility (default)
-```
+1. **DISCORD**: press LOGIN and sign in to Discord in your browser. "server member" is shown if you are a member of the server
+2. **HOST**:
+   - HOST NAME: the name shown in the lobby
+   - GAME: spikeofe
+   - LINKS: number of links (2–8)
+   - CODEC: H264 or H265
+   - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
+   - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
+   - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
+3. **SLOTS**: choose a mode for each slot
 
-| Codec | Key | Notes |
-|-------|-----|-------|
-| H.264 (AVC) | `H264` | Default. Broadest compatibility. |
-| H.265 (HEVC) | `H265` | Lower bitrate at equivalent quality. Requires NVENC-capable GPU on host. |
+| Mode | Meaning |
+|------|---------|
+| STREAM | A slot for a player over the internet (streamed) |
+| LOCAL | A slot played with a controller on the host PC (choose XINPUT / DINPUT under PAD) |
+| BOT | A slot played by a bot |
 
-> **Note:** The key name is `Decoder` in the config file, but it should have been `Codec`. This is a known typo.
+4. **START** launches every slot and lists the host in the lobby. **STOP** ends it
+5. The name of each player is shown under PLAYER. **KICK** removes them from that slot
 
-> Both host and client must support the selected codec.  
-> H.265 requires an NVIDIA RTX 20 series or later GPU on the host side.
-
-### H.264 vs H.265 Requirements
-
-| Role | H.264 (default) | H.265 (HEVC) |
-|------|-----------------|--------------|
-| **Host GPU** | GTX 600 series or later (Kepler, 2012+) | GTX 960 / 950 or later, GTX 10 series or later (Maxwell 2nd gen, 2015/2016+) |
-| **Client GPU/CPU** | Compatible with virtually any PC (even ~2011 hardware) | Intel 6th gen CPU or later, or GTX 960 / GTX 10 series or later |
-
-H.264's strength is that it works reliably on older, lower-spec hardware. With H.265, any standard PC released within the last ~10 years can enjoy higher quality streaming at lower bandwidth.
-
-> ⚠️ *Requirements above are based on AI-generated information and may not be fully accurate. Please verify against official NVIDIA/Intel documentation if needed.*
+> The streaming windows can be minimised. This does not affect the stream.
 
 ---
 
-## 🖥️ Client App
+## 🕹️ Playing (client)
 
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — Client app (video reception & controller input)
+1. Start `supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
+2. The lobby opens. Press LOGIN under **Discord** at the top
+3. In the host list, press a **green slot (free)**
+4. Once connected, the game screen appears
+
+| Key | Action |
+|-----|--------|
+| F11 | Full screen |
+| F3 | Show latency and other stats |
+| ↑ / ↓ | Raise / lower the bitrate |
+| ESC | Full screen → window → back to the lobby |
+
+> A host on the same PC or in your home network can also be reached with "Connect directly" at the bottom of the lobby, by typing its IP address.
 
 ---
 
-## 🔧 Related Repositories
+## 🔧 Settings
 
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — Client app (video reception & controller input)
-- [Supermodel3-PonMi](https://github.com/BackPonBeauty/Supermodel3-PonMi) — Base PonMi edition emulator
+### Video codec
+
+Chosen with CODEC in the launcher (`Codec = H264` / `Codec = H265` in the ini).
+
+| Codec | Value | Notes |
+|-------|-------|-------|
+| H.264 (AVC) | `H264` | Default. Light and runs on any PC |
+| H.265 (HEVC) | `H265` | Lower bitrate for the same quality. Slightly more CPU load on the client |
+
+> The client decodes the video on the CPU, so any client GPU works.
+
+### Encoder
+
+| Value | Meaning |
+|-------|---------|
+| `AUTO` | NVENC if there is an NVIDIA GPU, FFmpeg otherwise |
+| `NVENC` | Stream with the NVIDIA GPU (low latency; no CUDA Toolkit, the driver is enough) |
+| `FFMPEG` | Stream with the CPU (x264 / x265). Works with any GPU |
+
+---
+
+## 🛠️ Building from source
+
+To build supermodel.exe yourself, see [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md).
 
 ---
 
 ## ⚠️ Windows SmartScreen
 
-A SmartScreen warning may appear on first launch due to the absence of a code signing certificate.  
-Click **"More info" → "Run anyway"** to proceed.
+The program has no code-signing certificate, so SmartScreen may warn you the first time you run it.
+Click **"More info" → "Run anyway"** to start it.
 
 ---
 
 ## 📜 License
 
-This project is released under the **GPL v3** license.  
-Based on the original [Supermodel3](https://www.supermodel3.com).
+This software is distributed under the **GNU General Public License version 3 (GPL v3)**. The full text is in [LICENSE](LICENSE).
 
-### Third-party Libraries
+- It is based on [Supermodel3](https://github.com/trzy/Supermodel), which is GPL v3, so this modified program as a whole is GPL v3 as well.
+- The FFmpeg (`--enable-gpl`), x264 and x265 it contains are GPL too, and the distributed exe is under the GPL. Versions and build steps: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md).
+- Anyone may use, modify and redistribute it. When you distribute it (modified or not), provide the source under GPL v3 too.
+- The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt).
+- No game ROM is included.
 
-- ffmpeg `ffmpeg-2026-06-01-git-bf608f16fd-essentials_build` — [LGPL 2.1 / GPL 2.0](https://ffmpeg.org) / Build by [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-- NVENC / CUDA — NVIDIA License
-- [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement) — NVIDIA Toolkit License
-- miniupnpc — BSD License
-- ViGEm — BSD License
-- Firebase C++ SDK — Apache 2.0
+```
+Supermodel3-PonMi
+Copyright (C) 2026 BackPonBeauty
+
+Based on Supermodel3 (https://github.com/trzy/Supermodel)
+Copyright (C) 2003-2026 The Supermodel Team
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+```
+
+## Libraries
+
+This software uses the following libraries (~~struck through~~ = no longer used in this version).
+
+### [Firebase](https://firebase.google.com/)
+- Realtime Database and Authentication through their REST API (no SDK)
+- License: https://firebase.google.com/terms
+- Copyright 2023 Google LLC.
+
+### ~~[Newtonsoft.Json](https://www.newtonsoft.com/json)~~
+- ~~License: MIT~~
+- ~~Copyright (c) 2007 James Newton-King~~
+
+### ~~[SharpDX](http://sharpdx.org/)~~
+- ~~License: MIT~~
+- ~~Copyright (c) 2010-2015 SharpDX - Alexandre Mutel~~
+
+### ~~[System.Reactive](https://github.com/dotnet/reactive)~~
+- ~~License: MIT~~
+- ~~Copyright (c) .NET Foundation and Contributors~~
+
+### [miniupnpc](https://github.com/miniupnp/miniupnp)
+- [License: BSD 3-Clause License](https://github.com/miniupnp/miniupnp/blob/master/LICENSE)
+- Copyright (c) 2005-2022, Thomas BERNARD. All rights reserved.
+
+### ~~[ViGEm Bus Driver](https://vigem.org/)~~
+- ~~[License: MIT License](https://github.com/ViGEm/ViGEmBus/blob/master/LICENSE)~~
+- ~~Copyright (c) 2016-2022 Nefarius Software Solutions e.U.~~
+
+### [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
+- Only the CUDA driver API header (`cuda.h`) at build time. Not needed to run (the CUDA runtime is not used)
+- [License: CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html)
+- Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
+
+### [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk)
+- Only the header `nvEncodeAPI.h` is included in the source (that file is MIT-licensed). Encoding uses the GPU driver's `nvEncodeAPI64.dll`, loaded at run time
+- License: MIT License (at the top of `Src/Video/nvEncodeAPI.h`)
+- Copyright (c) 2010-2024 NVIDIA Corporation
+
+### ~~[Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)~~
+- ~~License: Microsoft Public License (MS-PL)~~
+- ~~Copyright (c) 2015 Logan Stromberg~~
+
+### ~~[LiteDB](https://www.litedb.org/)~~
+- ~~[License: MIT License](https://github.com/mbdavid/LiteDB/blob/master/LICENSE)~~
+- ~~Copyright (c) 2015 Maurício David~~
+
+### ~~[NAudio](https://github.com/naudio/NAudio)~~
+- ~~[License: MIT License](https://github.com/naudio/NAudio/blob/master/LICENSE)~~
+- ~~Copyright (c) 2020 Mark Heath~~
+
+### ~~[Mono.Nat](https://github.com/mono/mono.nat)~~
+- ~~[License: MIT License](https://github.com/mono/mono.nat/blob/master/LICENSE)~~
+- ~~Copyright (c) Alan McGovern and Contributors~~
+
+### [FFmpeg](https://www.ffmpeg.org/)
+- This build includes x264 / x265, so it is GPL (`--enable-gpl`)
+- Version: `master` commit `a5e6c01` (2026-07-15, `8.0.git`). Build steps: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
+- [License: GPL ver.2 or later (this build) / LGPL ver.2.1 or later (FFmpeg itself)](https://www.ffmpeg.org/legal.html)
+- Copyright (c) 2000-2026 the FFmpeg developers
+
+### [x264](https://www.videolan.org/developers/x264.html) (new)
+- H.264 software encoding (FFMPEG encoder)
+- Version: 0.165.r3222.b35605a (MSYS2 package, static library)
+- [License: GPL ver.2 or later](https://code.videolan.org/videolan/x264/-/blob/master/COPYING)
+- Copyright (c) the x264 project
+
+### [x265](https://www.videolan.org/developers/x265.html) (new)
+- H.265 software encoding (FFMPEG encoder)
+- Version: 4.1 (MSYS2 package, static library)
+- [License: GPL ver.2 or later](https://bitbucket.org/multicoreware/x265_git/src/master/COPYING)
+- Copyright (c) MulticoreWare, Inc
+
+### ~~[FirebaseDatabase.net](https://github.com/step-up-labs/firebase-database-dotnet)~~
+- ~~[License: MIT License](https://github.com/step-up-labs/firebase-database-dotnet/blob/master/LICENSE)~~
+- ~~Copyright (c) 2017 Step Up Labs, Inc.~~
+
+### ~~[FirebaseAuthentication.net](https://github.com/step-up-labs/firebase-authentication-dotnet)~~
+- ~~[License: MIT License](https://github.com/step-up-labs/firebase-authentication-dotnet/blob/master/LICENSE)~~
+- ~~Copyright (c) 2017 Step Up Labs, Inc.~~
+
+### [SDL2](https://www.libsdl.org/)
+- [License: zlib License](https://www.libsdl.org/license.php)
+- Copyright (c) 1997-2026 Sam Lantinga
+
+### [SDL2_net](https://github.com/libsdl-org/SDL2_net)
+- [License: zlib License](https://github.com/libsdl-org/SDL2_net/blob/main/LICENSE.txt)
+- Copyright (c) 1997-2026 Sam Lantinga
+
+### [zlib](https://zlib.net/)
+- [License: zlib License](https://zlib.net/zlib_license.html)
+- Copyright (c) 1995-2026 Jean-loup Gailly and Mark Adler
+
+### [Minizip](https://github.com/madler/zlib/tree/master/contrib/minizip) (new)
+- Reads the ROM zip files
+- License: zlib License
+- Copyright (c) 1998-2010 Gilles Vollant
+
+### [Dear ImGui](https://github.com/ocornut/imgui)
+- [License: MIT License](https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
+- Copyright (c) 2014-2026 Omar Cornut
+
+### [TinyXML-2](https://github.com/leethomason/tinyxml2)
+- [License: zlib License](https://github.com/leethomason/tinyxml2/blob/master/LICENSE.txt)
+- Copyright (c) 2011-2026 Lee Thomason
+
+### [GLEW](https://glew.sourceforge.net/) (new)
+- [License: Modified BSD License / MIT License](https://github.com/nigels-com/glew/blob/master/LICENSE.txt)
+- Copyright (c) the GLEW authors (Milan Ikits, Marcelo Magallon, Nigel Stewart and others)
+
+### [minimp3](https://github.com/lieff/minimp3) (new)
+- [License: CC0 1.0](https://github.com/lieff/minimp3/blob/master/LICENSE)
+- lieff
+
+### [libiconv](https://www.gnu.org/software/libiconv/) (new)
+- [License: LGPL ver.2.1 or later](https://www.gnu.org/software/libiconv/)
+- Copyright (c) Free Software Foundation, Inc.
+
+### [Opus](https://www.opus-codec.org/)
+- [License: BSD 3-Clause License](https://github.com/xiph/opus/blob/master/COPYING)
+- Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo
+
+### [Musashi M68K Emulator](https://github.com/kstenerud/Musashi)
+- [License: MIT License](https://github.com/kstenerud/Musashi/blob/master/LICENSE)
+- Copyright (c) 2011 Karl Stenerud
+
+### Services used (new)
+- [Discord](https://discord.com/): sign-in (OAuth2 / PKCE), server membership check, slot status posts through a webhook — [Discord Developer Terms of Service](https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service)
+- [Cloudflare Workers](https://workers.cloudflare.com/): the entry-ticket server (checks Discord membership and signs the ticket)
 
 ---
 
@@ -229,242 +373,5 @@ Based on the original [Supermodel3](https://www.supermodel3.com).
 
 - [BackPonBeauty](https://github.com/BackPonBeauty) — GitHub
 - [patreon.com/PonMi](https://patreon.com/PonMi) — Patreon
-- [discord.gg/mNjPJHTTen](https://discord.gg/mNjPJHTTen) — Discord
-- [back_pon_beauty](https://twitch.tv/back_pon_beauty) — Twitch
-
----
----
-
-# 🎮 Supermodel3-PonMi-Streaming v2.0.0 - Built-in WAN Streaming
-
-**追加ツール不要。起動して、スロットを共有して、プレイするだけ。**
-
----
-
-## 🆕 v2.0.0 の新機能
-
-- **ストリーミング機能をエミュレータに直接内蔵** — XinputReciever は不要になりました
-- **Firebase 自動マッチメイキング** — ホストを自動検出、手動でのIP入力は不要
-- **UPnP 自動ポート開放** — ほとんどの環境でルーター設定が不要
-- **Ping 表示** — ホスト一覧に各ホストへの遅延を表示
-- **NVENC H.264 / H.265 低遅延ストリーミング** — RTX 20 系以降で約 5.8ms のエンコード遅延
-- **最大4人 WAN リンクプレイ対応**（ローカルとリモートの混在可）
-
----
-
-## ✅ 動作確認済みタイトル
-
-- **Spikeout Final Edition**（spikeofe）— 4リンクプレイ確認済み
-- Virtua Fighter 3tb（シングルインスタンス）
-
----
-
-## ⚙️ 仕様・制限事項
-
-- **XInput対応タイトルのみ** — マウス操作・ライトガン使用タイトルは非対応
-- **各インスタンスへの接続は最大3人まで** — プレーヤー1人＋観戦者最大2人、または観戦者3人
-- プレーヤーが切断した場合、次の観戦者が自動的にプレーヤーになります
-- **自動切断** — 1分間XInputの入力がない場合、自動的に切断されます
-
----
-
-## 📦 同梱内容
-
-本パッケージは **Spikeout Final Edition（spikeofe）4リンクプレイ用**に構成されています。
-
-```
-Spikeofe_4links_Sample_20260613.zip
-├── 01/
-│   ├── supermodel.exe
-│   └── Config/
-│       └── Supermodel.ini   ← P1スロット
-├── 02/                       ← P2スロット
-├── 03/                       ← P3スロット
-├── 04/                       ← P4スロット
-├── ROMs/                     ← ROMファイルをここに配置
-├── 4lnkstart.bat             ← 4インスタンス一括起動
-├── 4lnkstart with cmd.bat    ← 4インスタンス一括起動（コンソールあり）
-└── README.md
-```
-
-### ストリーミング設定パターン
-
-**全員リモートの場合**（ホストは操作しない）
-
-| スロット | Streaming |
-|---------|-----------|
-| 01〜04 | `Streaming = 1` |
-
-> StreamReceiver はホスト側では不要です。
-
-**P1ローカル＋P2〜P4リモートの場合**（ホストがP1としてプレイ）
-
-| スロット | Streaming |
-|---------|-----------|
-| 01 | `Streaming = 0` |
-| 02〜04 | `Streaming = 1` |
-
-> ⚠️ 起動前に XInput コントローラーを接続し、Windows に認識させておいてください。
-
-> ⚠️ ROMファイルは含まれていません。各自で合法的に入手してください。
-
----
-
-## 💻 動作環境
-
-### ホスト側
-
-| 項目 | 要件 |
-|------|------|
-| OS | Windows 10/11 64bit |
-| GPU | NVIDIA RTX 20系以降（NVENC必須） |
-| ドライバ | CUDA 13.0 対応以降 |
-| その他 | ViGEmBus |
-| ルーター | UPnP有効（または手動ポート開放） |
-| 回線 | アップロード 20Mbps 以上推奨 |
-
-- [ViGEmBus](https://github.com/nefarius/ViGEm.Bus/releases) — 仮想ゲームパッドドライバ
-
-> テスト環境：Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / 10GbE / Windows 11  
-> 最低推奨：Core i5 第9世代以上
-
----
-
-## 🔌 ポート番号
-
-| スロット | XInput | HS/HB | Video | Audio |
-|---------|--------|-------|-------|-------|
-| P1 | 5000 | 5001 | 5002 | 5003 |
-| P2 | 5004 | 5005 | 5006 | 5007 |
-| P3 | 5008 | 5009 | 5010 | 5011 |
-| P4 | 5012 | 5013 | 5014 | 5015 |
-
----
-
-## 🚀 セットアップ（ホスト）
-
-### 1. ViGEmBus をインストール
-
-[ViGEmBus Releases](https://github.com/nefarius/ViGEm.Bus/releases) から最新版をダウンロードしてインストール。
-
-### 2. Windowsファイアウォールで許可
-
-`supermodel.exe` をプライベート・パブリック両方のネットワークで通信を許可してください。
-
-### 3. Supermodel.ini を設定
-
-各スロットの `Config/Supermodel.ini` に以下を設定：
-
-```ini
-Streaming = 1
-LinkPlay = 1   ; スロット番号（1〜4）
-```
-
-#### LinkPlay の値
-
-| 値 | 説明 | 作成される仮想コントローラ数 |
-|----|------|--------------------------|
-| `0` | シングルタイトル用 — 1インスタンスでP1・P2をまとめてストリーミング | 2個（P1 + P2） |
-| `1` | リンクプレイ スロット1（P1）/ シングルタイトル：P1ローカル＋P2ストリーミング | 1個 |
-| `2` | リンクプレイ スロット2（P2） | 1個 |
-| `3` | リンクプレイ スロット3（P3） | 1個 |
-| `4` | リンクプレイ スロット4（P4） | 1個 |
-
-> 2人プレイのシングルタイトルをストリーミングする場合は `LinkPlay = 0` を使用してください。クライアント側に仮想コントローラーが2つ作成されます。
-
-> シングルタイトルでP1をホスト側でローカル操作する場合は `LinkPlay = 1`、`Streaming = 1` を設定してください。起動前にXInputコントローラーを接続しておいてください。
-
-### 4. ROMを配置
-
-ROMファイルをパッケージ直下の **`ROMs/`** フォルダに置いてください。各スロットのサンプル `Supermodel.ini` はすでにこのディレクトリを参照するよう設定されています。
-
-### 5. supermodel.exe を起動
-
-**`4lnkstart.bat`** を実行すると4インスタンスを一括起動できます。こちらの方法を推奨します。
-
-> `4lnkstart with cmd.bat` はデバッグ用にコンソールウィンドウが開きます。
-
----
-
-> ストリーミング用インスタンスは最小化しても構いません。Windowsのボリュームミキサーで音声をミュートしても問題ありません。ストリーミングの品質には影響しません。
-
-クライアントは [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) で接続してください。
-
----
-
-## 🔧 設定
-
-### 映像コーデックの選択（`Supermodel.ini`）
-
-`Config/Supermodel.ini` を編集することで、ストリーミングに使用する映像コーデックを選択できます。
-
-```ini
-Decoder = H265   ; H.265 (HEVC) を使用 — 低ビットレートで高画質
-Decoder = H264   ; H.264 (AVC) を使用  — 互換性重視（デフォルト）
-```
-
-| コーデック | 設定値 | 備考 |
-|-----------|--------|------|
-| H.264 (AVC) | `H264` | デフォルト。互換性が最も高い。 |
-| H.265 (HEVC) | `H265` | 同等画質でビットレートを抑えられる。ホスト側に NVENC 対応 GPU が必要。 |
-
-> **補足:** 設定ファイルのキー名は `Decoder` ですが、本来は `Codec` とすべきところでした。タイポです。
-
-> ホストとクライアントの両方が選択したコーデックに対応している必要があります。  
-> H.265 はホスト側に NVIDIA RTX 20 シリーズ以降の GPU が必要です。
-
-### H.264 と H.265 の要件比較
-
-| 役割 | H.264（デフォルト） | H.265 (HEVC) |
-|------|-------------------|--------------|
-| **ホスト側 GPU** | GTX 600 シリーズ以降（Kepler世代、2012年〜） | GTX 960 / 950 以上、または GTX 10シリーズ以降（Maxwell第2世代、2015/2016年〜） |
-| **クライアント側 GPU/CPU** | ほぼすべてのPCで対応可能（2011年頃のPCでも可） | 第6世代 Intel CPU 以降、または GTX 960 / GTX 10シリーズ以降 |
-
-H.264 は古くてスペックが低いPCでもほぼ確実に動くのが強みです。H.265 は「ここ10年以内に発売された標準的なPC」であれば、より少ない通信帯域で高画質・低遅延なプレイが可能になります。
-
-> ⚠️ *上記の要件はAIによる情報をもとにしており、正確性を保証するものではありません。詳細はNVIDIA・Intelの公式ドキュメントをご確認ください。*
-
----
-
-## 🖥️ クライアントアプリ
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — クライアントアプリ（映像受信・コントローラ送信）
-
----
-
-## 🔧 関連リポジトリ
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — クライアントアプリ（映像受信・コントローラ送信）
-- [Supermodel3-PonMi](https://github.com/BackPonBeauty/Supermodel3-PonMi) — ベースとなるPonMi editionエミュレータ
-
----
-
-## ⚠️ Windows SmartScreen について
-
-コード署名証明書が未取得のため、初回起動時に SmartScreen の警告が表示される場合があります。  
-「詳細情報」→「実行」で起動できます。
-
----
-
-## 📜 ライセンス
-
-本プロジェクトは **GPL v3** ライセンスのもとで公開されています。  
-オリジナルの [Supermodel3](https://www.supermodel3.com) に基づいています。
-
-### サードパーティライブラリ
-
-- ffmpeg `ffmpeg-2026-06-01-git-bf608f16fd-essentials_build` — [LGPL 2.1 / GPL 2.0](https://ffmpeg.org) / ビルド配布元：[gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-- NVENC / CUDA — NVIDIA License
-- [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement) — NVIDIA Toolkit License
-- miniupnpc — BSD License
-- ViGEm — BSD License
-- Firebase C++ SDK — Apache 2.0
-
----
-
-## 💬 コミュニティ
-
-- [BackPonBeauty](https://github.com/BackPonBeauty) — GitHub
-- [patreon.com/PonMi](https://patreon.com/PonMi) — Patreon
-- [discord.gg/mNjPJHTTen](https://discord.gg/mNjPJHTTen) — Discord
+- [discord.com/invite/zpKBFDA52f](https://discord.com/invite/zpKBFDA52f) — Discord
 - [back_pon_beauty](https://twitch.tv/back_pon_beauty) — Twitch

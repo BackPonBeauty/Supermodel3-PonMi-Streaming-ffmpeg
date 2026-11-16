@@ -198,10 +198,7 @@ Chosen with CODEC in the launcher (`Codec = H264` / `Codec = H265` in the ini).
 
 ## 🛠️ Building from source
 
-- Build with MSYS2 (MINGW64): put `C:\msys64\mingw64\bin;C:\msys64\usr\bin` at the front of PATH and run `mingw32-make -f Makefiles/Makefile.Win32` at the top of the repository. The result is `bin64\supermodel.exe`
-- The FFmpeg / x264 / x265 versions and how to build them: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
-- The Firebase and Discord keys are embedded at build time from `Config/StreamingKeys.ini` (not in git; the format is in `Config/StreamingKeys.example.ini`). Without it the build still works, and the program runs without the lobby and Discord (direct IP connections still work)
-- The recoloured costume pictures for players 5–8 are not in git (they come from the ROM). Without them the build still works
+To build supermodel.exe yourself, see [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md).
 
 ---
 
@@ -376,5 +373,5 @@ This software uses the following libraries (~~struck through~~ = no longer used 
 
 - [BackPonBeauty](https://github.com/BackPonBeauty) — GitHub
 - [patreon.com/PonMi](https://patreon.com/PonMi) — Patreon
-- [discord.gg/mNjPJHTTen](https://discord.gg/mNjPJHTTen) — Discord
+- [discord.com/invite/zpKBFDA52f](https://discord.com/invite/zpKBFDA52f) — Discord
 - [back_pon_beauty](https://twitch.tv/back_pon_beauty) — Twitch
