@@ -1,102 +1,113 @@
-# 🎮 Supermodel3-PonMi-Streaming — Spikeout FE 8リンク・WAN ストリーミング
+# 🎮 Supermodel3-PonMi-Streaming-ffmpeg — Spikeout FE 8-link & WAN streaming
 
-**ランチャーでホストを立てて、ロビーからスロットを選んで、遊ぶだけ。**
-**StreamReceiver・XinputReceiver・ViGEmBus は不要になりました。**
+**Start a host in the launcher, pick a slot in the lobby, and play.**
+**StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> ビルド 20261116 / PonLuncher 2.0.0
-
----
-
-## 🆕 新しくなったところ
-
-- **Spikeout Final Edition を最大8人でリンクプレイ**（2〜8リンク）。人が足りない台はボットが操作できます
-- **クライアントも同じ supermodel.exe** — StreamReceiver は不要。設定画面からロビーを開いてつなぎます
-- **新しいランチャー PonLuncher** — リンク数、スロットごとのモード（配信・ローカル・ボット）、コーデックなどを選んで START するだけ
-- **Discord 認証** — 決められた Discord サーバーのメンバーだけがホストを立てられ、つなげます
-- **部屋のパスワード** — 空白ならパブリック。パスワードのある部屋は、ロビーに鍵のアイコンが出ます
-- **Firebase のロビー** — ホストとスロットの空きが自動で一覧に出ます。IP の入力は不要
-- **Discord への空き状況の投稿** — ホストのスロットの空きを、Discord のチャンネルに自動で投稿・更新します
-- **UPnP で自動ポート開放** — ほとんどの環境でルーターの設定は不要
-- **NVENC（NVIDIA）は CUDA Toolkit 不要** — NVIDIA のドライバだけで動きます。NVIDIA 以外の GPU では FFmpeg（x264 / x265、CPU）で配信します
-- **H.264 / H.265**、音声は Opus
-- **荒らし対策** — 3分操作がないと切断、ホストのキック、1台の PC でクライアントは1つだけ、1つの Discord アカウントは1スロットだけ、古いバージョンはつなげない
+> Build 20261116 / PonLuncher 2.0.0
 
 ---
 
-## ✅ 動作確認済みタイトル
+## 🆕 What's new
 
-- **Spikeout Final Edition**（spikeofe）— 2〜8リンク、インターネット越しの8人接続を確認
+- **Spikeout Final Edition with up to 8 players** (2–8 links). Bots can play the cabinets nobody is using
+- **The client is the same supermodel.exe** — no StreamReceiver. Open the lobby from the setup screen and connect
+- **New launcher, PonLuncher** — choose the number of links, the mode of each slot (stream, local, bot), the codec and so on, then press START
+- **Discord sign-in** — only members of the designated Discord server can host and join
+- **Entry tickets** — your Discord token never goes to the host. A small server checks your membership and gives you a signed, single-use ticket for that host and slot
+- **Firebase lobby** — hosts and free slots are listed automatically. No IP address to type
+- **Game progress in the lobby and on Discord** — each running game is shown as stage, area and number of players (GAME A, GAME B, …)
+- **Discord status post** — the host's free and used slots are posted to a Discord channel and kept up to date (Slot 1–4 and Slot 5–8 in two columns)
+- **Automatic port forwarding with UPnP** — in most homes no router setup is needed
+- **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
+- **H.264 / H.265** video, Opus audio
+- **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one slot per Discord account, old versions cannot connect
+
+### Spikeout FE changes
+
+- **5–8 players:** players 5–8 get their own costume colours (built into supermodel.exe, no `costume` folder), their own name colours on the HUD, and the KO / PK counters and ally stats for 8 players
+- **Joining a running game:** a player who joins always joins **GAME A**, the game already in progress
+- **Time limit:** with 5 or more players in a game, the in-game countdown is held at 99. With 4 or fewer it runs as in the original
+- **3-minute mode is blocked:** pressing START while holding Shift + Beat + Charge + Jump does nothing
+- **Enemy textures:** when someone joins, enemy textures that could not be loaded are loaded again (no more black enemies until the next area)
+- **Bots** can tell humans from bots through the link itself (no helper files). Their character is chosen in the launcher (BOT CHAR), and they can pick a random character when they continue
 
 ---
 
-## ⚙️ 仕様・制限事項
+## ✅ Tested titles
 
-- **1スロットに1人**（観戦はありません）。使用中のスロットには入れません
-- **切断すると、そのキャラはその場で立ち止まります**（ボットには戻りません）。だれかが同じスロットに入ると、その人の操作になります
-- **3分間操作がないと自動で切断**されます（最後の30秒は画面に警告が出ます）
-- **インターネット越しにつなぐには Discord のログインが必要**です。ログインなしでつなげるのは、同じ PC か家の中のネットワークからだけです
-- **クライアントにも ROM が必要**です（ロビーは Spikeout FE を選んだときに開きます）
-- コントローラーは、**起動する前につないで** Windows に認識させておいてください（起動後につないだものは認識されません）
-- クライアントが使うパッドは、1台目のパッドです
-- 8本同時に配信するとホストの負荷が大きくなります。8リンクでは解像度を下げる（960×540 や 640×360）のがおすすめです（参考：RTX 3060 のホストで 8リンク・640×360 を確認）
+- **Spikeout Final Edition** (spikeofe) — 2–8 links; 8 players over the internet confirmed
 
 ---
 
-## 📦 同梱内容（ホスト）
+## ⚙️ Specifications and limits
+
+- **One player per slot** (no spectators). A slot in use cannot be joined
+- **When a player disconnects, their character stands still** (it does not become a bot). The next person who joins that slot takes control
+- **3 minutes without input disconnects you automatically** (a warning is shown for the last 30 seconds)
+- **Connecting over the internet requires Discord sign-in.** Without sign-in you can only connect from the same PC or your home network
+- **The client needs the ROM too** (the lobby opens when Spikeout FE is selected)
+- **Connect your controllers before starting** so Windows recognises them (controllers connected later are not detected)
+- The client uses the first controller
+- Streaming 8 slots at once puts a heavy load on the host. For 8 links a lower resolution (960×540 or 640×360) is recommended (tested: 8 links at 640×360 on an RTX 3060 host)
+- The room password option is turned off in the launcher for now (all rooms are public)
+
+---
+
+## 📦 Package contents (host)
 
 ```
 spikeout8/
 ├── host/
-│   ├── PonLuncher.exe          ← ランチャー（ここから起動）
+│   ├── PonLuncher.exe          ← launcher (start here)
 │   ├── supermodel.exe
 │   ├── Config/
-│   │   ├── Supermodel_01.ini   ← スロット1（～ Supermodel_08.ini）
+│   │   ├── Supermodel_01.ini   ← slot 1 (… Supermodel_08.ini)
 │   │   └── …
 │   ├── NVRAM/
-│   ├── Roms/                   ← ROM ファイルをここに置く
+│   ├── Roms/                   ← put your ROM files here
 │   └── Assets/
-└── waypoints.txt               ← ボットの道順
+└── waypoints.txt               ← routes for the bots
 ```
 
-クライアントは、同じ `supermodel.exe` と `Config/Supermodel.ini`、`Roms/` があれば動きます。
+A client only needs the same `supermodel.exe`, `Config/Supermodel.ini` and `Roms/`.
 
-5〜8人目の服の色は `supermodel.exe` に入っているので、`costume` フォルダは要りません。
+> ⚠️ ROM files are not included. Use ROMs you own.
 
-> ⚠️ ROM ファイルは含まれていません。各自で合法的に入手してください。
-
----
-
-## 💻 動作環境
-
-### ホスト
-
-| 項目 | 要件 |
-|------|------|
-| OS | Windows 10 / 11 64bit |
-| CPU | Intel Core i7 以上、または AMD Ryzen 7 以上（シングルスレッドの速さが大切） |
-| GPU | NVIDIA（NVENC）推奨。NVIDIA 以外は FFmpeg（CPU）で配信 |
-| Discord | 決められた Discord サーバーのメンバーであること |
-| ルーター | UPnP 有効（または手動でポート開放） |
-| 回線 | 上り 20Mbps 以上推奨（人数が多いほど必要） |
-
-### クライアント
-
-| 項目 | 要件 |
-|------|------|
-| OS | Windows 10 / 11 64bit |
-| Discord | 決められた Discord サーバーのメンバーであること（インターネット越しのとき） |
-| その他 | ROM ファイル、XInput か DirectInput のコントローラー（キーボードでも可） |
-
-> テスト環境：Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / Windows 11（ホストは RTX 3060 の PC でも確認）
+PonLuncher is distributed as a program only; its source is not part of this repository.
 
 ---
 
-## 🔌 ポート番号（UDP）
+## 💻 Requirements
 
-スロット n のポートは `55000 + (n − 1) × 4` から 4 つです。
+### Host
 
-| スロット | 入力 | セッション | 映像 | 音声 |
-|------|-------|-------|-------|-------|
+| Item | Requirement |
+|------|-------------|
+| OS | Windows 10 / 11, 64-bit |
+| CPU | Intel Core i7 or AMD Ryzen 7 or better (single-thread speed matters) |
+| GPU | NVIDIA (NVENC) recommended. Other GPUs stream with FFmpeg (CPU) |
+| Discord | Member of the designated Discord server |
+| Router | UPnP enabled (or forward the ports by hand) |
+| Connection | 20 Mbps upload or more recommended (more players need more) |
+
+### Client
+
+| Item | Requirement |
+|------|-------------|
+| OS | Windows 10 / 11, 64-bit |
+| Discord | Member of the designated Discord server (over the internet) |
+| Other | The ROM file, an XInput or DirectInput controller (a keyboard also works) |
+
+> Test machine: Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / Windows 11 (hosting also tested on an RTX 3060 PC)
+
+---
+
+## 🔌 Ports (UDP)
+
+Slot n uses 4 ports starting at `55000 + (n − 1) × 4`.
+
+| Slot | Input | Session | Video | Audio |
+|------|-------|---------|-------|-------|
 | 1 | 55000 | 55001 | 55002 | 55003 |
 | 2 | 55004 | 55005 | 55006 | 55007 |
 | 3 | 55008 | 55009 | 55010 | 55011 |
@@ -108,98 +119,108 @@ spikeout8/
 
 ---
 
-## 🚀 ホストの立て方
+## 🚀 Hosting
 
-### 1. Windows ファイアウォールで許可
+### 1. Allow it in Windows Firewall
 
-`supermodel.exe` の通信を、プライベート・パブリックの両方で許可してください。
+Allow `supermodel.exe` on both private and public networks.
 
-### 2. ROM を置く
+### 2. Add the ROM
 
-`host/Roms/` に ROM ファイル（`spikeofe.zip` など）を置きます。
+Put the ROM file (`spikeofe.zip` etc.) in `host/Roms/`.
 
-### 3. PonLuncher を起動する
+### 3. Start PonLuncher
 
-1. **DISCORD**：LOGIN を押して、ブラウザで Discord にログインします。サーバーのメンバーなら「server member」と出ます
-2. **HOST**：
-   - HOST NAME：ロビーに出るホストの名前
-   - GAME：spikeofe
-   - LINKS：リンク数（2〜8）
-   - CODEC：H264 か H265
-   - ENCODER：AUTO（NVIDIA なら NVENC、それ以外は FFmpeg）／ NVENC ／ FFMPEG
-   - PASSWORD：部屋のパスワード。**空白ならパブリック**
-3. **SLOTS**：スロットごとにモードを選びます
+1. **DISCORD**: press LOGIN and sign in to Discord in your browser. "server member" is shown if you are a member of the server
+2. **HOST**:
+   - HOST NAME: the name shown in the lobby
+   - GAME: spikeofe
+   - LINKS: number of links (2–8)
+   - CODEC: H264 or H265
+   - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
+   - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
+   - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
+3. **SLOTS**: choose a mode for each slot
 
-| モード | 内容 |
-|--------|------|
-| STREAM | インターネット越しの人が遊ぶスロット（配信する） |
-| LOCAL | ホストの PC のコントローラーで遊ぶスロット（PAD で XINPUT / DINPUT を選ぶ） |
-| BOT | ボットが操作するスロット |
+| Mode | Meaning |
+|------|---------|
+| STREAM | A slot for a player over the internet (streamed) |
+| LOCAL | A slot played with a controller on the host PC (choose XINPUT / DINPUT under PAD) |
+| BOT | A slot played by a bot |
 
-4. **START** で全スロットが起動し、ロビーに載ります。**STOP** で終わります
-5. 遊んでいる人は PLAYER に名前が出ます。**KICK** でそのスロットから外せます
+4. **START** launches every slot and lists the host in the lobby. **STOP** ends it
+5. The name of each player is shown under PLAYER. **KICK** removes them from that slot
 
-> 配信用の画面は最小化してもかまいません。配信の品質には影響しません。
-
----
-
-## 🕹️ 遊び方（クライアント）
-
-1. `supermodel.exe` を起動して、設定画面で **Spikeout Final Edition** を選び、**LAUNCH**
-2. ロビーが開きます。上の **Discord** で LOGIN します
-3. ホストの一覧から、**緑のスロット（空き）** を押します
-   - 🔒 鍵のアイコンがあるホストは、パスワードの入力欄が出ます
-4. つながると、ゲームの画面が出ます
-
-| キー | 内容 |
-|------|------|
-| F11 | フルスクリーン |
-| F3 | 遅延などの表示 |
-| ↑ / ↓ | ビットレートを上げる・下げる |
-| ESC | フルスクリーン → ウィンドウ → ロビーに戻る |
-
-> 同じ PC や家の中のホストには、下の「Connect directly」で IP を入れてつなぐこともできます。
+> The streaming windows can be minimised. This does not affect the stream.
 
 ---
 
-## 🔧 設定
+## 🕹️ Playing (client)
 
-### 映像のコーデック
+1. Start `supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
+2. The lobby opens. Press LOGIN under **Discord** at the top
+3. In the host list, press a **green slot (free)**
+4. Once connected, the game screen appears
 
-ランチャーの CODEC で選びます（ini では `Codec = H264` / `Codec = H265`）。
+| Key | Action |
+|-----|--------|
+| F11 | Full screen |
+| F3 | Show latency and other stats |
+| ↑ / ↓ | Raise / lower the bitrate |
+| ESC | Full screen → window → back to the lobby |
 
-| コーデック | 設定値 | 備考 |
-|-----------|--------|------|
-| H.264 (AVC) | `H264` | 既定。負荷が軽く、どの PC でも動きます |
-| H.265 (HEVC) | `H265` | 同じ画質でビットレートを抑えられます。クライアントの CPU の負荷は少し上がります |
-
-> クライアントは CPU で映像を読み解くので、クライアントの GPU は問いません。
-
-### エンコーダ
-
-| 設定値 | 内容 |
-|--------|------|
-| `AUTO` | NVIDIA の GPU があれば NVENC、なければ FFmpeg |
-| `NVENC` | NVIDIA の GPU で配信（低遅延。CUDA Toolkit は不要、ドライバだけで動作） |
-| `FFMPEG` | CPU で配信（x264 / x265）。どの GPU でも動きます |
+> A host on the same PC or in your home network can also be reached with "Connect directly" at the bottom of the lobby, by typing its IP address.
 
 ---
 
-## ⚠️ Windows SmartScreen について
+## 🔧 Settings
 
-コード署名証明書が未取得のため、初回起動時に SmartScreen の警告が表示される場合があります。
-「詳細情報」→「実行」で起動できます。
+### Video codec
+
+Chosen with CODEC in the launcher (`Codec = H264` / `Codec = H265` in the ini).
+
+| Codec | Value | Notes |
+|-------|-------|-------|
+| H.264 (AVC) | `H264` | Default. Light and runs on any PC |
+| H.265 (HEVC) | `H265` | Lower bitrate for the same quality. Slightly more CPU load on the client |
+
+> The client decodes the video on the CPU, so any client GPU works.
+
+### Encoder
+
+| Value | Meaning |
+|-------|---------|
+| `AUTO` | NVENC if there is an NVIDIA GPU, FFmpeg otherwise |
+| `NVENC` | Stream with the NVIDIA GPU (low latency; no CUDA Toolkit, the driver is enough) |
+| `FFMPEG` | Stream with the CPU (x264 / x265). Works with any GPU |
 
 ---
 
-## 📜 ライセンス
+## 🛠️ Building from source
 
-このソフトウェアは **GNU General Public License version 3（GPL v3）** で配布します。全文は [LICENSE](LICENSE) にあります。
+- Build with MSYS2 (MINGW64): put `C:\msys64\mingw64\bin;C:\msys64\usr\bin` at the front of PATH and run `mingw32-make -f Makefiles/Makefile.Win32` at the top of the repository. The result is `bin64\supermodel.exe`
+- The FFmpeg / x264 / x265 versions and how to build them: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
+- The Firebase and Discord keys are embedded at build time from `Config/StreamingKeys.ini` (not in git; the format is in `Config/StreamingKeys.example.ini`). Without it the build still works, and the program runs without the lobby and Discord (direct IP connections still work)
+- The recoloured costume pictures for players 5–8 are not in git (they come from the ROM). Without them the build still works
 
-- もとにしている [Supermodel3](https://github.com/trzy/Supermodel) が GPL v3 なので、それを改造したこのソフトウェア全体も GPL v3 です。
-- 組み込んでいる FFmpeg（`--enable-gpl`）・x264・x265 も GPL です。配布する exe も GPL の条件で配ります。作り直すための版と手順は [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md) にあります。
-- 使っているライブラリのライセンスは、下の「使用ライブラリ」と [PonMi_LICENSE.txt](PonMi_LICENSE.txt) にまとめています。
-- ゲームの ROM は含まれていません。自分で持っているものを使ってください。
+---
+
+## ⚠️ Windows SmartScreen
+
+The program has no code-signing certificate, so SmartScreen may warn you the first time you run it.
+Click **"More info" → "Run anyway"** to start it.
+
+---
+
+## 📜 License
+
+This software is distributed under the **GNU General Public License version 3 (GPL v3)**. The full text is in [LICENSE](LICENSE).
+
+- It is based on [Supermodel3](https://github.com/trzy/Supermodel), which is GPL v3, so this modified program as a whole is GPL v3 as well.
+- The FFmpeg (`--enable-gpl`), x264 and x265 it contains are GPL too, and the distributed exe is under the GPL. Versions and build steps: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md).
+- Anyone may use, modify and redistribute it. When you distribute it (modified or not), provide the source under GPL v3 too.
+- The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt).
+- No game ROM is included.
 
 ```
 Supermodel3-PonMi
@@ -219,12 +240,12 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 ```
 
-## 使用ライブラリ
+## Libraries
 
-このソフトウェアは、次のライブラリを使っています（~~打ち消し線~~ は、今のバージョンでは使っていないもの）。
+This software uses the following libraries (~~struck through~~ = no longer used in this version).
 
 ### [Firebase](https://firebase.google.com/)
-- Realtime Database と Authentication を REST で使用（SDK は使っていません）
+- Realtime Database and Authentication through their REST API (no SDK)
 - License: https://firebase.google.com/terms
 - Copyright 2023 Google LLC.
 
@@ -249,13 +270,13 @@ GNU General Public License for more details.
 - ~~Copyright (c) 2016-2022 Nefarius Software Solutions e.U.~~
 
 ### [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
-- ビルドのときに CUDA ドライバ API のヘッダー（`cuda.h`）だけを使用。実行には不要（CUDA ランタイムは使っていません）
+- Only the CUDA driver API header (`cuda.h`) at build time. Not needed to run (the CUDA runtime is not used)
 - [License: CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html)
 - Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
 
 ### [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk)
-- ヘッダー `nvEncodeAPI.h` だけをソースに含めています（そのファイルは MIT License）。エンコードは、GPU ドライバーの `nvEncodeAPI64.dll` を実行時に読み込んで使います
-- License: MIT License（`Src/Video/nvEncodeAPI.h` の冒頭）
+- Only the header `nvEncodeAPI.h` is included in the source (that file is MIT-licensed). Encoding uses the GPU driver's `nvEncodeAPI64.dll`, loaded at run time
+- License: MIT License (at the top of `Src/Video/nvEncodeAPI.h`)
 - Copyright (c) 2010-2024 NVIDIA Corporation
 
 ### ~~[Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)~~
@@ -275,20 +296,20 @@ GNU General Public License for more details.
 - ~~Copyright (c) Alan McGovern and Contributors~~
 
 ### [FFmpeg](https://www.ffmpeg.org/)
-- このビルドは x264 / x265 を含めて作っているため GPL（`--enable-gpl`）
-- 版：`master` のコミット `a5e6c01`（2026-07-15、`8.0.git`）。作り方は [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
-- [License: GPL ver.2 or later（このビルド）／ LGPL ver.2.1 or later（FFmpeg 本体）](https://www.ffmpeg.org/legal.html)
+- This build includes x264 / x265, so it is GPL (`--enable-gpl`)
+- Version: `master` commit `a5e6c01` (2026-07-15, `8.0.git`). Build steps: [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
+- [License: GPL ver.2 or later (this build) / LGPL ver.2.1 or later (FFmpeg itself)](https://www.ffmpeg.org/legal.html)
 - Copyright (c) 2000-2026 the FFmpeg developers
 
-### [x264](https://www.videolan.org/developers/x264.html)（追加）
-- H.264 のソフトウェアエンコード（FFMPEG エンコーダ）
-- 版：0.165.r3222.b35605a（MSYS2 のパッケージ、静的ライブラリ）
+### [x264](https://www.videolan.org/developers/x264.html) (new)
+- H.264 software encoding (FFMPEG encoder)
+- Version: 0.165.r3222.b35605a (MSYS2 package, static library)
 - [License: GPL ver.2 or later](https://code.videolan.org/videolan/x264/-/blob/master/COPYING)
 - Copyright (c) the x264 project
 
-### [x265](https://www.videolan.org/developers/x265.html)（追加）
-- H.265 のソフトウェアエンコード（FFMPEG エンコーダ）
-- 版：4.1（MSYS2 のパッケージ、静的ライブラリ）
+### [x265](https://www.videolan.org/developers/x265.html) (new)
+- H.265 software encoding (FFMPEG encoder)
+- Version: 4.1 (MSYS2 package, static library)
 - [License: GPL ver.2 or later](https://bitbucket.org/multicoreware/x265_git/src/master/COPYING)
 - Copyright (c) MulticoreWare, Inc
 
@@ -312,8 +333,8 @@ GNU General Public License for more details.
 - [License: zlib License](https://zlib.net/zlib_license.html)
 - Copyright (c) 1995-2026 Jean-loup Gailly and Mark Adler
 
-### [Minizip](https://github.com/madler/zlib/tree/master/contrib/minizip)（追加）
-- ROM の zip を読む
+### [Minizip](https://github.com/madler/zlib/tree/master/contrib/minizip) (new)
+- Reads the ROM zip files
 - License: zlib License
 - Copyright (c) 1998-2010 Gilles Vollant
 
@@ -325,15 +346,15 @@ GNU General Public License for more details.
 - [License: zlib License](https://github.com/leethomason/tinyxml2/blob/master/LICENSE.txt)
 - Copyright (c) 2011-2026 Lee Thomason
 
-### [GLEW](https://glew.sourceforge.net/)（追加）
+### [GLEW](https://glew.sourceforge.net/) (new)
 - [License: Modified BSD License / MIT License](https://github.com/nigels-com/glew/blob/master/LICENSE.txt)
-- Copyright (c) the GLEW authors (Milan Ikits, Marcelo Magallon, Nigel Stewart ほか)
+- Copyright (c) the GLEW authors (Milan Ikits, Marcelo Magallon, Nigel Stewart and others)
 
-### [minimp3](https://github.com/lieff/minimp3)（追加）
+### [minimp3](https://github.com/lieff/minimp3) (new)
 - [License: CC0 1.0](https://github.com/lieff/minimp3/blob/master/LICENSE)
 - lieff
 
-### [libiconv](https://www.gnu.org/software/libiconv/)（追加）
+### [libiconv](https://www.gnu.org/software/libiconv/) (new)
 - [License: LGPL ver.2.1 or later](https://www.gnu.org/software/libiconv/)
 - Copyright (c) Free Software Foundation, Inc.
 
@@ -345,12 +366,13 @@ GNU General Public License for more details.
 - [License: MIT License](https://github.com/kstenerud/Musashi/blob/master/LICENSE)
 - Copyright (c) 2011 Karl Stenerud
 
-### 使用しているサービス（追加）
-- [Discord](https://discord.com/)：ログイン（OAuth2 / PKCE）、サーバーのメンバーの確認、Webhook での空き状況の投稿 — [Discord Developer Terms of Service](https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service)
+### Services used (new)
+- [Discord](https://discord.com/): sign-in (OAuth2 / PKCE), server membership check, slot status posts through a webhook — [Discord Developer Terms of Service](https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service)
+- [Cloudflare Workers](https://workers.cloudflare.com/): the entry-ticket server (checks Discord membership and signs the ticket)
 
 ---
 
-## 💬 コミュニティ
+## 💬 Community
 
 - [BackPonBeauty](https://github.com/BackPonBeauty) — GitHub
 - [patreon.com/PonMi](https://patreon.com/PonMi) — Patreon
