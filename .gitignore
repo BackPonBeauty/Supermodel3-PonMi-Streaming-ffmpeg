@@ -384,3 +384,8 @@ Config/StreamingKeys.ini
 
 # local backups before edits (CLAUDE.md rule)
 *.bak_*
+
+# keys embedded at build time from Config/StreamingKeys.ini (Scripts/gen_keys.ps1)
+Src/Stream/EmbeddedKeys.h
+Launcher/PonLuncher/EmbeddedKeys.vb
+**/Config/FirebaseSlot*.dat

@@ -22,6 +22,7 @@
 #include <atomic>
 #include <map>
 #include <vector>
+#include <mutex>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -68,8 +69,8 @@ using FirebaseStatusCallback = std::function<void(const std::string &message)>;
 class FirebaseMatchingCpp
 {
 public:
-    // P6 (2026-11-16): the Firebase API key and database URL are no longer compiled in. They come from
-    // Config/StreamingKeys.ini (Stream/Secrets.h, not in git). Without it, Initialize() fails and Firebase is off.
+    // P6 / 11/16: the Firebase API key and database URL are not in the source. They are
+    // embedded at build time (Stream/Secrets.h, Scripts/gen_keys.ps1). Without them, Initialize() fails and Firebase is off.
 
     // Dynamic Port definitions based on supermodel.ini s_runtime_config
     static int GetSlotXInputPort(int slot);
@@ -116,11 +117,15 @@ public:
     // P6: this PC's address on its local network (no packet is sent)
     static std::string GetLanIp();
 
-    // Start heartbeat (updates timestamp every 2 minutes)
-    void StartHeartbeat(const std::string &hostId);
+    // Start heartbeat: every 2 minutes the timestamp of this server's own slot(s) (11/16: per slot) and,
+    // every 30 minutes, a new ID token from the refresh token (the uid stays the same: the slots are ours).
+    void StartHeartbeat(const std::string &hostId, const std::vector<int> &slots);
     void StopHeartbeat();
 
     bool IsInitialized() const { return m_initialized; }
+
+    // 11/16: host slots keep their Firebase session in this DPAPI-encrypted file (same uid after a restart). Before Initialize.
+    void SetSessionFile(const std::string &path) { m_sessionFile = path; }
 
 private:
     // Send HTTP request using WinHTTP
@@ -140,8 +145,13 @@ private:
     // IP address -> Firebase key conversion (replaces dots etc. with '-')
     static std::string SanitizeKeyFromIp(const std::string &ip);
 
-    // Firebase Auth anonymous sign-in
+    // Firebase Auth anonymous sign-in (keeps the uid and the refresh token)
     bool SignInAnonymously();
+    // 11/16: new ID token from the refresh token (same uid). Falls back to nothing on failure.
+    bool RefreshIdToken();
+    // the current ID token (thread-safe copy)
+    std::string Token();
+    void SaveSession();
 
     // Get timestamp (Unix milliseconds)
     static long long GetUnixTimestamp();
@@ -151,8 +161,12 @@ private:
     static std::string EscapeJson(const std::string &s);
 
     bool m_initialized = false;
-    std::string m_idToken; // Firebase ID token
+    std::mutex m_tokenLock;      // guards the three below (the heartbeat thread refreshes them)
+    std::string m_idToken;       // Firebase ID token
+    std::string m_refreshToken;  // 11/16: to get new ID tokens for the same uid
+    std::string m_uid;           // 11/16: anonymous user id = "owner" of this server's slots (database rules)
     std::string m_currentHostId;
+    std::string m_sessionFile;   // 11/16: "" = do not keep the session (the lobby)
 
     // Heartbeat thread
     std::thread m_heartbeatThread;
@@ -160,7 +174,7 @@ private:
 
     FirebaseStatusCallback m_statusCb;
 
-    void HeartbeatThread(std::string hostId);
+    void HeartbeatThread(std::string hostId, std::vector<int> slots);
 };
 
 #endif // SUPERMODEL_WIN32

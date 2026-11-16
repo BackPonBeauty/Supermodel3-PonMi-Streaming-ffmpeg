@@ -1,7 +1,8 @@
 /*
  * DiscordNotifier.cpp
  *
- * Streaming (2026-11-16, test stage): this host's slot status as one Discord message. See DiscordNotifier.h.
+ * Streaming (2026-11-16): this host's slot status as one Discord message, through the status channel's WEBHOOK
+ * (embedded at build time; a webhook can only post to its channel and edit / delete its own messages). See DiscordNotifier.h.
  */
 
 #ifdef SUPERMODEL_WIN32
@@ -19,7 +20,7 @@ static const int   kIntervalSec = 15;
 
 bool DiscordNotifier::Configured()
 {
-  return StreamSecrets::HasDiscordBot();
+  return StreamSecrets::HasDiscordWebhook();
 }
 
 static std::string EscapeJson(const std::string &s)
@@ -35,12 +36,35 @@ static std::string EscapeJson(const std::string &s)
   return o;
 }
 
-int DiscordNotifier::Request(const wchar_t *verb, const std::string &path, const std::string &json, std::string *body)
+// "https://discord.com/api/webhooks/<id>/<token>" -> host L"discord.com", path "/api/webhooks/<id>/<token>"
+static bool WebhookParts(std::wstring &host, std::string &path)
 {
-  std::string headers = "Authorization: Bot " + StreamSecrets::Get().discordBotToken + "\r\n";
+  std::string url = StreamSecrets::Get().discordWebhookUrl;
+  size_t p = url.find("://");
+  if (p == std::string::npos)
+    return false;
+  size_t slash = url.find('/', p + 3);
+  if (slash == std::string::npos)
+    return false;
+  std::string h = url.substr(p + 3, slash - (p + 3));
+  host.assign(h.begin(), h.end());
+  path = url.substr(slash);
+  while (!path.empty() && (path.back() == '/' || path.back() == ' '))
+    path.pop_back();
+  return path.find("/webhooks/") != std::string::npos;
+}
+
+// suffix: "?wait=true" (post) or "/messages/<id>" (edit, delete). No Authorization: the URL is the credential.
+int DiscordNotifier::Request(const wchar_t *verb, const std::string &suffix, const std::string &json, std::string *body)
+{
+  std::wstring host;
+  std::string path;
+  if (!WebhookParts(host, path))
+    return 0;
+  std::string headers;
   if (!json.empty())
-    headers += "Content-Type: application/json\r\n";
-  return StreamHttp::Request(L"discord.com", verb, path, headers, json, body);
+    headers = "Content-Type: application/json\r\n";
+  return StreamHttp::Request(host.c_str(), verb, path + suffix, headers, json, body);
 }
 
 // Text is kept ASCII here; the emoji and Japanese go in as JSON \u escapes.
@@ -111,7 +135,7 @@ void DiscordNotifier::Stop()
     m_thread.join();
   if (!m_messageId.empty())
   {
-    int st = Request(L"DELETE", "/api/v10/channels/" + StreamSecrets::Get().discordChannelId + "/messages/" + m_messageId, "", nullptr);
+    int st = Request(L"DELETE", "/messages/" + m_messageId, "", nullptr);
     printf("[Discord] message deleted (HTTP %d)\n", st);
     m_messageId.clear();
   }
@@ -120,15 +144,13 @@ void DiscordNotifier::Stop()
 
 void DiscordNotifier::Thread()
 {
-  const std::string base = "/api/v10/channels/" + StreamSecrets::Get().discordChannelId + "/messages";
-
   // a message left by a crash
   {
     std::ifstream ifs(kMessageFile);
     std::string old;
     if (ifs >> old && !old.empty())
     {
-      int st = Request(L"DELETE", base + "/" + old, "", nullptr);
+      int st = Request(L"DELETE", "/messages/" + old, "", nullptr);
       printf("[Discord] old message removed (HTTP %d)\n", st);
     }
   }
@@ -146,14 +168,14 @@ void DiscordNotifier::Thread()
         int st = 0;
         if (!m_messageId.empty())
         {
-          st = Request(L"PATCH", base + "/" + m_messageId, json, &body);
+          st = Request(L"PATCH", "/messages/" + m_messageId, json, &body);
           if (st == 404)               // deleted by someone: post again
             m_messageId.clear();
         }
         if (m_messageId.empty())
         {
           body.clear();
-          st = Request(L"POST", base, json, &body);
+          st = Request(L"POST", "?wait=true", json, &body);   // wait=true: the answer holds the message id
           MiniJson::Value v;
           if (st >= 200 && st < 300 && MiniJson::Parse(body, v))
           {
@@ -166,7 +188,7 @@ void DiscordNotifier::Thread()
         if (st >= 200 && st < 300)
           m_lastJson = json;
         else
-          printf("[Discord] post failed (HTTP %d)\n", st);   // 401 token, 403 channel permission, 429 too fast
+          printf("[Discord] post failed (HTTP %d)\n", st);   // 401/404 webhook wrong or deleted, 429 too fast
       }
     }
     std::unique_lock<std::mutex> lock(m_mutex);

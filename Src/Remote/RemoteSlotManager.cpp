@@ -120,11 +120,13 @@ void RemoteSlotManager::StartFirebaseAsync(const std::string &gameTitle, const s
         }
 
         auto cb = [this](const std::string& msg) { NotifyStatus(msg); };
+        // 11/16: one Firebase session per slot (same uid after a restart: the database rules let only the owner write)
+        m_firebase.SetSessionFile("Config/FirebaseSlot" + std::to_string(m_linkplay) + ".dat");
         if (m_firebase.Initialize(cb))
         {
             m_firebase.CleanupStaleHosts();
             UpdateAvailableSlots();
-            m_firebase.StartHeartbeat(m_hostId);
+            m_firebase.StartHeartbeat(m_hostId, m_linkplay == 0 ? std::vector<int>{1, 2} : std::vector<int>{m_linkplay});
             StartDiscordPost();
         }
         else

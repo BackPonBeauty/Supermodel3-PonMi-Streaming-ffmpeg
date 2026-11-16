@@ -1,11 +1,11 @@
 /*
  * DiscordNotifier.h
  *
- * Streaming (2026-11-16, test stage): posts this host's slot status to a Discord channel with a bot,
- * like PonLuncher's DiscordHelper, and keeps that one message up to date.
+ * Streaming (2026-11-16): posts this host's slot status to a Discord channel, like PonLuncher's DiscordHelper,
+ * and keeps that one message up to date.
  *
- *  - The bot token and channel come from Config/StreamingKeys.ini (DiscordBotToken, DiscordChannelId;
- *    not in git, host PCs only). Without them nothing is posted.
+ *  - 11/16: through the status channel's webhook (embedded at build time, Stream/Secrets.h), no bot token any
+ *    more: a webhook can only post to that channel and edit / delete its own messages. Without it nothing is posted.
  *  - One server per host posts (Supermodel.ini DiscordPost: -1 = only the slot-1 server (default),
  *    0 = off, 1 = on). The status of all slots is read from Firebase every 15 s, and the message is
  *    edited only when it changed.

@@ -271,7 +271,7 @@ namespace Lobby
     ImGui::Text("Hosts");
     if (!StreamSecrets::HasFirebase())
     {
-      ImGui::TextDisabled("Host list is off: Config/StreamingKeys.ini (Firebase keys) not found. Direct connection still works.");
+      ImGui::TextDisabled("Host list is off: this build has no Firebase keys. Direct connection still works.");
     }
     else
     {

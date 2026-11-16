@@ -13,8 +13,12 @@
 #include "Http.h"
 #include "MiniJson.h"
 #include "Secrets.h"
+#include "StreamDpapi.h"
 #include <windows.h>
 #include <bcrypt.h>
+#include <wincrypt.h>
+#include <cstring>
+#include <iterator>
 #include <shellapi.h>
 #include <atomic>
 #include <cstdio>
@@ -57,17 +61,42 @@ namespace DiscordAuth
     return (a == std::string::npos) ? std::string() : s.substr(a, b - a + 1);
   }
 
+  // 11/16: the login file is encrypted with Windows DPAPI (CryptProtectData, this Windows user only), stored as
+  // "DPAPI:<base64>". Another user account, or the file copied to another PC, cannot read it. An old plain file
+  // is still read once and then saved encrypted.
+  static const char *kDpapiPrefix = StreamDpapi::kPrefix;
+  static void SaveLocked();
+  static std::string Protect(const std::string &plain) { return StreamDpapi::Protect(plain); }
+  static bool Unprotect(const std::string &text, std::string &plain) { return StreamDpapi::Unprotect(text, plain); }
+
   static void LoadLocked()
   {
     if (s_loaded)
       return;
     s_loaded = true;
-    std::ifstream ifs(kLoginFile);
-    std::string line;
-    while (std::getline(ifs, line))
+    std::ifstream ifs(kLoginFile, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    bool wasPlain = false;
+    if (text.compare(0, strlen(kDpapiPrefix), kDpapiPrefix) == 0)
     {
+      std::string plain;
+      if (!Unprotect(text, plain))
+      {
+        printf("[Discord] login file could not be decrypted (other user / PC?) -> please log in again\n");
+        return;
+      }
+      text = plain;
+    }
+    else
+      wasPlain = !text.empty();
+    size_t p = 0;
+    while (p < text.size())
+    {
+      size_t nl = text.find('\n', p);
+      std::string line = text.substr(p, nl == std::string::npos ? std::string::npos : nl - p);
+      p = (nl == std::string::npos) ? text.size() : nl + 1;
       size_t eq = line.find('=');
-      if (eq == std::string::npos)
+      if (eq == std::string::npos || (!line.empty() && line[0] == ';'))
         continue;
       std::string k = Trim(line.substr(0, eq)), v = Trim(line.substr(eq + 1));
       if (k == "AccessToken")       s_saved.accessToken = v;
@@ -77,18 +106,29 @@ namespace DiscordAuth
       else if (k == "UserName")     s_saved.userName = v;
     }
     if (!s_saved.refreshToken.empty() || !s_saved.accessToken.empty())
+    {
       s_state = State::LoggedIn;
+      if (wasPlain)
+        SaveLocked();   // upgrade an old plain file to the encrypted form
+    }
   }
 
   static void SaveLocked()
   {
-    std::ofstream ofs(kLoginFile, std::ios::trunc);
-    ofs << "; Discord login of this client (Supermodel PonMi streaming). Do not share or commit this file.\n";
-    ofs << "AccessToken = " << s_saved.accessToken << "\n";
-    ofs << "RefreshToken = " << s_saved.refreshToken << "\n";
-    ofs << "ExpiresAt = " << s_saved.expiresAt << "\n";
-    ofs << "UserId = " << s_saved.userId << "\n";
-    ofs << "UserName = " << s_saved.userName << "\n";
+    std::string plain = "AccessToken = " + s_saved.accessToken + "\n" +
+                        "RefreshToken = " + s_saved.refreshToken + "\n" +
+                        "ExpiresAt = " + std::to_string(s_saved.expiresAt) + "\n" +
+                        "UserId = " + s_saved.userId + "\n" +
+                        "UserName = " + s_saved.userName + "\n";
+    std::string enc = Protect(plain);
+    if (enc.empty())
+    {
+      printf("[Discord] could not encrypt the login file; not saved (log in again next time)\n");
+      std::remove(kLoginFile);
+      return;
+    }
+    std::ofstream ofs(kLoginFile, std::ios::trunc | std::ios::binary);
+    ofs << enc << "\n";
   }
 
   // ---------------------------------------------------------------------------------------------------------
@@ -362,7 +402,7 @@ namespace DiscordAuth
   {
     switch (GetState())
     {
-    case State::NotConfigured: return "Discord login is off (no DiscordClientId in Config/StreamingKeys.ini)";
+    case State::NotConfigured: return "Discord login is off (this build has no Discord keys)";
     case State::LoggedOut:     return "Not logged in";
     case State::Waiting:       return "Waiting for the browser... (log in to Discord and press Authorize)";
     case State::LoggedIn:      return "Logged in as " + UserName();

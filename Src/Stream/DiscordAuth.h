@@ -13,7 +13,7 @@
  * Host: checks a client's access token with GET /users/@me/guilds/{DiscordGuildId}/member.
  *   The host never stores the token.
  *
- * IDs come from Config/StreamingKeys.ini (DiscordClientId, DiscordGuildId, DiscordRedirectPort).
+ * IDs are embedded at build time (Stream/Secrets.h): DiscordClientId, DiscordGuildId, DiscordRedirectPort.
  */
 
 #ifndef INCLUDED_STREAM_DISCORDAUTH_H

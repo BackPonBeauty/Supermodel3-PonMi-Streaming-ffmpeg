@@ -1,21 +1,15 @@
 /*
  * Secrets.h
  *
- * Streaming (P6, 2026-11-16, requirement "安全" / design chapter 6): keys and IDs are not compiled into the exe.
- * They are read from Config/StreamingKeys.ini (relative to the working folder), which is NOT in git.
- * Config/StreamingKeys.example.ini (in git) shows the format.
+ * Streaming keys and IDs. 11/16 (owner: hosts are ordinary users too): they are EMBEDDED into the exe at build time
+ * (Scripts/gen_keys.ps1: Config/StreamingKeys.ini of the source tree -> Src/Stream/EmbeddedKeys.h, both not in git),
+ * stored XOR-scrambled. No keys file is distributed or read at run time any more.
  *
- *   FirebaseApiKey      = ...            Firebase Web API key (anonymous sign-in)
- *   FirebaseDbUrl       = https://....firebasedatabase.app
- *   DiscordClientId     = ...            (P6b)
- *   DiscordGuildId      = ...            (P6b)
- *   DiscordRedirectPort = 53134          (P6b)
- *   DiscordBotToken     = ...            status post to a Discord channel (host PCs only, see DiscordNotifier.h)
- *   DiscordChannelId    = ...
- *
- * No client secret, ever. The bot token is only for the host's status post (test stage, owner's decision
- * 2026-11-16) and must never be put in a client folder; clients never need it (requirement CL-07).
- * Without the file, Firebase and Discord are simply off (direct IP still works).
+ * Only values that may be public are embedded: Firebase web API key and database URL, Discord client ID, guild ID,
+ * redirect port, invite link, and the webhook of the status channel. Anything in a distributed exe can be dug out,
+ * so the real defence is the Firebase rules (slot owners, read-only /main5) and the host-side Discord member check.
+ * Never a bot token or a client secret.
+ * A build without Config/StreamingKeys.ini has empty keys: Firebase lobby and Discord are then off (direct IP works).
  */
 
 #ifndef INCLUDED_STREAM_SECRETS_H
@@ -27,21 +21,20 @@ namespace StreamSecrets
 {
   struct Keys
   {
-    bool        fileFound = false;
+    bool        fileFound = false;      // keys were embedded at build time
     std::string firebaseApiKey;
     std::string firebaseDbUrl;
     std::string discordClientId;
     std::string discordGuildId;
     int         discordRedirectPort = 53134;
-    std::string discordBotToken;    // without the "Bot " prefix
-    std::string discordChannelId;
+    std::string discordInviteUrl;
+    std::string discordWebhookUrl;      // status post (DiscordNotifier); "" = no post
   };
 
-  // Loads Config/StreamingKeys.ini once.
   const Keys &Get();
 
   bool HasFirebase();
-  bool HasDiscordBot();
+  bool HasDiscordWebhook();
   // Host name of the database, e.g. L"xxx-default-rtdb.asia-southeast1.firebasedatabase.app"
   std::wstring FirebaseDbHost();
 }
