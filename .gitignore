@@ -375,3 +375,7 @@ Src/Remote/FirebaseMatchingCpp.h
 
 # ROM dumps used for reverse engineering (do not commit)
 Docs/spikeofe_re/*.bin
+
+# Streaming keys (P6): real values stay local
+Config/StreamingKeys.ini
+**/Config/StreamingKeys.ini

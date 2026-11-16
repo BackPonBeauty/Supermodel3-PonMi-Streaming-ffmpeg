@@ -3284,7 +3284,7 @@ int main(int argc, char **argv)
   {
     bool streaming = s_runtime_config["Streaming"].ValueAsDefault<bool>(false);
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
-    bool shouldPostFirebase = (linkplay >= 0 && linkplay <= 4) && streaming;
+    bool shouldPostFirebase = (linkplay >= 0 && linkplay <= 8) && streaming;   // P6: slots 1..8 (0 = old two-slot mode)
 
     if (shouldPostFirebase)
     {

@@ -34,8 +34,20 @@ void RemoteSlotManager::Shutdown()
             UPnPHelper::CloseStreamingPorts(1);
             UPnPHelper::CloseStreamingPorts(2);
         }
-        else if (m_linkplay >= 1 && m_linkplay <= 4)
+        else if (m_linkplay >= 1 && m_linkplay <= 8)
             UPnPHelper::CloseStreamingPorts(m_linkplay);
+    }
+
+    // P6: take this server's slot off the lobby at once (instead of waiting for the 10-minute stale cleanup)
+    if (m_firebase.IsInitialized() && !m_hostId.empty())
+    {
+        if (m_linkplay == 0)
+        {
+            m_firebase.RemoveSlot(m_hostId, 1);
+            m_firebase.RemoveSlot(m_hostId, 2);
+        }
+        else
+            m_firebase.RemoveSlot(m_hostId, m_linkplay);
     }
 
     m_firebase.Shutdown();
@@ -46,7 +58,7 @@ void RemoteSlotManager::Shutdown()
 // ---------------------------------------------------------------------------
 void RemoteSlotManager::StartStreaming(int linkplay)
 {
-    if (linkplay < 0 || linkplay > 4)
+    if (linkplay < 0 || linkplay > 8)
     {
         printf("[RemoteSlotManager] StartStreaming: invalid linkplay=%d\n", linkplay);
         return;
@@ -131,7 +143,7 @@ void RemoteSlotManager::UpdateAvailableSlots()
     extern Util::Config::Node s_runtime_config;
     bool streamingEnabled = s_runtime_config["Streaming"].ValueAsDefault<bool>(false);
 
-    bool available[5] = {false};
+    bool available[9] = {false};   // P6: slots 1..8
     if (streamingEnabled)
     {
         if (m_linkplay == 0)

@@ -21,6 +21,7 @@
 #include <thread>
 #include <atomic>
 #include <map>
+#include <vector>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -41,7 +42,25 @@ struct HostInfoCpp
     std::string ip;
     std::string gametitle; // Name of the running ROM (e.g., spikeofe)
     std::string servername;
-    std::map<int, SlotInfoCpp> slots; // key: slot number 1 to 4
+    std::string lanip;     // P6: address on the host's own network (for clients behind the same router)
+    std::map<int, SlotInfoCpp> slots; // key: slot number 1 to 8
+};
+
+// A host as the lobby sees it (P6, read from /hosts.json)
+struct LobbyHostCpp
+{
+    std::string key;
+    std::string ip;
+    std::string lanip;
+    std::string servername;
+    std::string gametitle;
+    long long timestamp = 0;
+    struct Slot
+    {
+        bool present = false;    // the host has this slot (a streaming server runs for it)
+        bool available = false;  // nobody connected
+        std::string player;
+    } slots[9];                  // 1..8
 };
 
 using FirebaseStatusCallback = std::function<void(const std::string &message)>;
@@ -49,10 +68,8 @@ using FirebaseStatusCallback = std::function<void(const std::string &message)>;
 class FirebaseMatchingCpp
 {
 public:
-    // Firebase project settings (matching FirebaseMatching.vb in VB.NET)
-    static constexpr const char *API_KEY = "API_KEY";
-    static constexpr const char *DB_URL = "DB_URL";
-    static constexpr const char *AUTH_DOMAIN = "AUTH_DOMAIN";
+    // P6 (2026-11-16): the Firebase API key and database URL are no longer compiled in. They come from
+    // Config/StreamingKeys.ini (Stream/Secrets.h, not in git). Without it, Initialize() fails and Firebase is off.
 
     // Dynamic Port definitions based on supermodel.ini s_runtime_config
     static int GetSlotXInputPort(int slot);
@@ -70,13 +87,15 @@ public:
     // Register host information to Firebase (PUT=create new / PATCH=update slot)
     // Key is automatically determined by SanitizeKeyFromIp(externalIp)
     bool RegisterHost(const std::string &externalIp,
-                      const bool availableSlots[5],
+                      const bool availableSlots[9],   // index 1..8
                       int linkplay,
                       const std::string &gameTitle = "",
                       const std::string &serverName = "");
 
     // Unregister host
     bool UnregisterHost(const std::string &hostId);
+    // P6: remove one slot of this host (the server of that slot is closing)
+    bool RemoveSlot(const std::string &hostId, int slot);
     bool PatchSlotAvailable(const std::string &hostId, int linkplay, bool available);
     bool PatchSlotClientCount(const std::string &hostId, int slot, int count);
     bool PatchSlotPlayer(const std::string &hostId, int slot, const std::string &player);
@@ -85,8 +104,13 @@ public:
     // Clean up stale host entries (no updates for 10+ minutes)
     bool CleanupStaleHosts();
 
+    // Lobby (P6): all hosts, without the ones not updated for 10+ minutes (LB-01/LB-06)
+    bool FetchHosts(std::vector<LobbyHostCpp> &out);
+
     // Get external IP address (uses api.ipify.org)
     static std::string GetExternalIp();
+    // P6: this PC's address on its local network (no packet is sent)
+    static std::string GetLanIp();
 
     // Start heartbeat (updates timestamp every 2 minutes)
     void StartHeartbeat(const std::string &hostId);

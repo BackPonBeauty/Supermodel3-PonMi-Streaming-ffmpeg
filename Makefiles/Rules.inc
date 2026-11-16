@@ -128,6 +128,7 @@ SRC_FILES = \
 	Src/Stream/SessionServer.cpp \
 	Src/Stream/Lobby.cpp \
 	Src/Stream/StreamClient.cpp \
+	Src/Stream/Secrets.cpp \
 	Src/Model3/TileGen.cpp \
 	Src/Model3/Model3.cpp \
 	Src/CPU/PowerPC/ppc.cpp \

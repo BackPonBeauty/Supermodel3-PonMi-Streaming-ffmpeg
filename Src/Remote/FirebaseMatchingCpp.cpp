@@ -6,7 +6,11 @@
 
 #ifdef SUPERMODEL_WIN32
 
+#include <winsock2.h>   // P6: GetLanIp (before windows.h)
+#include <ws2tcpip.h>
 #include "FirebaseMatchingCpp.h"
+#include "Stream/Secrets.h"
+#include "Stream/MiniJson.h"
 #include <winhttp.h>
 #include <sstream>
 #include <ctime>
@@ -97,8 +101,9 @@ FirebaseMatchingCpp::~FirebaseMatchingCpp()
 void FirebaseMatchingCpp::Shutdown()
 {
     StopHeartbeat();
-    if (!m_currentHostId.empty())
-        UnregisterHost(m_currentHostId);
+    // P6: do NOT delete the whole host here - other servers of the same PC (other slots) may still run.
+    // RemoteSlotManager removes this server's own slot (RemoveSlot); hosts with no slots are hidden by the
+    // lobby and deleted by the 10-minute stale cleanup.
     m_initialized = false;
     m_idToken.clear();
 }
@@ -111,6 +116,14 @@ bool FirebaseMatchingCpp::Initialize(FirebaseStatusCallback statusCb)
     m_statusCb = statusCb;
     if (m_statusCb)
         m_statusCb("Firebase: Initializing...");
+
+    // P6: keys come from Config/StreamingKeys.ini; without them Firebase stays off
+    if (!StreamSecrets::HasFirebase())
+    {
+        if (m_statusCb)
+            m_statusCb("Firebase: off (no Config/StreamingKeys.ini or no Firebase keys in it)");
+        return false;
+    }
 
     if (!SignInAnonymously())
     {
@@ -132,7 +145,7 @@ bool FirebaseMatchingCpp::SignInAnonymously()
 {
     // POST https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=API_KEY
     std::string path = "/v1/accounts:signUp?key=";
-    path += API_KEY; 
+    path += StreamSecrets::Get().firebaseApiKey;
 
     std::string body = "{\"returnSecureToken\":true}";
 
@@ -171,123 +184,54 @@ bool FirebaseMatchingCpp::SignInAnonymously()
 // Host Registration
 // ---------------------------------------------------------------------------
 bool FirebaseMatchingCpp::RegisterHost(const std::string &externalIp,
-                                       const bool availableSlots[5],
+                                       const bool availableSlots[9],
                                        int linkplay,
                                        const std::string &gameTitle,
                                        const std::string &serverName)
 {
-    // Key = Sanitize IP (replace dot with '-')
+    // P6 (2026-11-16): one PATCH on the host record. It creates the record if needed and only replaces the
+    // children it names (host fields + this server's own slot), so up to 8 servers of one PC can register at
+    // the same time without overwriting each other's slots (the old GET-then-PUT replaced the whole record).
     std::string key = SanitizeKeyFromIp(externalIp);
     m_currentHostId = key;
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::ostringstream ss;
+    ss << "{\"timestamp\":" << GetUnixTimestamp();
+    ss << ",\"ip\":\"" << EscapeJson(externalIp) << "\"";
+    std::string lan = GetLanIp();
+    if (!lan.empty())
+        ss << ",\"lanip\":\"" << EscapeJson(lan) << "\"";
+    if (!gameTitle.empty())
+        ss << ",\"gametitle\":\"" << EscapeJson(gameTitle) << "\"";
+    if (!serverName.empty())
+        ss << ",\"servername\":\"" << EscapeJson(serverName) << "\"";
 
-    // Verify record existence via GET
-    std::string getPath = "/hosts/" + key + ".json?auth=" + m_idToken;
-    std::string existing = HttpGet(dbHost, std::wstring(getPath.begin(), getPath.end()), m_idToken);
-    bool exists = !existing.empty() && existing != "null";
-
-    if (!exists)
+    auto slotJson = [&](int slot) {
+        ss << ",\"slot" << slot << "\":{";
+        ss << "\"xinput\":" << GetSlotXInputPort(slot) << ",";
+        ss << "\"handshake\":" << GetSlotHandshakePort(slot) << ",";
+        ss << "\"video\":" << GetSlotVideoPort(slot) << ",";
+        ss << "\"audio\":" << GetSlotAudioPort(slot) << ",";
+        ss << "\"available\":" << (availableSlots[slot] ? "true" : "false");
+        ss << "}";
+    };
+    if (linkplay == 0)
     {
-        // ----- PUT: Create new record -----
-        HostInfoCpp info;
-        info.timestamp = GetUnixTimestamp();
-        info.ip = externalIp;
-        info.gametitle = gameTitle; // ROM name (e.g., spikeofe)
-        info.servername = serverName; // Register serverName for any linkplay number
-
-        for (int slot = 1; slot <= 4; slot++)
-        {
-            bool isSlotAvailable = false;
-            if (linkplay == 0)
-            {
-                // LinkPlay=0 opens both Slot 1 and Slot 2
-                isSlotAvailable = (slot == 1 || slot == 2) ? availableSlots[slot] : false;
-            }
-            else
-            {
-                isSlotAvailable = (slot == linkplay) ? availableSlots[slot] : false;
-            }
-
-            // ストリーミングが有効(available=true)なスロットのみ、Firebase上にスロットキーを作成
-            if (isSlotAvailable)
-            {
-                SlotInfoCpp s;
-                s.xinputPort = GetSlotXInputPort(slot);
-                s.handshakePort = GetSlotHandshakePort(slot);
-                s.videoPort = GetSlotVideoPort(slot);
-                s.audioPort = GetSlotAudioPort(slot);
-                s.available = true;
-                info.slots[slot] = s;
-            }
-        }
-
-        std::string putPath = "/hosts/" + key + ".json?auth=" + m_idToken;
-        std::string body = MakeHostJson(info);
-        std::string resp = HttpPut(dbHost, std::wstring(putPath.begin(), putPath.end()), body, m_idToken);
-
-        printf("[Firebase] PUT (new record) key=%s linkplay=%d\n", key.c_str(), linkplay);
-        if (m_statusCb)
-            m_statusCb("Firebase: Host registered (PUT) key=" + key);
-        return !resp.empty();
+        // old two-slot mode: slots 1 and 2
+        if (availableSlots[1]) slotJson(1);
+        if (availableSlots[2]) slotJson(2);
     }
-    else
-    {
-        // PATCH: Update only current slot available state and timestamp
-        long long ts = GetUnixTimestamp();
+    else if (linkplay >= 1 && linkplay <= 8 && availableSlots[linkplay])
+        slotJson(linkplay);
+    ss << "}";
 
-        if (linkplay == 0)
-        {
-            // LinkPlay=0 patches both Slot 1 and Slot 2
-            for (int slot = 1; slot <= 2; slot++)
-            {
-                std::string slotKey = "slot" + std::to_string(slot);
-                std::string patchPath = "/hosts/" + key + "/" + slotKey + ".json?auth=" + m_idToken;
-                std::ostringstream ss;
-                if (availableSlots[slot])
-                {
-                    ss << "{\"available\":true,\"audio\":" << GetSlotAudioPort(slot)
-                       << ",\"video\":" << GetSlotVideoPort(slot)
-                       << ",\"handshake\":" << GetSlotHandshakePort(slot)
-                       << ",\"xinput\":" << GetSlotXInputPort(slot) << "}";
-                }
-                else
-                {
-                    ss << "{\"available\":false}";
-                }
-                HttpPatch(dbHost, std::wstring(patchPath.begin(), patchPath.end()), ss.str(), m_idToken);
-            }
-            printf("[Firebase] PATCH slot1 and slot2 available key=%s\n", key.c_str());
-        }
-        else
-        {
-            std::string slotKey = "slot" + std::to_string(linkplay);
-            std::string patchPath = "/hosts/" + key + "/" + slotKey + ".json?auth=" + m_idToken;
-            std::ostringstream ss;
-            if (availableSlots[linkplay])
-            {
-                ss << "{\"available\":true,\"audio\":" << GetSlotAudioPort(linkplay)
-                   << ",\"video\":" << GetSlotVideoPort(linkplay)
-                   << ",\"handshake\":" << GetSlotHandshakePort(linkplay)
-                   << ",\"xinput\":" << GetSlotXInputPort(linkplay) << "}";
-            }
-            else
-            {
-                ss << "{\"available\":false}";
-            }
-            HttpPatch(dbHost, std::wstring(patchPath.begin(), patchPath.end()), ss.str(), m_idToken);
-            printf("[Firebase] PATCH slot%d available=%s key=%s\n",
-                   linkplay, availableSlots[linkplay] ? "true" : "false", key.c_str());
-        }
-
-        // Put timestamp separately
-        std::string tsPath = "/hosts/" + key + "/timestamp.json?auth=" + m_idToken;
-        HttpPut(dbHost, std::wstring(tsPath.begin(), tsPath.end()), std::to_string(ts), m_idToken);
-
-        if (m_statusCb)
-            m_statusCb("Firebase: Slots updated (PATCH)");
-        return true;
-    }
+    std::string path = "/hosts/" + key + ".json?auth=" + m_idToken;
+    std::string resp = HttpPatch(dbHost, std::wstring(path.begin(), path.end()), ss.str(), m_idToken);
+    printf("[Firebase] PATCH host=%s linkplay=%d\n", key.c_str(), linkplay);
+    if (m_statusCb)
+        m_statusCb("Firebase: Host/slot registered (PATCH) key=" + key);
+    return !resp.empty();
 }
 
 bool FirebaseMatchingCpp::UnregisterHost(const std::string &hostId)
@@ -306,7 +250,7 @@ bool FirebaseMatchingCpp::UnregisterHost(const std::string &hostId)
 
     std::string path = "/hosts/" + hostId + ".json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     printf("[Firebase] Sending DELETE request for host: %s\n", hostId.c_str());
     std::string res = HttpDelete(dbHost, wpath, m_idToken);
@@ -323,7 +267,7 @@ bool FirebaseMatchingCpp::PatchSlotAvailable(const std::string& hostId, int link
     std::string slotKey = "slot" + std::to_string(linkplay);
     std::string path = "/hosts/" + hostId + "/" + slotKey + ".json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     std::string body;
     if (available)
@@ -349,7 +293,7 @@ bool FirebaseMatchingCpp::PatchSlotClientCount(const std::string& hostId, int sl
     std::string slotKey = "slot" + std::to_string(slot);
     std::string path = "/hosts/" + hostId + "/" + slotKey + ".json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     std::string body = "{\"clientCount\":" + std::to_string(count) + "}";
     HttpPatch(dbHost, wpath, body, m_idToken);
@@ -364,7 +308,7 @@ bool FirebaseMatchingCpp::PatchSlotPlayer(const std::string& hostId, int slot, c
     std::string slotKey = "slot" + std::to_string(slot);
     std::string path = "/hosts/" + hostId + "/" + slotKey + ".json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     std::string body = "{\"player\":\"" + EscapeJson(player) + "\"}";
     HttpPatch(dbHost, wpath, body, m_idToken);
@@ -379,7 +323,7 @@ bool FirebaseMatchingCpp::PatchSlotSpectator(const std::string& hostId, int slot
     std::string slotKey = "slot" + std::to_string(slot);
     std::string path = "/hosts/" + hostId + "/" + slotKey + ".json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     std::string body = "{\"spectator\":\"" + EscapeJson(spectator) + "\"}";
     HttpPatch(dbHost, wpath, body, m_idToken);
@@ -397,7 +341,7 @@ bool FirebaseMatchingCpp::CleanupStaleHosts()
 
     std::string path = "/hosts.json?auth=" + m_idToken;
     std::wstring wpath(path.begin(), path.end());
-    std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+    std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
     std::string resp = HttpGet(dbHost, wpath, m_idToken);
     if (resp.empty() || resp == "null")
@@ -479,6 +423,50 @@ bool FirebaseMatchingCpp::CleanupStaleHosts()
 // ---------------------------------------------------------------------------
 // External IP Address Retrieval
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// P6: this PC's LAN address (connect a UDP socket towards a public address; nothing is sent)
+// ---------------------------------------------------------------------------
+std::string FirebaseMatchingCpp::GetLanIp()
+{
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    std::string result;
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s != INVALID_SOCKET)
+    {
+        sockaddr_in to = {};
+        to.sin_family = AF_INET;
+        to.sin_port = htons(53);
+        inet_pton(AF_INET, "8.8.8.8", &to.sin_addr);
+        if (connect(s, (sockaddr *)&to, sizeof(to)) == 0)
+        {
+            sockaddr_in local = {};
+            int len = sizeof(local);
+            if (getsockname(s, (sockaddr *)&local, &len) == 0)
+            {
+                char buf[INET_ADDRSTRLEN] = {};
+                inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf));
+                result = buf;
+            }
+        }
+        closesocket(s);
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// P6: remove one slot (its server is closing), so the lobby stops offering it at once
+// ---------------------------------------------------------------------------
+bool FirebaseMatchingCpp::RemoveSlot(const std::string &hostId, int slot)
+{
+    if (!m_initialized || hostId.empty() || slot < 1 || slot > 8)
+        return false;
+    std::string path = "/hosts/" + hostId + "/slot" + std::to_string(slot) + ".json?auth=" + m_idToken;
+    HttpDelete(StreamSecrets::FirebaseDbHost(), std::wstring(path.begin(), path.end()), m_idToken);
+    printf("[Firebase] RemoveSlot slot%d host=%s\n", slot, hostId.c_str());
+    return true;
+}
+
 std::string FirebaseMatchingCpp::GetExternalIp()
 {
     // GET https://api.ipify.org
@@ -576,7 +564,7 @@ void FirebaseMatchingCpp::HeartbeatThread(std::string hostId)
         // Update timestamp
         std::string path = "/hosts/" + hostId + "/timestamp.json?auth=" + m_idToken;
         std::wstring wpath(path.begin(), path.end());
-        std::wstring dbHost = L"supermodel3-8343f-default-rtdb.asia-southeast1.firebasedatabase.app";
+        std::wstring dbHost = StreamSecrets::FirebaseDbHost();
 
         long long ts = GetUnixTimestamp();
         std::string body = std::to_string(ts);
@@ -872,6 +860,8 @@ std::string FirebaseMatchingCpp::MakeHostJson(const HostInfoCpp &info)
     ss << "{";
     ss << "\"timestamp\":" << info.timestamp << ",";
     ss << "\"ip\":\"" << EscapeJson(info.ip) << "\"";
+    if (!info.lanip.empty())
+        ss << ",\"lanip\":\"" << EscapeJson(info.lanip) << "\"";
 
     if (!info.gametitle.empty())
         ss << ",\"gametitle\":\"" << EscapeJson(info.gametitle) << "\"";
@@ -892,6 +882,60 @@ std::string FirebaseMatchingCpp::MakeHostJson(const HostInfoCpp &info)
 
     ss << "}";
     return ss.str();
+}
+
+// ---------------------------------------------------------------------------
+// Lobby (P6): read all hosts
+// ---------------------------------------------------------------------------
+bool FirebaseMatchingCpp::FetchHosts(std::vector<LobbyHostCpp> &out)
+{
+    out.clear();
+    if (!m_initialized)
+        return false;
+    std::string path = "/hosts.json?auth=" + m_idToken;
+    std::string resp = HttpGet(StreamSecrets::FirebaseDbHost(), std::wstring(path.begin(), path.end()), m_idToken);
+    if (resp.empty())
+        return false;
+    MiniJson::Value root;
+    if (!MiniJson::Parse(resp, root))
+    {
+        printf("[Firebase] FetchHosts: could not read the answer\n");
+        return false;
+    }
+    if (root.type != MiniJson::Value::Object)
+        return true;   // "null": no hosts
+
+    long long now = GetUnixTimestamp();
+    const long long staleMs = 10LL * 60 * 1000;   // LB-06: hide hosts not updated for 10 minutes
+    for (const auto &kv : root.obj)
+    {
+        const MiniJson::Value &h = kv.second;
+        if (h.type != MiniJson::Value::Object)
+            continue;
+        LobbyHostCpp host;
+        host.key = kv.first;
+        host.ip = h.GetString("ip");
+        host.lanip = h.GetString("lanip");
+        host.servername = h.GetString("servername");
+        host.gametitle = h.GetString("gametitle");
+        host.timestamp = (long long) h.GetNumber("timestamp");
+        if (host.ip.empty() || host.timestamp <= 0 || now - host.timestamp > staleMs)
+            continue;
+        bool anySlot = false;
+        for (int s = 1; s <= 8; s++)
+        {
+            const MiniJson::Value *slot = h.Get("slot" + std::to_string(s));
+            if (!slot || slot->type != MiniJson::Value::Object)
+                continue;
+            host.slots[s].present = true;
+            host.slots[s].available = slot->GetBool("available");
+            host.slots[s].player = slot->GetString("player");
+            anySlot = true;
+        }
+        if (anySlot)
+            out.push_back(host);
+    }
+    return true;
 }
 
 #endif // SUPERMODEL_WIN32
