@@ -74,7 +74,22 @@ namespace Ticket
     std::string body = "{\"token\":\"" + JsonEscape(discordToken) + "\",\"host\":\"" + JsonEscape(host) +
                        "\",\"slot\":" + std::to_string(slot) + ",\"nonce\":" + std::to_string(nonce) + "}";
     std::string resp;
-    int status = StreamHttp::Request(whost.c_str(), L"POST", path, "Content-Type: application/json\r\n", body, &resp, 8000);
+    int status = 0;
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+      resp.clear();
+      status = StreamHttp::Request(whost.c_str(), L"POST", path, "Content-Type: application/json\r\n", body, &resp, 8000);
+      // 11/16 night: Discord's rate limit (joining, leaving and joining again within seconds) comes back as
+      // 503 {"error":"discord busy","retry_after":s}. Wait that long once (the host's nonce lives 30 s) and ask again.
+      if (status != 503 || attempt > 0)
+        break;
+      MiniJson::Value e;
+      double wait = MiniJson::Parse(resp, e) ? e.GetNumber("retry_after", 0.0) : 0.0;
+      if (wait <= 0.0 || wait > 10.0)
+        break;
+      printf("[Ticket] Discord is busy: asking again in %.1f s\n", wait);
+      Sleep((DWORD) (wait * 1000.0) + 200);
+    }
     if (status == 401) return Fetch::LoginInvalid;
     // 403 is "not member" only when the Worker says so; Cloudflare's own blocks (e.g. error 1010) are also 403
     if (status == 403 && resp.find("not member") != std::string::npos) return Fetch::NotMember;
