@@ -1585,6 +1585,57 @@ static const Spikeout8LinkPatch s_spikeout8PlayersPatches[] =
   // pick is always GAME A; with none (or A closed) the original check still gives "start from the beginning".
   // (The 8-player patch's "route voter" entries above are this same list, widened to 8 candidates.)
   { 0x74098, 0x7E101A14, 0x60000000 },  // game select: add r16, r16, r3 (lever) -> nop
+  // 11/16 night (owner: after the 2nd mid-join enemy textures are garbled until the next area): the texture request
+  // queue (8 nodes) still overflows when several players have joined, and 0x580B0 (enemy picture cache upload) drops
+  // the request while the enemy cache table (fa_enemy +0x11C, 5 x 8 bytes: +0 picture id, +4/+6 users) already says
+  // "loaded" (the 11/11 costume de-dup only made the first join fit). Now a dropped enemy upload is retried:
+  //  - cave 0x3FB4 wraps the queue allocation (0x5870C) in 0x580B0: when no node was free (r26 = -1) it sets a
+  //    "re-upload" mark in the entry's unused byte +7 (fa_enemy +0x123 + (slot-1)*8; slot = r4 = 1..5).
+  //  - cave 0x30C8 runs first in the texture task every frame (0x582B4): for each marked entry it clears the mark and,
+  //    if the entry still holds a picture, calls 0x580B0 again (dropped again -> marked again, next frame).
+  // The table init (0x52100) only writes +0, nothing else uses +7. Player costumes (0x58154) are not retried here.
+  { 0x580C8, 0x48000645, 0x4BFABEED },  // enemy upload: bl 0x5870c -> bl 0x3fb4 (mark when dropped)
+  { 0x03FB4, 0x00000000, 0x7CE802A6 },  // cave tex mark: mflr r7
+  { 0x03FB8, 0x00000000, 0x48054755 },  // cave tex mark: bl 0x5870c
+  { 0x03FBC, 0x00000000, 0x7CE803A6 },  // cave tex mark: mtlr r7
+  { 0x03FC0, 0x00000000, 0x2C1AFFFF },  // cave tex mark: cmpwi r26, -1
+  { 0x03FC4, 0x00000000, 0x4C820020 },  // cave tex mark: bnelr (a node was free: as before)
+  { 0x03FC8, 0x00000000, 0x810DC118 },  // cave tex mark: lwz r8, -0x3ee8(r13) (fa_enemy)
+  { 0x03FCC, 0x00000000, 0x38C4FFFF },  // cave tex mark: addi r6, r4, -1
+  { 0x03FD0, 0x00000000, 0x28060004 },  // cave tex mark: cmplwi r6, 4
+  { 0x03FD4, 0x00000000, 0x4D810020 },  // cave tex mark: bgtlr (not slot 1-5)
+  { 0x03FD8, 0x00000000, 0x54C6183A },  // cave tex mark: slwi r6, r6, 3
+  { 0x03FDC, 0x00000000, 0x7D083214 },  // cave tex mark: add r8, r8, r6
+  { 0x03FE0, 0x00000000, 0x38C00001 },  // cave tex mark: li r6, 1
+  { 0x03FE4, 0x00000000, 0x98C80123 },  // cave tex mark: stb r6, 0x123(r8) (entry +7)
+  { 0x03FE8, 0x00000000, 0x4E800020 },  // cave tex mark: blr
+  { 0x582CC, 0x480004E1, 0x4BFAADFD },  // texture task: bl 0x587ac -> bl 0x30c8 (retry first)
+  { 0x030C8, 0x00000000, 0x3821FFF0 },  // cave tex retry: addi r1, r1, -0x10
+  { 0x030CC, 0x00000000, 0x7C0802A6 },  // cave tex retry: mflr r0
+  { 0x030D0, 0x00000000, 0x90010000 },  // cave tex retry: stw r0, 0(r1)
+  { 0x030D4, 0x00000000, 0x92010004 },  // cave tex retry: stw r16, 4(r1)
+  { 0x030D8, 0x00000000, 0x3A000005 },  // cave tex retry: li r16, 5 (slot)
+  { 0x030DC, 0x00000000, 0x5606183A },  // cave tex retry: slwi r6, r16, 3
+  { 0x030E0, 0x00000000, 0x80EDC118 },  // cave tex retry: lwz r7, -0x3ee8(r13) (fa_enemy)
+  { 0x030E4, 0x00000000, 0x7CC63A14 },  // cave tex retry: add r6, r6, r7
+  { 0x030E8, 0x00000000, 0x88A6011B },  // cave tex retry: lbz r5, 0x11b(r6) (mark)
+  { 0x030EC, 0x00000000, 0x2C050000 },  // cave tex retry: cmpwi r5, 0
+  { 0x030F0, 0x00000000, 0x41820020 },  // cave tex retry: beq next
+  { 0x030F4, 0x00000000, 0x38A00000 },  // cave tex retry: li r5, 0
+  { 0x030F8, 0x00000000, 0x98A6011B },  // cave tex retry: stb r5, 0x11b(r6) (clear the mark)
+  { 0x030FC, 0x00000000, 0x80660114 },  // cave tex retry: lwz r3, 0x114(r6) (picture id)
+  { 0x03100, 0x00000000, 0x2C03FFFF },  // cave tex retry: cmpwi r3, -1
+  { 0x03104, 0x00000000, 0x4182000C },  // cave tex retry: beq next (entry freed)
+  { 0x03108, 0x00000000, 0x7E048378 },  // cave tex retry: mr r4, r16
+  { 0x0310C, 0x00000000, 0x48054FA5 },  // cave tex retry: bl 0x580b0 (r5 = 0 as the original callers)
+  { 0x03110, 0x00000000, 0x3610FFFF },  // cave tex retry: next: addic. r16, r16, -1
+  { 0x03114, 0x00000000, 0x4181FFC8 },  // cave tex retry: bgt loop
+  { 0x03118, 0x00000000, 0x48000ED4 },  // cave tex retry: b 0x3fec
+  { 0x03FEC, 0x00000000, 0x82010004 },  // cave tex retry: lwz r16, 4(r1)
+  { 0x03FF0, 0x00000000, 0x80010000 },  // cave tex retry: lwz r0, 0(r1)
+  { 0x03FF4, 0x00000000, 0x7C0803A6 },  // cave tex retry: mtlr r0
+  { 0x03FF8, 0x00000000, 0x38210010 },  // cave tex retry: addi r1, r1, 0x10
+  { 0x03FFC, 0x00000000, 0x480547B0 },  // cave tex retry: b 0x587ac (the original call, cr7 as before)
 };
 
 #endif  // INCLUDED_SPIKEOUT8LINK_H

@@ -2231,14 +2231,18 @@ static bool SpikeoutSwingDoorAhead(const UINT8 *ram, float px, float py, float p
 // intro stall, fixed by the 0x5BD5C patch - any node can host now.) A bot that dies leaves the mask (it
 // goes to 0 on 8-link, which also never shows mode 6), so continuing can't rely on the mask: keep pressing
 // for 30s from when it died, then give up.
-// "Has a human started?" shared between the emulator processes through ../human_state_0N.txt (11/11, was
-// ../p1_state.txt from 01 only). Every cabinet that is NOT an AI (AIPlayer=0) writes, every 0.5s with a
-// wall-clock stamp, whether its own player has started: its link record state 0x140104 is 2 (character
-// select) or 4 (in a game) - 1 is title / attract. This replaces the old test on the presence mask and the
-// demo player, which read the attract demo as "started" (p1_state.txt said started=1 at the title). Bots
-// join while any of those files is fresh and says started, so a human on any cabinet (01-08) can host.
-// Continuing after the bot's own death doesn't depend on it.
-#define SPIKEOUT_HUMANSTATE_FMT "../human_state_%02u.txt"
+// "Has a human started?" (11/16 night, owner: no external files). Before, human cabinets wrote
+// ../human_state_0N.txt and the bots read it (same PC only). Now it goes over the link itself:
+//  - every cabinet's own link record (0x140100, 0x300 bytes) is copied to every other cabinet each frame; the
+//    other cabinets' records are at *(0x150060 + 4n), n = 1..total-1. +4 is the link state: 1 title / attract,
+//    2 character select, 4 in a game (the attract demo is 1, so it never counts as "started").
+//  - +0x230..+0x2FF of the record is never used by the game (always 0 in 8 cabinets x 2 save states, no code
+//    touches it) and does reach the others (checked: a byte poked at 0x1403F0 on 01 arrived at 02 every frame).
+//  - so every frame a bot cabinet writes SPIKEOUT_BOT_MARK at its own +0x2FC and a human cabinet writes 0 there
+//    (the game clears the record now and then, e.g. at link start; the next frame puts it back).
+//  - a bot treats "some other cabinet in state 2 or 4 without the bot mark" as a human that has started.
+// Works across PCs too (the file did not). Continuing after the bot's own death doesn't depend on it.
+#define SPIKEOUT_BOT_MARK 0x424F5421u   // "BOT!"
 // 11/13 FloorDump=1 (investigating the vanishing floor on 05-08): a coin on any cabinet writes
 // ../floordump_req.txt = (sync counter 0x1000A8) + 20; every cabinet polls it and, when its own sync
 // counter reaches that value (the same game moment on all linked cabinets), writes floordump_<target>.bin
@@ -2275,38 +2279,25 @@ static bool SpikeoutFloorDumpDue(const UINT8 *ram)
 	return false;
 }
 
-static void SpikeoutP1StateTick(const UINT8 *ram)
+static void SpikeoutP1StateTick(UINT8 *ram)   // every frame: mark (bot) or unmark (human) our own link record
 {
-	if (!g_spikeofe8task || g_spikeoutAI || (g_ppcTraceFrame % 30) != 0) return;
-	unsigned node = ram[0x10065B ^ 3];
-	if (node < 1 || node > 8) return;
-	unsigned st = ram[0x140104 ^ 3];
-	bool started = st == 2 || st == 4;
-	char path[64]; snprintf(path, sizeof(path), SPIKEOUT_HUMANSTATE_FMT, node);
-	FILE *f = fopen(path, "w");
-	if (f) { fprintf(f, "started=%d t=%lld state=%u\n", started ? 1 : 0, (long long) time(NULL), st); fclose(f); }
+	if (!g_spikeofe8task) return;
+	bool bot = g_spikeoutAI && !g_streamHumanJoined.load();   // a streaming client that took this slot is a human
+	*(UINT32 *) &ram[0x140100 + 0x2FC] = bot ? SPIKEOUT_BOT_MARK : 0;
 }
-static bool SpikeoutP1Started(void)   // any human cabinet (01-08) has started
+static bool SpikeoutP1Started(const UINT8 *ram)   // a human on another linked cabinet has started
 {
-	static UINT32 lastRead = 0; static bool cached = false;
-	if (lastRead && g_ppcTraceFrame - lastRead < 30) return cached;
-	lastRead = g_ppcTraceFrame ? g_ppcTraceFrame : 1;
-	cached = false;
-	long long now = (long long) time(NULL);
-	for (unsigned n = 1; n <= 8 && !cached; n++)
+	unsigned total = ram[0x10065A ^ 3];
+	if (total > 8) total = 8;
+	for (unsigned n = 1; n < total; n++)
 	{
-		char path[64]; snprintf(path, sizeof(path), SPIKEOUT_HUMANSTATE_FMT, n);
-		FILE *f = fopen(path, "r");
-		if (!f) continue;
-		int st = 0; long long t = 0;
-		if (fscanf(f, "started=%d t=%lld", &st, &t) == 2)
-		{
-			long long age = now - t;
-			if (st == 1 && age >= -5 && age <= 5) cached = true;   // stale (that cabinet closed / hung / now an AI) = not started
-		}
-		fclose(f);
+		UINT32 rec = *(const UINT32 *) &ram[0x150060 + 4 * n];
+		if (rec < 0x150000 || rec > 0x160000 - 0x300 || (rec & 3)) continue;   // the records live at 0x150400 + k*0x300
+		unsigned st = ram[(rec + 4) ^ 3];
+		UINT32 mark = *(const UINT32 *) &ram[rec + 0x2FC];
+		if ((st == 2 || st == 4) && mark != SPIKEOUT_BOT_MARK) return true;
 	}
-	return cached;
+	return false;
 }
 
 static bool SpikeoutAIWantsStart(const UINT8 *ram)
@@ -2328,7 +2319,7 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 	if (SpikeoutAttract(ram))   // attract (stage id 6 outside a game; the real Shipyard is also 6)
 	{
 		played = false;
-		return hasSelf && SpikeoutP1Started();   // a human on any cabinet has started (11/11: was 01 only, and needed node 1 out of our group)
+		return hasSelf && SpikeoutP1Started(ram);   // a human on any cabinet has started (11/11: was 01 only; 11/16: from the link records, no file)
 	}
 	UINT32 rob = 0x1A0000 + (node - 1) * 0x4000;
 	int energy = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
@@ -2358,7 +2349,7 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 		played = false;
 		return false;
 	}
-	return hasSelf && SpikeoutP1Started();   // join only once a human has started (the mask alone is just "link up")
+	return hasSelf && SpikeoutP1Started(ram);   // join only once a human has started (the mask alone is just "link up")
 }
 
 static UINT32 g_aiContT0 = 0;    // 11/15: start frame of the current continue attempt (0 = not continuing); the coin / Start timing
@@ -4786,7 +4777,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 	// Taps 4 on / 4 off from 30 frames into the screen, then Beat; Beat again once a second if it did not take.
 	bool selDone = true;
 	// 11/14 fix: run on the select screen itself (own link state 2) too - with all 8 cabinets bots nobody "wants to
-	// start" (no human_state file says started), the session is started by hand, and the lever never moved.
+	// start" (no linked human cabinet has started), the session is started by hand, and the lever never moved.
 	const bool onSelect = ram[0x140104 ^ 3] == 2;
 	{
 		static bool newSession = false; static UINT32 selT0 = 0;
@@ -7076,7 +7067,7 @@ void CModel3::RunMainBoardFrame(void)
 	if (g_spikeoutScenarioLog) SpikeoutScenarioLog(ram);
 	if (g_spikeoutJoinLog) { SpikeoutJoinLog(ram); SpikeoutSyncLog(ram); }
 	if (g_spikeoutItemLog) SpikeoutItemLog(ram);
-	SpikeoutP1StateTick(ram);   // human cabinets (AIPlayer=0) tell the bots whether they have started (bots must not start a game on their own)
+	SpikeoutP1StateTick(ram);   // bot cabinets mark their link record, so the bots can tell a started human (bots must not start a game on their own)
 	if (g_floorDump && SpikeoutFloorDumpDue(ram))
 	{
 		// 11/13 FloorDump: every cabinet writes the same link-synced moment (sync counter 0x1000A8)
