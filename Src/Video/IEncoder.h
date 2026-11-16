@@ -7,6 +7,10 @@
 
 using OnEncodedCallback = std::function<void(const uint8_t* data, size_t size, bool isKeyframe)>;
 
+// P4 (2026-11-16, design D-1): periodic keyframe interval. Keyframes are large, so they are kept rare to
+// keep the data small; a client that lost packets asks for one at once (KEYREQ -> RequestKeyframe).
+constexpr int kKeyframeIntervalSeconds = 10;
+
 class IEncoder
 {
 public:

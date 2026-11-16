@@ -125,7 +125,7 @@ SRC_FILES = \
 	Src/Video/FfmpegEncoder.cpp \
 	Src/Network/RtpSender.cpp \
     Src/Network/UdpAudioSender.cpp \
-	Src/Network/HandshakeServer.cpp \
+	Src/Stream/SessionServer.cpp \
 	Src/Model3/TileGen.cpp \
 	Src/Model3/Model3.cpp \
 	Src/CPU/PowerPC/ppc.cpp \

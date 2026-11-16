@@ -275,6 +275,8 @@ static bool g_spikeoutIdleLog = false;   // 11/13 IdleSkipLog=1 -> idlelog.txt
 static bool g_spikeoutFixTimer = false; // FixTimer=1: hold running game timers at 99 (must be set on every cabinet)
 static bool g_spikeoutP1Invincible = false; // P1Invincible=1: keep player 1 invincible, to record waypoints (must be set on every cabinet)
 static bool g_spikeoutAI = false;
+#include <atomic>
+extern std::atomic<bool> g_streamHumanJoined;   // Stream/SessionServer.cpp (P4): a streaming client has taken this slot (SV-11)
 static int g_spikeoutAIChar = -1;   // AIChar (11/14): the character a bot picks on a new session's select screen - 0 Spike,
                                     // 1 White, 2 Linda, 3 Tenshin (or the names); -1 / empty = whatever the cursor is on
 static bool g_spikeoutAIShift = false;  // AIShift=1: hold Shift next to an enemy (off for now)
@@ -5132,7 +5134,7 @@ UINT8 CModel3::ReadInputs(unsigned reg)
       }
       // 11/15 (user: on a continue the character was fixed at once, the lever taps never counted): Start confirms the
       // character on the select screen - no coin / Start there (own link state 0x140104 = 2); Beat after the taps does it.
-      if (g_spikeoutAI && SpikeoutAIWantsStart(ram) && ram[0x140104 ^ 3] != 2)   // AI player: one coin, then start, once a second
+      if (g_spikeoutAI && !g_streamHumanJoined.load() && SpikeoutAIWantsStart(ram) && ram[0x140104 ^ 3] != 2)   // AI player: one coin, then start, once a second (P4: not once a streaming client took the slot)
       {
         unsigned t = g_aiContT0 ? (g_ppcTraceFrame - g_aiContT0) : g_ppcTraceFrame % 60;   // 11/15: a continue: once per attempt
         // 11/15 (user): no coin any more - the cabinets are on free play; Start only.
@@ -5193,7 +5195,7 @@ UINT8 CModel3::ReadInputs(unsigned reg)
 
       if (g_spikeoutInputLog && !g_spikeoutAI) SpikeoutInputLogFrame(ram, (UINT8) ~data);   // 11/14 InputLog
 
-      if (g_spikeoutAI)                       // AI player: override stick/beat for this cabinet
+      if (g_spikeoutAI && !g_streamHumanJoined.load())   // AI player: override stick/beat for this cabinet (P4: stops for good once a streaming client took the slot)
       {
         g_spikeoutCrom = crom; g_spikeoutCromBank = cromBank; g_spikeoutRam = ram;
         data &= ~SpikeoutAIInputBits(ram);     // (active-low: clearing a bit = pressed)

@@ -176,7 +176,7 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.vbvBufferSize = 0;
     encConfig.rcParams.vbvInitialDelay = 0;
     encConfig.frameIntervalP = 1; // No B-frames
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 */
     // Low-latency VBR configuration
     encConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
@@ -185,7 +185,7 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.vbvBufferSize = 3000000;  // averageと同値推奨
     encConfig.rcParams.vbvInitialDelay = 1500000;
     encConfig.frameIntervalP = 1;    // No B-frames (低遅延維持)
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 
     // 追加推奨
     encConfig.rcParams.enableAQ = 1;         // Adaptive Quantization ON (静止部分を綺麗に)
@@ -193,13 +193,13 @@ bool NvencEncoder::CreateEncoder()
     encConfig.rcParams.enableTemporalAQ = 1; // 時間方向AQも有効
     if (useH265)
     {
-        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.hevcConfig.sliceMode = 0;
         encConfig.encodeCodecConfig.hevcConfig.sliceModeData = 0;
     }
     else
     {
-        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.h264Config.sliceMode = 0;
         encConfig.encodeCodecConfig.h264Config.sliceModeData = 0;
     }
@@ -509,20 +509,20 @@ bool NvencEncoder::ReconfigureBitrate(int avgBitrate, int maxBitrate)
     encConfig.rcParams.vbvBufferSize = avgBitrate;
     encConfig.rcParams.vbvInitialDelay = avgBitrate / 2;
     encConfig.frameIntervalP = 1;
-    encConfig.gopLength = m_fps;
+    encConfig.gopLength = m_fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
 
     encConfig.rcParams.enableAQ = 1;
     encConfig.rcParams.aqStrength = 8;
     encConfig.rcParams.enableTemporalAQ = 1;
     if (useH265)
     {
-        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.hevcConfig.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.hevcConfig.sliceMode = 0;
         encConfig.encodeCodecConfig.hevcConfig.sliceModeData = 0;
     }
     else
     {
-        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps;
+        encConfig.encodeCodecConfig.h264Config.idrPeriod = m_fps * kKeyframeIntervalSeconds;
         encConfig.encodeCodecConfig.h264Config.sliceMode = 0;
         encConfig.encodeCodecConfig.h264Config.sliceModeData = 0;
     }

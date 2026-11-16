@@ -55,7 +55,7 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
     m_codecContext->time_base = { 1, fps };
     m_codecContext->framerate = { fps, 1 };
     m_codecContext->pix_fmt = AV_PIX_FMT_YUV420P;
-    m_codecContext->gop_size = 60;
+    m_codecContext->gop_size = fps * kKeyframeIntervalSeconds;   // D-1: rare periodic keyframes + KEYREQ
     m_codecContext->max_b_frames = 0;
     
     // Default bitrate 2.5 Mbps
@@ -71,6 +71,9 @@ bool FfmpegEncoder::Init(int width, int height, int fps, int port, const std::st
         // A frame marked as a keyframe (RequestKeyframe) becomes a real IDR, not just an I-frame
         av_opt_set(m_codecContext->priv_data, "forced-idr", "1", 0);
     }
+    // x265 makes its keyframes CRA by default (open GOP); closed GOP makes them IDR like x264 / NVENC
+    if (strcmp(m_ffmpegCodec->name, "libx265") == 0)
+        av_opt_set(m_codecContext->priv_data, "x265-params", "open-gop=0", 0);
 
     // Open codec
     if (avcodec_open2(m_codecContext, m_ffmpegCodec, nullptr) < 0)

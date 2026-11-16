@@ -114,7 +114,7 @@
 #include <ctime>
 // #include <windows.h>
 #include <shellapi.h>
-#include "Network/HandshakeServer.h"
+#include "Stream/SessionServer.h"
 #include "Pkgs/imgui/imgui.h"
 #include "Pkgs/imgui/imgui_impl_sdl2.h"
 #include "Pkgs/imgui/imgui_impl_opengl3.h"
@@ -166,8 +166,7 @@ bool replayRequested = false;
 bool replayStarted = false;
 std::string replayFile;
 static bool lastLoadStatePressed = false;
-HandshakeServer g_handshake;
-HandshakeServer g_handshakeP2;
+static SessionServer s_session;   // P4: this server's slot session
 
 // --- Debug panel / bitrate overlay ---
 static bool      s_debugPanelVisible = false;
@@ -1414,93 +1413,64 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prevFBO);
   });
 
-  int handshakePort = s_runtime_config["HandshakePort"].ValueAs<int>();
-
-  int audioPort = s_runtime_config["AudioPort"].ValueAs<int>();
+  int sessionPort = s_runtime_config["HandshakePort"].ValueAs<int>();
+  int inputPort   = s_runtime_config["XinputPort"].ValueAsDefault<int>(sessionPort - 1);
 
   streamingEnabled = superAA->IsStreamingEnabled();
   printf("[Streaming] %s (codec: %s)\n", streamingEnabled ? "true" : "false", decoderCodec.c_str());
-  // Moved after superAA creation
+  // P4 (2026-11-16): one SessionServer per server = one slot (design 4.2). Replaces the old HandshakeServer
+  // (text protocol, spectators, LinkPlay=0 two-slot mode, 1-min idle kick).
   if (streamingEnabled)
   {
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
-    int handshakePortP2 = handshakePort + 4; // Handshake port for P2 (usually 5005)
-
-        // Helper: extract just the IP part from "ip:nick" format
-        auto ExtractIP = [](const std::string &ipNick) -> std::string {
-            auto colon = ipNick.find(':');
-            return (colon != std::string::npos) ? ipNick.substr(0, colon) : ipNick;
-        };
-
-        if (linkplay == 0)
-    {
-        printf("[Main] LinkPlay=0 -> Launching BOTH P1 (port %d) and P2 (port %d) handshake servers\n", handshakePort, handshakePortP2);
-        g_handshake.Start(handshakePort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                          [superAA, ExtractIP](const std::vector<std::string> &clientIPs) {
+    SessionServer::Callbacks cb;
+    cb.onConnected = [superAA, linkplay](const std::string &name, const std::string &ip) {
+      superAA->GetEncoder().RequestKeyframe();   // the new client starts with a keyframe
 #ifdef SUPERMODEL_WIN32
-                              s_remoteSlotMgr.SetSlotClientCount(1, (int)clientIPs.size());
-                              std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
-                              std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              s_remoteSlotMgr.SetSlotPlayer(1, playerNick);
-                              s_remoteSlotMgr.SetSlotSpectator(1, spectatorNick);
+      s_remoteSlotMgr.SetSlotClientCount(linkplay, 1);
+      s_remoteSlotMgr.SetSlotPlayer(linkplay, name);
+      s_remoteSlotMgr.SetSlotOccupied();
 #endif
-                              // クライアントの受信ポートはHELLOホールパンチで動的学習するため、
-                              // 全員切断時のみclearし、接続時はHELLO学習に任せる
-                              size_t totalClients = clientIPs.size() + g_handshakeP2.GetClientIPs().size();
-                              if (totalClients == 0)
-                              {
-                                  superAA->GetEncoder().SetDestEndpoints({});
-                                  SetAudioDestEndpoints({});
-                              }
+    };
+    cb.onDisconnected = [superAA, linkplay](const char *why) {
+      superAA->GetEncoder().SetDestEndpoints({});
+      SetAudioDestEndpoints({});
 #ifdef SUPERMODEL_WIN32
-                              if (totalClients >= 3) s_remoteSlotMgr.SetSlotOccupied();
-                              else s_remoteSlotMgr.SetSlotAvailable();
+      s_remoteSlotMgr.SetSlotClientCount(linkplay, 0);
+      s_remoteSlotMgr.SetSlotPlayer(linkplay, "");
+      s_remoteSlotMgr.SetSlotAvailable();
 #endif
-                          });
-        g_handshakeP2.Start(handshakePortP2, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                            [superAA, ExtractIP](const std::vector<std::string> &clientIPs) {
-#ifdef SUPERMODEL_WIN32
-                                s_remoteSlotMgr.SetSlotClientCount(2, (int)clientIPs.size());
-                                std::string p2player    = clientIPs.size() >= 1 ? g_handshakeP2.GetDiscordNick(clientIPs[0]) : "";
-                                std::string p2spectator = clientIPs.size() >= 2 ? g_handshakeP2.GetDiscordNick(clientIPs[1]) : "";
-                                s_remoteSlotMgr.SetSlotPlayer(2, p2player);
-                                s_remoteSlotMgr.SetSlotSpectator(2, p2spectator);
-#endif
-                                size_t totalClients = g_handshake.GetClientIPs().size() + clientIPs.size();
-                                if (totalClients == 0)
-                                {
-                                    superAA->GetEncoder().SetDestEndpoints({});
-                                    SetAudioDestEndpoints({});
-                                }
-#ifdef SUPERMODEL_WIN32
-                                if (totalClients >= 3) s_remoteSlotMgr.SetSlotOccupied();
-                                else s_remoteSlotMgr.SetSlotAvailable();
-#endif
-                            });
-    }
-    else
-    {
-        printf("[Main] LinkPlay=%d -> Launching single handshake server on port %d\n", linkplay, handshakePort);
-        g_handshake.Start(handshakePort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(), decoderCodec,
-                          [linkplay, superAA, videoPort, audioPort, ExtractIP](const std::vector<std::string> &clientIPs) {
-#ifdef SUPERMODEL_WIN32
-                              s_remoteSlotMgr.SetSlotClientCount(linkplay, (int)clientIPs.size());
-                              std::string playerNick    = clientIPs.size() >= 1 ? g_handshake.GetDiscordNick(clientIPs[0]) : "";
-                              std::string spectatorNick = clientIPs.size() >= 2 ? g_handshake.GetDiscordNick(clientIPs[1]) : "";
-                              s_remoteSlotMgr.SetSlotPlayer(linkplay, playerNick);
-                              s_remoteSlotMgr.SetSlotSpectator(linkplay, spectatorNick);
-#endif
-                              if (clientIPs.empty())
-                              {
-                                  superAA->GetEncoder().SetDestEndpoints({});
-                                  SetAudioDestEndpoints({});
-                              }
-#ifdef SUPERMODEL_WIN32
-                              if (!clientIPs.empty()) s_remoteSlotMgr.SetSlotOccupied();
-                              else s_remoteSlotMgr.SetSlotAvailable();
-#endif
-                          });
-    }
+    };
+    cb.onKeyframeRequest = [superAA]() {
+      superAA->GetEncoder().RequestKeyframe();
+    };
+    cb.onMetaKeys = [](uint8_t risen) {
+      // Bitrate ceiling up/down from the client's arrow keys (SV-15, same as the old XInput meta keys)
+      if (risen & StreamProto::META_BITRATE_UP)
+      {
+        int newCeil = std::min(s_currentAvgBitrate + s_bitrateStep, s_bitrateMax);
+        if (newCeil != s_currentAvgBitrate)
+        {
+          s_currentAvgBitrate = newCeil;
+          printf("[Bitrate] Ceiling UP -> %d bps\n", s_currentAvgBitrate);
+          PushBitrateNotify(s_currentAvgBitrate, "manual UP");
+        }
+      }
+      if (risen & StreamProto::META_BITRATE_DOWN)
+      {
+        int newCeil = std::max(s_currentAvgBitrate - s_bitrateStep, s_bitrateMin);
+        if (newCeil != s_currentAvgBitrate)
+        {
+          s_currentAvgBitrate = newCeil;
+          printf("[Bitrate] Ceiling DOWN -> %d bps\n", s_currentAvgBitrate);
+          PushBitrateNotify(s_currentAvgBitrate, "manual DOWN");
+        }
+      }
+      // META_ALT_D (host debug panel) is reserved; whether to carry it over is still open (design D-6).
+    };
+    if (!s_session.Start(linkplay, sessionPort, inputPort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(),
+                         decoderCodec, cb))
+      printf("[Session] Failed to start the session server (ports %d / %d)\n", sessionPort, inputPort);
   }
 
   CRender2D *Render2D = new CRender2D(s_runtime_config);
@@ -1574,8 +1544,8 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
             PushBitrateNotify(currentAvg, "auto clamp");
         }
 
-        uint32_t statusTime = g_handshake.GetLastStatusTime();
-        float lossRate = g_handshake.GetLatestLossRate();
+        uint32_t statusTime = s_session.GetLastStatusTime();
+        float lossRate = s_session.GetLatestLossRate();
 
         bool hasRecentStatus = (statusTime != 0 && (now - statusTime < 5000));
 
@@ -2050,6 +2020,9 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   // Save NVRAM
   SaveNVRAM(Model3);
 
+  // Stop the streaming session before the encoder (superAA) and the audio sender go away
+  s_session.Stop();
+
   // Close audio
   CloseAudio();
 
@@ -2082,6 +2055,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   // Quit with an error
 QuitError:
+  s_session.Stop();
   delete Render2D;
   delete Render3D;
   delete superAA;
@@ -3230,6 +3204,23 @@ int main(int argc, char **argv)
   std::string selectedInputSystem = s_runtime_config["InputSystem"].ValueAs<std::string>();
   for (char &c : selectedInputSystem)   // "NONE" (streaming server, P3) is usually written in capitals
     c = (char) tolower((unsigned char) c);
+
+  // P4 (2026-11-16, design 3.1): a streaming server's ports follow from its slot (LinkPlay 1..8):
+  // base = 55000 + (slot - 1) * 4 -> input, session, video, audio. Other LinkPlay values (e.g. 9 for tests)
+  // keep the ports written in the ini.
+  {
+    int linkplay = (int) s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
+    if (s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && linkplay >= 1 && linkplay <= 8)
+    {
+      int base = StreamProto::SlotBasePort(linkplay);
+      s_runtime_config.Set("XinputPort", base + StreamProto::PORT_INPUT);
+      s_runtime_config.Set("HandshakePort", base + StreamProto::PORT_SESSION);
+      s_runtime_config.Set("VideoPort", base + StreamProto::PORT_VIDEO);
+      s_runtime_config.Set("AudioPort", base + StreamProto::PORT_AUDIO);
+      printf("[Streaming] Slot %d: ports %d (input) %d (session) %d (video) %d (audio)\n", linkplay,
+             base + StreamProto::PORT_INPUT, base + StreamProto::PORT_SESSION, base + StreamProto::PORT_VIDEO, base + StreamProto::PORT_AUDIO);
+    }
+  }
 
   aaValue = s_runtime_config["Supersampling"].ValueAs<int>();
   CRTcolors = (CRTcolor)s_runtime_config["CRTcolors"].ValueAs<int>();

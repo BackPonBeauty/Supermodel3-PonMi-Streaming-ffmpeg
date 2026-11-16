@@ -74,7 +74,7 @@ bool AmfEncoder::Init(int width, int height, int fps, int port, const std::strin
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, amf_int64(4000000));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMESIZE, ::AMFConstructSize(width, height));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, ::AMFConstructRate(fps, 1));
-        m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, amf_int64(fps));
+        m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, amf_int64(fps * kKeyframeIntervalSeconds));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_MAX_NUM_REFRAMES, amf_int64(1)); // No B-frames, single reference frame
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR);
     }
@@ -85,7 +85,7 @@ bool AmfEncoder::Init(int width, int height, int fps, int port, const std::strin
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, amf_int64(4000000));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_FRAMESIZE, ::AMFConstructSize(width, height));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, ::AMFConstructRate(fps, 1));
-        m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, amf_int64(fps));
+        m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, amf_int64(fps * kKeyframeIntervalSeconds));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_B_PIC_PATTERN, amf_int64(0)); // No B-frames
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_MAX_NUM_REFRAMES, amf_int64(1));
         m_pEncoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR);

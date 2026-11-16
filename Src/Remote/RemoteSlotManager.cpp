@@ -164,9 +164,12 @@ void RemoteSlotManager::SetSlotOccupied()
 {
     if (!m_firebase.IsInitialized() || m_hostId.empty())
         return;
-    // 1名接続時は観戦者枠(2人目)をオープンのままにするため available=false にしない
-    // (2人満員時のみ自動締め切り)
-    printf("[RemoteSlotManager] SetSlotOccupied (kept available=true for spectator) for linkplay=%d\n", m_linkplay);
+    // P4 (2026-11-16, requirement S-8d/Q32): no spectators any more -> a connected slot shows as in use.
+    int slot = m_linkplay;
+    std::thread([this, slot]()
+                { m_firebase.PatchSlotAvailable(m_hostId, slot, false); })
+        .detach();
+    printf("[RemoteSlotManager] SetSlotOccupied (available=false) for linkplay=%d\n", m_linkplay);
 }
 
 void RemoteSlotManager::SetSlotAvailable()

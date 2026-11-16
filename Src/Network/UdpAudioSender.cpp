@@ -1,4 +1,5 @@
 #include "UdpAudioSender.h"
+#include "Stream/Protocol.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -82,29 +83,20 @@ void UdpAudioSender::HelloRecvLoop()
 
         buf[received] = '\0';
 
-        if (strncmp(buf, "HELLO", 5) == 0)
+        // P4 (2026-11-16, SV-13): only a MEDIA_HELLO with the session key of the connected client
+        // (checked by SessionServer) sets the destination. One client per slot, so it replaces any old one.
+        if (StreamProto::IsValidMediaHello(buf, received, from))
         {
             std::string fromIP = inet_ntoa(from.sin_addr);
             int fromPort = ntohs(from.sin_port);
-            printf("[AudioUDP] HELLO from %s:%d -> learning dest\n", fromIP.c_str(), fromPort);
-
             std::lock_guard<std::mutex> lock(m_destsMutex);
-            bool found = false;
-            for (auto &dest : m_dests)
-            {
-                if (dest.sin_addr.s_addr == from.sin_addr.s_addr)
-                {
-                    dest.sin_port = from.sin_port;
-                    found = true;
-                    break;
-                }
-            }
-            if (found) continue;
+            if (m_dests.size() != 1 || m_dests[0].sin_addr.s_addr != from.sin_addr.s_addr || m_dests[0].sin_port != from.sin_port)
+                printf("[AudioUDP] MEDIA_HELLO from %s:%d -> audio destination\n", fromIP.c_str(), fromPort);
             sockaddr_in newDest = {};
             newDest.sin_family = AF_INET;
             newDest.sin_addr = from.sin_addr;
             newDest.sin_port = from.sin_port;
-            m_dests.push_back(newDest);
+            m_dests.assign(1, newDest);
         }
     }
 }
