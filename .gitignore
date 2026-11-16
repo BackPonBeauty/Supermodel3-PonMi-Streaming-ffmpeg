@@ -389,3 +389,11 @@ Config/StreamingKeys.ini
 Src/Stream/EmbeddedKeys.h
 Launcher/PonLuncher/EmbeddedKeys.vb
 **/Config/FirebaseSlot*.dat
+
+# 11/16 (owner): private notes and the reverse-engineering folder are not published
+/CLAUDE.md
+/CLAUDE_HISTORY.md
+/Docs/spikeofe_re/
+
+# 11/16: the entry-ticket Worker private key (paste into the Worker secret, then delete)
+**/Config/TicketSigningKey.private.jwk

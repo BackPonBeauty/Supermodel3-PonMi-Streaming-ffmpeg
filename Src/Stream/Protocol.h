@@ -26,7 +26,8 @@ namespace StreamProto
 {
   constexpr char    kMagic[4] = { 'S', 'P', 'K', 'S' };
   // 2 (11/16): room password - Hello carries pwNonce / pwProof, Reject carries a nonce (design 3.6, SV-18)
-  constexpr uint8_t kVersion  = 2;
+  // 3 (11/16): entry tickets - no Discord token to the host any more; Hello carries a signed ticket (design 3.8)
+  constexpr uint8_t kVersion  = 3;
 
   constexpr int kBasePort = 55000;
   enum PortOffset { PORT_INPUT = 0, PORT_SESSION = 1, PORT_VIDEO = 2, PORT_AUDIO = 3 };
@@ -57,16 +58,26 @@ namespace StreamProto
     R_LOGIN_REQUIRED = 4,   // no login, and not from this PC / the home network
     R_CODEC = 5,            // the client cannot decode the codec this server encodes
     R_BAD_REQUEST = 6,
-    R_LOGIN_UNAVAILABLE = 7, // the host could not ask Discord now (network, rate limit) / not set up on the host
-    R_LOGIN_INVALID = 8,     // Discord said the token is invalid or expired
+    R_LOGIN_UNAVAILABLE = 7, // (client side) the entry-ticket server could not be asked now
+    R_LOGIN_INVALID = 8,     // (client side) the Discord login is invalid or expired
     R_ALREADY_CONNECTED = 9, // this Discord account is already in another slot of this host
-    R_PASSWORD_REQUIRED = 10, // the host has a password: answer Reject.nonce with Hello.pwNonce / pwProof
+    R_CHALLENGE = 10,        // answer Reject.nonce: Hello.nonce + what Reject.needs asks (password proof, ticket)
     R_PASSWORD_WRONG = 11,
-    R_PASSWORD_LOCKED = 12    // too many wrong passwords from this IP: wait kPwLockMs
+    R_PASSWORD_LOCKED = 12,  // too many wrong passwords from this IP: wait kPwLockMs
+    R_TICKET_INVALID = 13,   // the ticket's signature / host / slot / nonce / time did not match
+
+    // Client side only (never sent): what RunStreamClient reports to the lobby
+    R_PASSWORD_REQUIRED = 100 // the host needs a password and none was typed
   };
 
-  // Room password (SV-18): the password never travels. The host sends a fresh nonce (REJECT 10), the client
-  // answers with SHA-256("SPKS-room-v2" | nonce (4 bytes LE) | password). A nonce is used once and lives 30 s.
+  // Reject.needs with R_CHALLENGE
+  enum Needs : uint8_t { NEED_PASSWORD = 1, NEED_TICKET = 2 };
+
+  // One challenge per client IP (design 3.6 / 3.8): the host sends a fresh nonce (REJECT 10, lives 30 s, used once).
+  // The client answers in the next HELLO with Hello.nonce = that nonce and
+  //  - NEED_PASSWORD: pwProof = SHA-256("SPKS-room-v2" | nonce (4 bytes LE) | password)  (the password never travels)
+  //  - NEED_TICKET:   a ticket for this host / slot / nonce from the entry-ticket Worker (Ticket.h)
+  // From this PC / the home network no ticket is needed (LB-07); one is used for the Discord name if it comes.
   constexpr int      kMaxPasswordLength = 32;
   constexpr uint32_t kPwNonceLifeMs     = 30000;
   constexpr int      kPwMaxFailures     = 5;        // per IP within kPwFailWindowMs, then locked
@@ -98,15 +109,15 @@ namespace StreamProto
     uint32_t key;       // session key from WELCOME (0 in HELLO)
   };
 
-  struct Hello          // + tokenLen bytes of Discord access token
+  struct Hello          // + ticketLen bytes of ticket payload (JSON) + 64 bytes of its signature, if ticketLen > 0
   {
     Header   h;
     uint8_t  codecs;    // CodecBits the client can decode
-    uint8_t  login;     // Login
-    char     name[kMaxNameLength];   // display name (UTF-8, zero padded)
-    uint32_t pwNonce;   // 0, or the nonce from REJECT(R_PASSWORD_REQUIRED)
+    uint8_t  login;     // Login (LOGIN_DISCORD: the client is logged in and can fetch a ticket)
+    char     name[kMaxNameLength];   // display name (UTF-8, zero padded); a ticket's name wins
+    uint32_t nonce;     // 0, or the nonce from REJECT(R_CHALLENGE)
     uint8_t  pwProof[32];
-    uint16_t tokenLen;
+    uint16_t ticketLen;
   };
 
   struct Welcome
@@ -122,7 +133,8 @@ namespace StreamProto
   {
     Header  h;
     uint8_t reason;     // RejectReason
-    uint32_t nonce;     // with R_PASSWORD_REQUIRED
+    uint32_t nonce;     // with R_CHALLENGE
+    uint8_t  needs;     // with R_CHALLENGE: Needs bits
   };
 
   struct Ping           // PING and PONG

@@ -131,6 +131,7 @@ SRC_FILES = \
 	Src/Stream/DiscordNotifier.cpp \
 	Src/Stream/DiscordAuth.cpp \
 	Src/Stream/Http.cpp \
+	Src/Stream/Ticket.cpp \
 	Src/Model3/TileGen.cpp \
 	Src/Model3/Model3.cpp \
 	Src/CPU/PowerPC/ppc.cpp \

@@ -6,13 +6,15 @@
 
 #include "SessionServer.h"
 #include "RemoteInputSystem.h"
-#include "DiscordAuth.h"
 #include "RoomPassword.h"
+#include "Ticket.h"
+#include "Http.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <random>
 #include <string>
 
@@ -113,6 +115,7 @@ bool SessionServer::Start(int slot, int sessionPort, int inputPort, int width, i
 
   m_running.store(true);
   m_sessionThread = std::thread(&SessionServer::SessionLoop, this);
+  m_ipThread = std::thread(&SessionServer::PublicIpLoop, this);
   m_inputThread = std::thread(&SessionServer::InputLoop, this);
 
   printf("[Session] Slot %d ready: session port %d, input port %d, %dx%d %s (protocol v%d)\n",
@@ -141,6 +144,7 @@ void SessionServer::Stop()
   }
   if (m_sessionThread.joinable()) m_sessionThread.join();
   if (m_inputThread.joinable()) m_inputThread.join();
+  if (m_ipThread.joinable()) m_ipThread.join();
   if (m_sessionSock != INVALID_SOCKET) { closesocket(m_sessionSock); m_sessionSock = INVALID_SOCKET; }
   if (m_inputSock != INVALID_SOCKET) { closesocket(m_inputSock); m_inputSock = INVALID_SOCKET; }
   m_connected.store(false);
@@ -261,9 +265,23 @@ void SessionServer::CheckIdle()
   }
 }
 
-// SV-18: true = the proof matches. Otherwise rejectReason (and nonceOut for R_PASSWORD_REQUIRED) say what to answer.
-bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, uint8_t &rejectReason, uint32_t &nonceOut)
+// 11/16 (design 3.6 / 3.8): one challenge per client IP for the room password and the entry ticket.
+bool SessionServer::CheckChallenge(const Hello &hello, const char *buf, int len, const sockaddr_in &from, bool local,
+                                   uint8_t &rejectReason, uint32_t &nonceOut, uint8_t &needsOut,
+                                   std::string &ticketId, std::string &ticketName)
 {
+  ticketId.clear();
+  ticketName.clear();
+  uint8_t needs = 0;
+  if (!m_password.empty())
+    needs |= NEED_PASSWORD;
+  // From the internet a ticket is required. From this PC / the home network it is optional (LB-07): asked for only
+  // when the client is logged in, for its Discord name.
+  if (!local || hello.login == LOGIN_DISCORD)
+    needs |= NEED_TICKET;
+  if (needs == 0)
+    return true;   // public room, no login, from this PC / the home network: nothing to check
+
   uint64_t now = NowMs();
   uint32_t ip = from.sin_addr.s_addr;
 
@@ -276,7 +294,7 @@ bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, u
       it = (now - it->second.first > kPwFailWindowMs && now >= it->second.lockUntil) ? m_pwFails.erase(it) : std::next(it);
 
   auto fail = m_pwFails.find(ip);
-  if (fail != m_pwFails.end() && now < fail->second.lockUntil)
+  if ((needs & NEED_PASSWORD) && fail != m_pwFails.end() && now < fail->second.lockUntil)
   {
     rejectReason = R_PASSWORD_LOCKED;
     return false;
@@ -284,7 +302,7 @@ bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, u
 
   auto it = m_pwNonces.find(ip);
   bool fresh = it != m_pwNonces.end() && now - it->second.time < kPwNonceLifeMs;
-  if (hello.pwNonce == 0 || !fresh || it->second.nonce != hello.pwNonce)
+  if (hello.nonce == 0 || !fresh || it->second.nonce != hello.nonce)
   {
     // no (valid) answer yet: (re)send the nonce. A live one is kept, so a repeated HELLO does not replace it.
     if (!fresh)
@@ -292,14 +310,58 @@ bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, u
       m_pwNonces[ip] = { RoomPassword::NewNonce(), now };
       it = m_pwNonces.find(ip);
     }
-    rejectReason = R_PASSWORD_REQUIRED;
+    rejectReason = R_CHALLENGE;
     nonceOut = it->second.nonce;
+    needsOut = needs;
     return false;
   }
-
-  uint8_t expect[32];
-  RoomPassword::Proof(hello.pwNonce, m_password, expect);
   m_pwNonces.erase(it);   // one try per nonce
+
+  // --- entry ticket (design 3.8) ---
+  if (needs & NEED_TICKET)
+  {
+    bool valid = false;
+    Ticket::Info info;
+    int tl = hello.ticketLen;
+    if (tl > 0 && tl <= Ticket::kMaxPayload && len >= (int) sizeof(Hello) + tl + Ticket::kSigLength)
+    {
+      std::string payload(buf + sizeof(Hello), tl);
+      std::string sig(buf + sizeof(Hello) + tl, Ticket::kSigLength);
+      std::string myIp;
+      {
+        std::lock_guard<std::mutex> lock(m_ipLock);
+        myIp = m_publicIp;
+      }
+      long long nowSec = (long long) time(nullptr);
+      if (!Ticket::Verify(payload, sig, info))
+        printf("[Session] Slot %d: ticket from %s: bad signature\n", m_slot, AddrToString(from).c_str());
+      else if (info.slot != m_slot || info.nonce != hello.nonce)
+        printf("[Session] Slot %d: ticket from %s: for slot %d / another nonce\n", m_slot, AddrToString(from).c_str(), info.slot);
+      else if (myIp.empty() || info.host != myIp)
+        printf("[Session] Slot %d: ticket from %s: for host %s, this host is %s\n", m_slot, AddrToString(from).c_str(),
+               info.host.c_str(), myIp.empty() ? "(public IP not known yet)" : myIp.c_str());
+      else if (nowSec > info.exp + 300)   // the nonce (30 s, used once) is the real freshness; this only allows clock skew
+        printf("[Session] Slot %d: ticket from %s: expired\n", m_slot, AddrToString(from).c_str());
+      else
+        valid = true;
+    }
+    if (valid)
+    {
+      ticketId = info.id;
+      ticketName = info.name;
+    }
+    else if (!local)
+    {
+      rejectReason = tl > 0 ? R_TICKET_INVALID : R_LOGIN_REQUIRED;
+      return false;
+    }
+  }
+
+  // --- room password (SV-18) ---
+  if (!(needs & NEED_PASSWORD))
+    return true;
+  uint8_t expect[32];
+  RoomPassword::Proof(hello.nonce, m_password, expect);
   if (RoomPassword::ProofEquals(expect, hello.pwProof))
   {
     m_pwFails.erase(ip);
@@ -318,6 +380,39 @@ bool SessionServer::CheckPassword(const Hello &hello, const sockaddr_in &from, u
   }
   rejectReason = R_PASSWORD_WRONG;
   return false;
+}
+
+// Design 3.8: tickets name the host by the public IP the lobby shows (the same api.ipify.org answer the Firebase
+// registration uses). Asked at start, again every minute until known, then every 10 minutes (the IP may change).
+void SessionServer::PublicIpLoop()
+{
+  uint64_t next = 0;
+  while (m_running.load())
+  {
+    uint64_t now = NowMs();
+    if (now >= next)
+    {
+      // same service as FirebaseMatchingCpp::GetExternalIp (the lobby's "ip"), with a short timeout so Stop() is quick
+      std::string ip;
+      if (StreamHttp::Request(L"api.ipify.org", L"GET", "/", "", "", &ip, 4000) != 200)
+        ip.clear();
+      while (!ip.empty() && (ip.back() == '\n' || ip.back() == '\r' || ip.back() == ' '))
+        ip.pop_back();
+      if (ip.size() > 45)
+        ip.clear();
+      bool changed;
+      {
+        std::lock_guard<std::mutex> lock(m_ipLock);
+        changed = !ip.empty() && ip != m_publicIp;
+        if (!ip.empty())
+          m_publicIp = ip;
+      }
+      if (changed)
+        printf("[Session] Slot %d: public IP %s (entry tickets must name it)\n", m_slot, ip.c_str());
+      next = now + (ip.empty() ? 60000 : 600000);
+    }
+    Sleep(200);
+  }
 }
 
 void SessionServer::Disconnect(const char *why)
@@ -351,11 +446,12 @@ void SessionServer::Disconnect(const char *why)
 
 void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &from)
 {
-  auto reject = [&](uint8_t reason, const char *text, uint32_t nonce = 0) {
+  auto reject = [&](uint8_t reason, const char *text, uint32_t nonce = 0, uint8_t needs = 0) {
     Reject r = {};
     FillHeader(r.h, T_REJECT, 0);
     r.reason = reason;
     r.nonce = nonce;
+    r.needs = needs;
     SendTo(&r, sizeof(r), from);
     printf("[Session] Slot %d: HELLO from %s:%d rejected (%s)\n", m_slot, AddrToString(from).c_str(), ntohs(from.sin_port), text);
   };
@@ -402,60 +498,35 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
     }
   }
 
-  if (!resend && !m_password.empty())
-  {
-    // SV-18: before the Discord check (cheap, and the first HELLO only fetches the nonce)
-    uint8_t reason = 0;
-    uint32_t nonce = 0;
-    if (!CheckPassword(hello, from, reason, nonce))
-    {
-      reject(reason, reason == R_PASSWORD_REQUIRED ? "password: nonce sent"
-                   : reason == R_PASSWORD_WRONG    ? "wrong password"
-                                                   : "too many wrong passwords from this IP", nonce);
-      return;
-    }
-  }
-
   if (!resend)
   {
     bool local = IsLocalOrPrivate(from);
-    if (hello.login == LOGIN_DISCORD)
-    {
-      // P6b (SV-16): ask Discord whether the token's owner is a member of our guild.
-      // This PC / the home network may connect anyway (LB-07); the check then only gives the name.
-      std::string token;
-      if (hello.tokenLen > 0 && hello.tokenLen <= 256 && len >= (int) sizeof(Hello) + hello.tokenLen)
-        token.assign(buf + sizeof(Hello), hello.tokenLen);
-      DiscordAuth::Check check = token.empty() ? DiscordAuth::Check::InvalidToken
-                                               : DiscordAuth::CheckMember(token, m_pendingName, m_pendingId);
-      if (check == DiscordAuth::Check::Member)
-      {
-        if (!m_pendingName.empty())
-          name = m_pendingName;
-      }
-      else if (!local)
-      {
-        if (check == DiscordAuth::Check::NotMember)
-          reject(R_NOT_MEMBER, "not a member of the Discord server");
-        else if (check == DiscordAuth::Check::InvalidToken)
-          reject(R_LOGIN_INVALID, "Discord token invalid or expired");
-        else
-          reject(R_LOGIN_UNAVAILABLE, DiscordAuth::HostConfigured() ? "could not ask Discord" : "DiscordGuildId not set on this host");
-        return;
-      }
-      else
-        m_pendingId.clear();
-    }
-    else if (!local)
+    if (!local && hello.login != LOGIN_DISCORD)
     {
       reject(R_LOGIN_REQUIRED, "no login from the internet");
       return;
     }
 
+    // 11/16 (design 3.6 / 3.8): nonce -> entry ticket (the host never sees a Discord token) -> room password
+    uint8_t reason = 0, needs = 0;
+    uint32_t nonce = 0;
+    std::string ticketName;
+    if (!CheckChallenge(hello, buf, len, from, local, reason, nonce, needs, m_pendingId, ticketName))
+    {
+      reject(reason, reason == R_CHALLENGE        ? "challenge sent"
+                   : reason == R_PASSWORD_WRONG   ? "wrong password"
+                   : reason == R_PASSWORD_LOCKED  ? "too many wrong passwords from this IP"
+                   : reason == R_TICKET_INVALID   ? "entry ticket not valid here"
+                                                  : "no entry ticket from the internet", nonce, needs);
+      return;
+    }
+    if (!ticketName.empty())
+      name = ticketName;
+
     // 11/16 (owner): one Discord account = one slot of this host. Every slot is its own process on this PC, so a
     // named mutex per Discord user ID is held while that user is connected; a second slot finds it and refuses.
-    // No setting lifts it (distribution build).
-    if (hello.login == LOGIN_DISCORD && !m_pendingId.empty())
+    // No setting lifts it (distribution build). The ID comes from a signed ticket, so it cannot be made up.
+    if (!m_pendingId.empty())
     {
       std::string lockName = "Local\\SupermodelPonMi_DiscordUser_" + m_pendingId;
       HANDLE h = CreateMutexA(nullptr, FALSE, lockName.c_str());
@@ -481,7 +552,7 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
       do { m_key = ((uint32_t) rd() << 16) ^ (uint32_t) rd(); } while (m_key == 0);
       m_clientAddr = from;
       m_playerName = name;
-      m_playerId = (hello.login == LOGIN_DISCORD) ? m_pendingId : std::string();   // LB-05 (same person) later
+      m_playerId = m_pendingId;   // from a signed entry ticket, "" without one (LB-05: same person later)
       m_lastHb = NowMs();
       m_lastKeyReq = 0;
       m_haveSeq = false;

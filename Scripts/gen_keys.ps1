@@ -18,7 +18,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$names = @('FirebaseApiKey', 'FirebaseDbUrl', 'DiscordClientId', 'DiscordGuildId', 'DiscordRedirectPort', 'DiscordInviteUrl', 'DiscordWebhookUrl')
+$names = @('FirebaseApiKey', 'FirebaseDbUrl', 'DiscordClientId', 'DiscordGuildId', 'DiscordRedirectPort', 'DiscordInviteUrl', 'DiscordWebhookUrl', 'TicketUrl', 'TicketPublicKey')
 $values = @{}
 foreach ($n in $names) { $values[$n] = '' }
 $ini = Join-Path $Root 'Config\StreamingKeys.ini'

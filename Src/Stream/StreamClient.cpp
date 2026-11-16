@@ -12,6 +12,7 @@
 #include <mswsock.h>
 #include <windows.h>
 #include "RoomPassword.h"
+#include "Ticket.h"
 #include "OSD/SDL/SDLIncludes.h"
 #include <GL/glew.h>
 #include "Pkgs/imgui/imgui.h"
@@ -90,7 +91,8 @@ namespace
     case R_SLOT_BUSY:         return "That slot is in use. Please choose another slot.";
     case R_LOGIN_REQUIRED:    return "Refused: please log in to Discord (top of the lobby). Without login only this PC / home network can connect.";
     case R_CODEC:             return "Refused: this client cannot decode the server's video codec.";
-    case R_LOGIN_UNAVAILABLE: return "Refused: the server could not check your Discord login now. Please try again later.";
+    case R_LOGIN_UNAVAILABLE: return "Refused: the entry-ticket server could not check your Discord login now. Please try again later.";
+    case R_TICKET_INVALID:    return "Refused: the host did not accept the entry ticket (wrong host address?). Please try again.";
     case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
     case R_ALREADY_CONNECTED: return "Refused: your Discord account is already connected to another slot of this host.";
     case R_PASSWORD_REQUIRED: return "This host needs a password.";
@@ -493,34 +495,43 @@ namespace
   bool Handshake(Client *c, const StreamConnectRequest &req, std::string &message, uint8_t *rejectReason)
   {
     Hello hello = {};
-    hello.pwNonce = 0;   // SV-18: filled in after REJECT(R_PASSWORD_REQUIRED)
     FillHeader(hello.h, T_HELLO, 0);
     hello.codecs = CODEC_H264 | CODEC_H265;
     hello.login = LOGIN_NONE;
     memcpy(hello.name, req.name.c_str(), std::min(req.name.size(), (size_t) kMaxNameLength));   // zero padded, no terminator needed
-    hello.tokenLen = 0;
+    hello.nonce = 0;       // filled in after REJECT(R_CHALLENGE)
+    hello.ticketLen = 0;
 
-    // P6b (CL-07, SV-16): with a Discord login the access token follows the Hello struct; the host checks it
+    // 11/16 (design 3.8): the Discord token stays on this PC and goes only to the entry-ticket Worker. The host gets
+    // a signed ticket for itself, this slot and its nonce.
     std::string token;
-    if (DiscordAuth::GetAccessToken(token) && token.size() <= 256)
-    {
+    bool loggedIn = DiscordAuth::GetAccessToken(token) && !token.empty() && token.size() <= 256;
+    if (loggedIn)
       hello.login = LOGIN_DISCORD;
-      hello.tokenLen = (uint16_t) token.size();
-    }
+    char hostIp[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, (void *) &c->sessAddr.sin_addr, hostIp, sizeof(hostIp));   // the host as the tickets name it
+
+    std::string ticketPayload, ticketSig;
     std::vector<char> packet;
     auto build = [&]() {
-      packet.assign(sizeof(hello) + (hello.tokenLen ? token.size() : 0), 0);
+      size_t tl = ticketPayload.size();
+      hello.ticketLen = (uint16_t) tl;
+      packet.assign(sizeof(hello) + (tl ? tl + Ticket::kSigLength : 0), 0);
       memcpy(packet.data(), &hello, sizeof(hello));
-      if (hello.tokenLen)
-        memcpy(packet.data() + sizeof(hello), token.data(), token.size());
+      if (tl)
+      {
+        memcpy(packet.data() + sizeof(hello), ticketPayload.data(), tl);
+        memcpy(packet.data() + sizeof(hello) + tl, ticketSig.data(), Ticket::kSigLength);
+      }
     };
     build();
 
     char buf[512];
     uint64_t start = NowMs();
     uint64_t lastSend = 0;
-    const uint64_t waitMs = hello.tokenLen ? 9000 : 5000;   // the host asks Discord (up to 5 s)
-    int pwAnswers = 0;
+    const uint64_t waitMs = 5000;
+    int answers = 0;
+    uint8_t ticketProblem = 0;   // why there is no ticket (said instead of the host's "login required")
     while (NowMs() - start < waitMs)
     {
       if (NowMs() - lastSend >= 500)
@@ -540,23 +551,49 @@ namespace
       {
         Reject r;
         memcpy(&r, buf, sizeof(r));
-        if (r.reason == R_PASSWORD_REQUIRED && !req.password.empty() && r.nonce != 0)
+        if (r.reason == R_CHALLENGE && r.nonce != 0)
         {
-          // SV-18: answer the nonce with the proof (the password itself is never sent)
-          if (r.nonce != hello.pwNonce && ++pwAnswers <= 3)
+          if (r.nonce == hello.nonce || ++answers > 3)
+            continue;   // already answered this nonce (a repeated REJECT)
+          if ((r.needs & NEED_PASSWORD) && req.password.empty())
           {
-            hello.pwNonce = r.nonce;
-            RoomPassword::Proof(r.nonce, req.password, hello.pwProof);
-            build();
-            c->SendSession(packet.data(), (int) packet.size());
-            lastSend = NowMs();
-            start = NowMs();   // a new wait for the answer
+            if (rejectReason)
+              *rejectReason = R_PASSWORD_REQUIRED;   // the lobby opens the password box
+            message = RejectText(R_PASSWORD_REQUIRED);
+            return false;
           }
+          hello.nonce = r.nonce;
+          memset(hello.pwProof, 0, sizeof(hello.pwProof));
+          if (r.needs & NEED_PASSWORD)
+            RoomPassword::Proof(r.nonce, req.password, hello.pwProof);   // the password itself is never sent
+          ticketPayload.clear();
+          ticketSig.clear();
+          if ((r.needs & NEED_TICKET) && loggedIn)
+          {
+            Ticket::Fetch f = Ticket::Request(token, hostIp, req.slot, r.nonce, ticketPayload, ticketSig);
+            if (f != Ticket::Fetch::Ok)
+            {
+              ticketPayload.clear();
+              ticketSig.clear();
+              ticketProblem = f == Ticket::Fetch::LoginInvalid ? R_LOGIN_INVALID
+                            : f == Ticket::Fetch::NotMember    ? R_NOT_MEMBER
+                                                               : R_LOGIN_UNAVAILABLE;
+              printf("[Client] no entry ticket (%s); trying without one\n", RejectText(ticketProblem));
+            }
+            // without a ticket the host still lets this PC / the home network in (LB-07)
+          }
+          build();
+          c->SendSession(packet.data(), (int) packet.size());
+          lastSend = NowMs();
+          start = NowMs();   // a new wait for the answer
           continue;
         }
+        uint8_t reason = r.reason;
+        if ((reason == R_LOGIN_REQUIRED || reason == R_TICKET_INVALID) && ticketProblem)
+          reason = ticketProblem;   // say why there was no ticket
         if (rejectReason)
-          *rejectReason = r.reason;
-        message = RejectText(r.reason);
+          *rejectReason = reason;
+        message = RejectText(reason);
         return false;
       }
       if (h.type == T_WELCOME && n >= (int) sizeof(Welcome))

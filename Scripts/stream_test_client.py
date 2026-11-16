@@ -23,9 +23,9 @@ import sys
 import time
 
 MAGIC = b"SPKS"
-VERSION = 2   # 11/16: v2 adds the room password fields (pwNonce, pwProof) to HELLO
+VERSION = 3   # 11/16: v2 room password (nonce, pwProof), v3 entry tickets (ticketLen + ticket + signature)
 T_HELLO, T_WELCOME, T_REJECT, T_HB, T_PING, T_PONG, T_KEYREQ, T_BYE, T_NOTICE, T_INPUT, T_MEDIA_HELLO, T_STATUS = range(1, 13)
-REJECT_NAMES = {1: "version", 2: "not member", 3: "slot busy", 4: "login required", 5: "codec", 6: "bad request", 7: "login unavailable", 8: "login invalid", 9: "already connected", 10: "password required", 11: "wrong password", 12: "password locked"}
+REJECT_NAMES = {1: "version", 2: "not member", 3: "slot busy", 4: "login required", 5: "codec", 6: "bad request", 7: "login unavailable", 8: "login invalid", 9: "already connected", 10: "challenge", 11: "wrong password", 12: "password locked", 13: "ticket invalid"}
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 SESSION = int(sys.argv[2]) if len(sys.argv) > 2 else 55001

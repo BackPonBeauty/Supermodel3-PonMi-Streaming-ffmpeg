@@ -3,7 +3,7 @@
  *
  * 11/16 (owner): a host may set a password (PonLuncher, blank = public). Requirement SV-18, design 3.6.
  *
- * - The password never goes over the network: the host sends a fresh nonce (REJECT R_PASSWORD_REQUIRED) and the
+ * - The password never goes over the network: the host sends a fresh nonce (REJECT R_CHALLENGE) and the
  *   client answers with Proof(nonce, password) = SHA-256("SPKS-room-v2" | nonce LE | password) in the next HELLO.
  * - The host keeps it in its ini as StreamPassword = "DPAPI:<base64>" (written by the launcher, this Windows user
  *   only). A value the host cannot decrypt locks the room (nobody can join) instead of opening it.

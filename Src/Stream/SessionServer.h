@@ -12,8 +12,8 @@
  *   must come again with the proof (RoomPassword.h). 5 wrong answers from one IP in 10 min -> 5 min refused.
  *
  * - One client per slot (no spectators). A second client gets REJECT(slot busy).
- * - Version check; login: Discord is verified in P6 (until then refused unless from this PC / home network);
- *   no login is accepted only from 127.0.0.1 / private addresses (requirement LB-07).
+ * - Version check; login (11/16, design 3.8): from the internet a signed entry ticket from the ticket Worker is
+ *   required (the host never sees a Discord token); no login is accepted only from 127.0.0.1 / private addresses (LB-07).
  * - INPUT, HB, PING, KEYREQ, STATUS and the media HELLOs are accepted only from the connected client's IP
  *   with the right session key (SV-13).
  * - Client input goes to CRemoteInputSystem (InputSystem = NONE). When the client leaves, the input is
@@ -73,7 +73,12 @@ private:
   void CheckIdle();   // SV-17: no input change for kIdleKickMs -> removed
   void SendTo(const void *data, int len, const sockaddr_in &to);
   bool FromClient(const sockaddr_in &from, uint32_t key);
-  bool CheckPassword(const StreamProto::Hello &hello, const sockaddr_in &from, uint8_t &rejectReason, uint32_t &nonceOut);
+  // 11/16 (design 3.6 / 3.8): nonce, room password and entry ticket. True = let in; ticketId / ticketName are
+  // filled when a valid ticket came. Otherwise rejectReason (+ nonceOut / needsOut for R_CHALLENGE) say what to answer.
+  bool CheckChallenge(const StreamProto::Hello &hello, const char *buf, int len, const sockaddr_in &from, bool local,
+                      uint8_t &rejectReason, uint32_t &nonceOut, uint8_t &needsOut,
+                      std::string &ticketId, std::string &ticketName);
+  void PublicIpLoop();   // this host's public IP (what the tickets name), from api.ipify.org
   bool ValidateMediaHello(const char *buf, int len, const sockaddr_in &from);
   static bool IsLocalOrPrivate(const sockaddr_in &addr);
 
@@ -86,7 +91,10 @@ private:
   SOCKET m_inputSock = INVALID_SOCKET;
   std::thread m_sessionThread;
   std::thread m_inputThread;
+  std::thread m_ipThread;
   std::atomic<bool> m_running{false};
+  std::mutex m_ipLock;
+  std::string m_publicIp;                 // "" until known (guarded by m_ipLock)
 
   std::mutex m_lock;                      // guards everything below
   std::atomic<bool> m_connected{false};
@@ -94,7 +102,7 @@ private:
   sockaddr_in m_clientAddr = {};          // session address of the client
   std::string m_playerName;
   std::string m_playerId;                 // Discord user ID (empty without login)
-  std::string m_pendingName, m_pendingId; // result of the Discord check (session thread only)
+  std::string m_pendingId;                // Discord ID from the entry ticket (session thread only)
   void *m_userLock = nullptr;             // HANDLE of the named mutex "this Discord user is connected here"
   uint64_t m_lastHb = 0;
   uint64_t m_lastKeyReq = 0;

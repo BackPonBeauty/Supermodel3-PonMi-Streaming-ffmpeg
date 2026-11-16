@@ -44,12 +44,15 @@ namespace StreamSecrets
         keys.discordRedirectPort = port;
       keys.discordInviteUrl  = Unscramble(kDiscordInviteUrl, kDiscordInviteUrlLen, 5);
       keys.discordWebhookUrl = Unscramble(kDiscordWebhookUrl, kDiscordWebhookUrlLen, 6);
+      keys.ticketUrl         = Unscramble(kTicketUrl, kTicketUrlLen, 7);
+      keys.ticketPublicKey   = Unscramble(kTicketPublicKey, kTicketPublicKeyLen, 8);
       keys.fileFound = !keys.firebaseApiKey.empty() || !keys.discordClientId.empty();
 #endif
-      printf("[Keys] embedded keys: Firebase %s, Discord login %s, Discord post %s\n",
+      printf("[Keys] embedded keys: Firebase %s, Discord login %s, Discord post %s, entry tickets %s\n",
              (!keys.firebaseApiKey.empty() && !keys.firebaseDbUrl.empty()) ? "yes" : "no",
              (!keys.discordClientId.empty() && !keys.discordGuildId.empty()) ? "yes" : "no",
-             !keys.discordWebhookUrl.empty() ? "yes" : "no");
+             !keys.discordWebhookUrl.empty() ? "yes" : "no",
+             (!keys.ticketUrl.empty() && !keys.ticketPublicKey.empty()) ? "yes" : "no");
     });
     return keys;
   }

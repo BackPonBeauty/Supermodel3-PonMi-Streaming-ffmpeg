@@ -29,6 +29,8 @@ namespace StreamSecrets
     int         discordRedirectPort = 53134;
     std::string discordInviteUrl;
     std::string discordWebhookUrl;      // status post (DiscordNotifier); "" = no post
+    std::string ticketUrl;              // 11/16: entry-ticket Worker, e.g. https://xxx.workers.dev/ticket (design 3.8)
+    std::string ticketPublicKey;        // its ECDSA P-256 public key, base64 of the 65-byte uncompressed point
   };
 
   const Keys &Get();

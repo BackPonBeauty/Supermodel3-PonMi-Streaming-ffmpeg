@@ -1,557 +1,192 @@
-# 🎮 Supermodel3-PonMi-Streaming-ffmpeg v2.0.0 - Built-in WAN Streaming
+# 🎮 Supermodel3-PonMi-Streaming — Spikeout FE 8リンク・WAN ストリーミング
 
-**No extra tools required. Just launch, share your slot, and play.**
+**ランチャーでホストを立てて、ロビーからスロットを選んで、遊ぶだけ。**
+**StreamReceiver・XinputReceiver・ViGEmBus は不要になりました。**
 
----
-
-## 🆕 What's New in v2.0.0
-
-- **Streaming built directly into the emulator** — XinputReciever is no longer required
-- **Firebase automatic matchmaking** — hosts are discovered automatically, no manual IP entry needed
-- **UPnP automatic port forwarding** — no router configuration required in most cases
-- **Ping display** — latency to each host is shown in the host list
-- **NVENC H.264 / H.265 low-latency streaming** — ~5.8ms encode latency on RTX 20 series or later
-- # FFMPEG Low-Latency Streaming — CPU encoding is also supported
-- **Up to 4-player WAN link play** (mix of local and remote players supported)
+> ビルド 20261116 / PonLuncher 2.0.0
 
 ---
 
-## ✅ Confirmed Working Titles
-
-- **Spikeout Final Edition** (spikeofe) — 4-link play confirmed
-- Virtua Fighter 3tb (single instance)
-
----
-
-## ⚙️ Specifications & Limitations
-
-- **XInput only** — titles requiring mouse or light gun input are not supported
-- **Up to 3 connections per instance** — one player + up to 2 spectators, or 3 spectators
-- If the player disconnects, the next spectator in line becomes the player
-- **Auto-disconnect** — clients with no XInput input for 1 minute will be disconnected
-
----
-
-## 📦 Package Contents
-
-This package is configured for **Spikeout Final Edition (spikeofe) 4-link play**.
-
-```
-Spikeofe_4links_Sample.zip
-├── 01/
-│   ├── supermodel.exe
-│   └── Config/
-│       └── Supermodel.ini   ← Slot P1
-├── 02/                       ← Slot P2
-├── 03/                       ← Slot P3
-├── 04/                       ← Slot P4
-├── ROMs/                     ← Place your ROM files here
-├── 4lnkstart.bat             ← Launch all 4 instances
-├── 4lnkstart with cmd.bat    ← Launch all 4 instances (with console window)
-└── README.md
-```
-
-### Streaming Configuration Patterns
-
-**All remote** (host does not play)
-
-| Slot | Streaming |
-|------|-----------|
-| 01–04 | `Streaming = 1` |
-
-> StreamReceiver is not required on the host side.
-
-**P1 local + P2–P4 remote** (host plays as P1)
-
-| Slot | Streaming |
-|------|-----------|
-| 01 | `Streaming = 0` |
-| 02–04 | `Streaming = 1` |
-
-> ⚠️ Connect your XInput controller and make sure Windows recognizes it before launching.
-
-> ⚠️ ROM files are not included. Please obtain them legally on your own.
-
----
-
-## 💻 Requirements
-
-### Host
-
-| Item | Requirement |
-|------|-------------|
-| OS | Windows 10/11 64-bit |
-| CPU | Intel Core i7 or higher, or AMD Ryzen 7 or higher (fast single-thread performance is crucial) |
-| GPU | NVIDIA GeForce GTX 900 series or later, or AMD Radeon RX 400 series or later |
-| Encoder | FFMPEG software encoding |
-| Other | ViGEmBus |
-| Router | UPnP enabled (or manual port forwarding) |
-| Network | 20 Mbps upload or faster recommended |
-
-- [ViGEmBus](https://github.com/nefarius/ViGEm.Bus/releases) — Virtual gamepad driver
-
-> Tested on: Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / 10GbE / Windows 11  
-> Minimum recommended: Core i5 9th gen or later
-
----
-
-## 🔌 Port Numbers
-
-| Slot | XInput | HS/HB | Video | Audio |
-|------|--------|-------|-------|-------|
-| P1 | 55000 | 55001 | 55002 | 55003 |
-| P2 | 55004 | 55005 | 55006 | 55007 |
-| P3 | 55008 | 55009 | 55010 | 55011 |
-| P4 | 55012 | 55013 | 55014 | 55015 |
-
----
-
-## 🚀 Setup (Host)
-
-### 1. Install ViGEmBus
-
-Download and install the latest release from [ViGEmBus Releases](https://github.com/nefarius/ViGEm.Bus/releases).
-
-### 2. Allow through Windows Firewall
-
-Allow `supermodel.exe` through Windows Firewall for both private and public networks.
-
-### 3. Configure Supermodel.ini
-
-Set the following in each slot's `Config/Supermodel.ini`:
-
-```ini
-Streaming = 1
-LinkPlay = 1   ; your slot number (1–4)
-```
-
-#### LinkPlay values
-
-| Value | Description | Virtual controllers created |
-|-------|-------------|----------------------------|
-| `0` | Single title — streams both P1 and P2 from one instance | 2 (P1 + P2) |
-| `1` | Link play slot 1 (P1) / Single title: P1 local + P2 streaming | 1 |
-| `2` | Link play slot 2 (P2) | 1 |
-| `3` | Link play slot 3 (P3) | 1 |
-| `4` | Link play slot 4 (P4) | 1 |
-
-> For single-title streaming (e.g. a 2-player cabinet), use `LinkPlay = 0`. Two virtual controllers will be created on the client side.
-
-> For single-title with P1 played locally on the host, use `LinkPlay = 1` and `Streaming = 1`. Connect your XInput controller before launching.
-
-### 4. Place your ROM
-
-Place your ROM files in the **`ROMs/`** folder at the root of the package. The sample `Supermodel.ini` in each slot is already configured to point to this directory.
-
-### 5. Launch supermodel.exe
-
-Run **`4lnkstart.bat`** to launch all 4 instances at once. This is the recommended way to start.
-
-> `4lnkstart with cmd.bat` opens a console window for debugging purposes.
-
----
-
-> Streaming instances can be minimized — audio can also be muted in Windows mixer. This will not affect streaming performance.
-
-Clients use [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) to join.
-
----
-
-## 🔧 Configuration
-
-### Video Codec (`Supermodel.ini`)
-
-You can select the video codec used for streaming by editing `Config/Supermodel.ini`:
-
-```ini
-Decoder = H265   ; Use H.265 (HEVC) — better quality at lower bitrate
-Decoder = H264   ; Use H.264 (AVC)  — wider compatibility (default)
-```
-
-| Codec | Key | Notes |
-|-------|-----|-------|
-| H.264 (AVC) | `H264` | Default. Broadest compatibility. |
-| H.265 (HEVC) | `H265` | Lower bitrate at equivalent quality. Requires NVENC-capable GPU on host. |
-
-> **Note:** The key name is `Decoder` in the config file, but it should have been `Codec`. This is a known typo.
-
-> Both host and client must support the selected codec.  
-> H.265 requires an NVIDIA RTX 20 series or later GPU on the host side.
-
-### H.264 vs H.265 Requirements
-
-| Role | H.264 (default) | H.265 (HEVC) |
-|------|-----------------|--------------|
-| **Host GPU** | GTX 600 series or later (Kepler, 2012+) | GTX 960 / 950 or later, GTX 10 series or later (Maxwell 2nd gen, 2015/2016+) |
-| **Client GPU/CPU** | Compatible with virtually any PC (even ~2011 hardware) | Intel 6th gen CPU or later, or GTX 960 / GTX 10 series or later |
-
-H.264's strength is that it works reliably on older, lower-spec hardware. With H.265, any standard PC released within the last ~10 years can enjoy higher quality streaming at lower bandwidth.
-
-> ⚠️ *Requirements above are based on AI-generated information and may not be fully accurate. Please verify against official NVIDIA/Intel documentation if needed.*
-
----
-
-## 🖥️ Client App
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — Client app (video reception & controller input)
-
----
-
-## 🔧 Related Repositories
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — Client app (video reception & controller input)
-- [Supermodel3-PonMi](https://github.com/BackPonBeauty/Supermodel3-PonMi) — Base PonMi edition emulator
-
----
-
-## ⚠️ Windows SmartScreen
-
-A SmartScreen warning may appear on first launch due to the absence of a code signing certificate.  
-Click **"More info" → "Run anyway"** to proceed.
-
----
-
-## 📜 License
-
-MIT License
-
-Copyright (c) 2026 BackPonBeauty
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Based on the original [Supermodel3](https://github.com/trzy/Supermodel)  
-License: GPL Ver.3  
-Copyright 2003-2026 The Supermodel Team
-
-## Included Libraries
-
-This software includes the following libraries:
-
-### [Firebase](https://firebase.google.com/)
-- License: https://firebase.google.com/terms
-- Copyright 2023 Google LLC.
-
-### [Newtonsoft.Json](https://www.newtonsoft.com/json)
-- License: MIT
-- Copyright (c) 2007 James Newton-King
-
-### [SharpDX](http://sharpdx.org/)
-- License: MIT
-- Copyright (c) 2010-2015 SharpDX - Alexandre Mutel
-
-### [System.Reactive](https://github.com/dotnet/reactive)
-- License: MIT 
-- Copyright (c) .NET Foundation and Contributors
-
-### [miniupnpc](https://github.com/miniupnp/miniupnp)
-- [License: BSD 3-Clause License](https://github.com/miniupnp/miniupnp/blob/master/LICENSE)
-- Copyright (c) 2005-2022, Thomas BERNARD. All rights reserved.
-
-### [ViGEm Bus Driver](https://vigem.org/) 
-- [License: MIT License](https://github.com/ViGEm/ViGEmBus/blob/master/LICENSE)
-- Copyright (c) 2016-2022 Nefarius Software Solutions e.U.
-
-### [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
-- [License: CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html)
-- Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
-
-### [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk)
-- [License: NVENC SDK License Agreement](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement) 
-- Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
-
-### [Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)
-- License: Microsoft Public License (MS-PL)
-- Copyright (c) 2015 Logan Stromberg
-
-### [LiteDB](https://www.litedb.org/)
-- [License: MIT License](https://github.com/mbdavid/LiteDB/blob/master/LICENSE) 
-- Copyright (c) 2015 Maurício David
-
-### [NAudio](https://github.com/naudio/NAudio)
-- [License: MIT License](https://github.com/naudio/NAudio/blob/master/LICENSE)
-- Copyright (c) 2020 Mark Heath
-
-### [Mono.Nat](https://github.com/mono/mono.nat)
-- [License: MIT License](https://github.com/mono/mono.nat/blob/master/LICENSE)
-- Copyright (c) Alan McGovern and Contributors
-
-### [FFmpeg](https://www.ffmpeg.org/)
-- [License: LGPL ver.2.1 or later](https://www.ffmpeg.org/legal.html)
-- Copyright (c) 2000-2026 the FFmpeg developers
-
-### [FirebaseDatabase.net](https://github.com/step-up-labs/firebase-database-dotnet)
-- [License: MIT License](https://github.com/step-up-labs/firebase-database-dotnet/blob/master/LICENSE)
-- Copyright (c) 2017 Step Up Labs, Inc.  
-
-### [FirebaseAuthentication.net](https://github.com/step-up-labs/firebase-authentication-dotnet)
-- [License: MIT License](https://github.com/step-up-labs/firebase-authentication-dotnet/blob/master/LICENSE)  
-- Copyright (c) 2017 Step Up Labs, Inc.
-
-### [SDL2](https://www.libsdl.org/)
-- [License: zlib License](https://www.libsdl.org/license.php)
-- Copyright (c) 1997-2026 Sam Lantinga
-
-### [SDL2_net](https://github.com/libsdl-org/SDL2_net)
-- [License: zlib License](https://github.com/libsdl-org/SDL2_net/blob/main/LICENSE.txt)
-- Copyright (c) 1997-2026 Sam Lantinga
-
-### [zlib](https://zlib.net/)  
-- [License: zlib License](https://zlib.net/zlib_license.html)
-- Copyright (c) 1995-2026 Jean-loup Gailly and Mark Adler
-
-### [Dear ImGui](https://github.com/ocornut/imgui)
-- [License: MIT License](https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
-- Copyright (c) 2014-2026 Omar Cornut
-
-### [TinyXML-2](https://github.com/leethomason/tinyxml2)
-- [License: zlib License](https://github.com/leethomason/tinyxml2/blob/master/LICENSE.txt)
-- Copyright (c) 2011-2026 Lee Thomason  
-
-### [Opus](https://www.opus-codec.org/)
-- [License: BSD 3-Clause License](https://github.com/xiph/opus/blob/master/COPYING)
-- Copyright (c) 2001-2026 Xiph.Org Foundation, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo
-
-### [Musashi M68K Emulator](https://github.com/kstenerud/Musashi)
-- [License: MIT License](https://github.com/kstenerud/Musashi/blob/master/LICENSE)
-- Copyright (c) 2011 Karl Stenerud
-
----
-
-## 💬 Community
-
-- [BackPonBeauty](https://github.com/BackPonBeauty) — GitHub
-- [patreon.com/PonMi](https://patreon.com/PonMi) — Patreon
-- [discord.gg/mNjPJHTTen](https://discord.gg/mNjPJHTTen) — Discord
-- [back_pon_beauty](https://twitch.tv/back_pon_beauty) — Twitch
-
----
----
-
-# 🎮 Supermodel3-PonMi-Streaming-ffmpeg v2.0.0 - Built-in WAN Streaming
-
-**追加ツール不要。起動して、スロットを共有して、プレイするだけ。**
-
----
-
-## 🆕 v2.0.0 の新機能
-
-- **ストリーミング機能をエミュレータに直接内蔵** — XinputReciever は不要になりました
-- **Firebase 自動マッチメイキング** — ホストを自動検出、手動でのIP入力は不要
-- **UPnP 自動ポート開放** — ほとんどの環境でルーター設定が不要
-- **Ping 表示** — ホスト一覧に各ホストへの遅延を表示
-- **NVENC H.264 / H.265 低遅延ストリーミング** — RTX 20 系以降で約 5.8ms のエンコード遅延
-- # FFMPEG低遅延ストリーミング — CPUエンコードにも対応
-- **最大4人 WAN リンクプレイ対応**（ローカルとリモートの混在可）
+## 🆕 新しくなったところ
+
+- **Spikeout Final Edition を最大8人でリンクプレイ**（2〜8リンク）。人が足りない台はボットが操作できます
+- **クライアントも同じ supermodel.exe** — StreamReceiver は不要。設定画面からロビーを開いてつなぎます
+- **新しいランチャー PonLuncher** — リンク数、スロットごとのモード（配信・ローカル・ボット）、コーデックなどを選んで START するだけ
+- **Discord 認証** — 決められた Discord サーバーのメンバーだけがホストを立てられ、つなげます
+- **部屋のパスワード** — 空白ならパブリック。パスワードのある部屋は、ロビーに鍵のアイコンが出ます
+- **Firebase のロビー** — ホストとスロットの空きが自動で一覧に出ます。IP の入力は不要
+- **Discord への空き状況の投稿** — ホストのスロットの空きを、Discord のチャンネルに自動で投稿・更新します
+- **UPnP で自動ポート開放** — ほとんどの環境でルーターの設定は不要
+- **NVENC（NVIDIA）は CUDA Toolkit 不要** — NVIDIA のドライバだけで動きます。NVIDIA 以外の GPU では FFmpeg（x264 / x265、CPU）で配信します
+- **H.264 / H.265**、音声は Opus
+- **荒らし対策** — 3分操作がないと切断、ホストのキック、1台の PC でクライアントは1つだけ、1つの Discord アカウントは1スロットだけ、古いバージョンはつなげない
 
 ---
 
 ## ✅ 動作確認済みタイトル
 
-- **Spikeout Final Edition**（spikeofe）— 4リンクプレイ確認済み
-- Virtua Fighter 3tb（シングルインスタンス）
+- **Spikeout Final Edition**（spikeofe）— 2〜8リンク、インターネット越しの8人接続を確認
 
 ---
 
 ## ⚙️ 仕様・制限事項
 
-- **XInput対応タイトルのみ** — マウス操作・ライトガン使用タイトルは非対応
-- **各インスタンスへの接続は最大3人まで** — プレーヤー1人＋観戦者最大2人、または観戦者3人
-- プレーヤーが切断した場合、次の観戦者が自動的にプレーヤーになります
-- **自動切断** — 1分間XInputの入力がない場合、自動的に切断されます
+- **1スロットに1人**（観戦はありません）。使用中のスロットには入れません
+- **切断すると、そのキャラはその場で立ち止まります**（ボットには戻りません）。だれかが同じスロットに入ると、その人の操作になります
+- **3分間操作がないと自動で切断**されます（最後の30秒は画面に警告が出ます）
+- **インターネット越しにつなぐには Discord のログインが必要**です。ログインなしでつなげるのは、同じ PC か家の中のネットワークからだけです
+- **クライアントにも ROM が必要**です（ロビーは Spikeout FE を選んだときに開きます）
+- コントローラーは、**起動する前につないで** Windows に認識させておいてください（起動後につないだものは認識されません）
+- クライアントが使うパッドは、1台目のパッドです
+- 8本同時に配信するとホストの負荷が大きくなります。8リンクでは解像度を下げる（960×540 や 640×360）のがおすすめです（参考：RTX 3060 のホストで 8リンク・640×360 を確認）
 
 ---
 
-## 📦 同梱内容
-
-本パッケージは **Spikeout Final Edition（spikeofe）4リンクプレイ用**に構成されています。
+## 📦 同梱内容（ホスト）
 
 ```
-Spikeofe_4links_Sample.zip
-├── 01/
+spikeout8/
+├── host/
+│   ├── PonLuncher.exe          ← ランチャー（ここから起動）
 │   ├── supermodel.exe
-│   └── Config/
-│       └── Supermodel.ini   ← P1スロット
-├── 02/                       ← P2スロット
-├── 03/                       ← P3スロット
-├── 04/                       ← P4スロット
-├── ROMs/                     ← ROMファイルをここに配置
-├── 4lnkstart.bat             ← 4インスタンス一括起動
-├── 4lnkstart with cmd.bat    ← 4インスタンス一括起動（コンソールあり）
-└── README.md
+│   ├── Config/
+│   │   ├── Supermodel_01.ini   ← スロット1（～ Supermodel_08.ini）
+│   │   └── …
+│   ├── NVRAM/
+│   ├── Roms/                   ← ROM ファイルをここに置く
+│   └── Assets/
+├── costume/                    ← 8人分の服の色
+└── waypoints.txt               ← ボットの道順
 ```
 
-### ストリーミング設定パターン
+クライアントは、同じ `supermodel.exe` と `Config/Supermodel.ini`、`Roms/` があれば動きます。
 
-**全員リモートの場合**（ホストは操作しない）
-
-| スロット | Streaming |
-|---------|-----------|
-| 01〜04 | `Streaming = 1` |
-
-> StreamReceiver はホスト側では不要です。
-
-**P1ローカル＋P2〜P4リモートの場合**（ホストがP1としてプレイ）
-
-| スロット | Streaming |
-|---------|-----------|
-| 01 | `Streaming = 0` |
-| 02〜04 | `Streaming = 1` |
-
-> ⚠️ 起動前に XInput コントローラーを接続し、Windows に認識させておいてください。
-
-> ⚠️ ROMファイルは含まれていません。各自で合法的に入手してください。
+> ⚠️ ROM ファイルは含まれていません。各自で合法的に入手してください。
 
 ---
 
 ## 💻 動作環境
 
-### ホスト側
+### ホスト
 
 | 項目 | 要件 |
 |------|------|
-| OS | Windows 10/11 64bit |
-| CPU | Intel Core i7以上またはAMD Ryzen 7以上 (高速なシングルスレッド性能が重要) |
-| GPU | NVIDIA GeForce GTX 900シリーズ以降、またはAMD Radeon RX 400シリーズ以降 |
-| Encoder | FFMPEG software encoding |
-| その他 | ViGEmBus |
-| ルーター | UPnP有効（または手動ポート開放） |
-| 回線 | アップロード 20Mbps 以上推奨 |
+| OS | Windows 10 / 11 64bit |
+| CPU | Intel Core i7 以上、または AMD Ryzen 7 以上（シングルスレッドの速さが大切） |
+| GPU | NVIDIA（NVENC）推奨。NVIDIA 以外は FFmpeg（CPU）で配信 |
+| Discord | 決められた Discord サーバーのメンバーであること |
+| ルーター | UPnP 有効（または手動でポート開放） |
+| 回線 | 上り 20Mbps 以上推奨（人数が多いほど必要） |
 
-- [ViGEmBus](https://github.com/nefarius/ViGEm.Bus/releases) — 仮想ゲームパッドドライバ
+### クライアント
 
-> テスト環境：Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / 10GbE / Windows 11  
-> 最低推奨：Core i5 第9世代以上
+| 項目 | 要件 |
+|------|------|
+| OS | Windows 10 / 11 64bit |
+| Discord | 決められた Discord サーバーのメンバーであること（インターネット越しのとき） |
+| その他 | ROM ファイル、XInput か DirectInput のコントローラー（キーボードでも可） |
 
----
-
-## 🔌 ポート番号
-
-| Slot | XInput | HS/HB | Video | Audio |
-|------|--------|-------|-------|-------|
-| P1 | 55000 | 55001 | 55002 | 55003 |
-| P2 | 55004 | 55005 | 55006 | 55007 |
-| P3 | 55008 | 55009 | 55010 | 55011 |
-| P4 | 55012 | 55013 | 55014 | 55015 |
+> テスト環境：Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / Windows 11（ホストは RTX 3060 の PC でも確認）
 
 ---
 
-## 🚀 セットアップ（ホスト）
+## 🔌 ポート番号（UDP）
 
-### 1. ViGEmBus をインストール
+スロット n のポートは `55000 + (n − 1) × 4` から 4 つです。
 
-[ViGEmBus Releases](https://github.com/nefarius/ViGEm.Bus/releases) から最新版をダウンロードしてインストール。
-
-### 2. Windowsファイアウォールで許可
-
-`supermodel.exe` をプライベート・パブリック両方のネットワークで通信を許可してください。
-
-### 3. Supermodel.ini を設定
-
-各スロットの `Config/Supermodel.ini` に以下を設定：
-
-```ini
-Streaming = 1
-LinkPlay = 1   ; スロット番号（1〜4）
-```
-
-#### LinkPlay の値
-
-| 値 | 説明 | 作成される仮想コントローラ数 |
-|----|------|--------------------------|
-| `0` | シングルタイトル用 — 1インスタンスでP1・P2をまとめてストリーミング | 2個（P1 + P2） |
-| `1` | リンクプレイ スロット1（P1）/ シングルタイトル：P1ローカル＋P2ストリーミング | 1個 |
-| `2` | リンクプレイ スロット2（P2） | 1個 |
-| `3` | リンクプレイ スロット3（P3） | 1個 |
-| `4` | リンクプレイ スロット4（P4） | 1個 |
-
-> 2人プレイのシングルタイトルをストリーミングする場合は `LinkPlay = 0` を使用してください。クライアント側に仮想コントローラーが2つ作成されます。
-
-> シングルタイトルでP1をホスト側でローカル操作する場合は `LinkPlay = 1`、`Streaming = 1` を設定してください。起動前にXInputコントローラーを接続しておいてください。
-
-### 4. ROMを配置
-
-ROMファイルをパッケージ直下の **`ROMs/`** フォルダに置いてください。各スロットのサンプル `Supermodel.ini` はすでにこのディレクトリを参照するよう設定されています。
-
-### 5. supermodel.exe を起動
-
-**`4lnkstart.bat`** を実行すると4インスタンスを一括起動できます。こちらの方法を推奨します。
-
-> `4lnkstart with cmd.bat` はデバッグ用にコンソールウィンドウが開きます。
+| スロット | 入力 | セッション | 映像 | 音声 |
+|------|-------|-------|-------|-------|
+| 1 | 55000 | 55001 | 55002 | 55003 |
+| 2 | 55004 | 55005 | 55006 | 55007 |
+| 3 | 55008 | 55009 | 55010 | 55011 |
+| 4 | 55012 | 55013 | 55014 | 55015 |
+| 5 | 55016 | 55017 | 55018 | 55019 |
+| 6 | 55020 | 55021 | 55022 | 55023 |
+| 7 | 55024 | 55025 | 55026 | 55027 |
+| 8 | 55028 | 55029 | 55030 | 55031 |
 
 ---
 
-> ストリーミング用インスタンスは最小化しても構いません。Windowsのボリュームミキサーで音声をミュートしても問題ありません。ストリーミングの品質には影響しません。
+## 🚀 ホストの立て方
 
-クライアントは [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) で接続してください。
+### 1. Windows ファイアウォールで許可
+
+`supermodel.exe` の通信を、プライベート・パブリックの両方で許可してください。
+
+### 2. ROM を置く
+
+`host/Roms/` に ROM ファイル（`spikeofe.zip` など）を置きます。
+
+### 3. PonLuncher を起動する
+
+1. **DISCORD**：LOGIN を押して、ブラウザで Discord にログインします。サーバーのメンバーなら「server member」と出ます
+2. **HOST**：
+   - HOST NAME：ロビーに出るホストの名前
+   - GAME：spikeofe
+   - LINKS：リンク数（2〜8）
+   - CODEC：H264 か H265
+   - ENCODER：AUTO（NVIDIA なら NVENC、それ以外は FFmpeg）／ NVENC ／ FFMPEG
+   - PASSWORD：部屋のパスワード。**空白ならパブリック**
+3. **SLOTS**：スロットごとにモードを選びます
+
+| モード | 内容 |
+|--------|------|
+| STREAM | インターネット越しの人が遊ぶスロット（配信する） |
+| LOCAL | ホストの PC のコントローラーで遊ぶスロット（PAD で XINPUT / DINPUT を選ぶ） |
+| BOT | ボットが操作するスロット |
+
+4. **START** で全スロットが起動し、ロビーに載ります。**STOP** で終わります
+5. 遊んでいる人は PLAYER に名前が出ます。**KICK** でそのスロットから外せます
+
+> 配信用の画面は最小化してもかまいません。配信の品質には影響しません。
+
+---
+
+## 🕹️ 遊び方（クライアント）
+
+1. `supermodel.exe` を起動して、設定画面で **Spikeout Final Edition** を選び、**LAUNCH**
+2. ロビーが開きます。上の **Discord** で LOGIN します
+3. ホストの一覧から、**緑のスロット（空き）** を押します
+   - 🔒 鍵のアイコンがあるホストは、パスワードの入力欄が出ます
+4. つながると、ゲームの画面が出ます
+
+| キー | 内容 |
+|------|------|
+| F11 | フルスクリーン |
+| F3 | 遅延などの表示 |
+| ↑ / ↓ | ビットレートを上げる・下げる |
+| ESC | フルスクリーン → ウィンドウ → ロビーに戻る |
+
+> 同じ PC や家の中のホストには、下の「Connect directly」で IP を入れてつなぐこともできます。
 
 ---
 
 ## 🔧 設定
 
-### 映像コーデックの選択（`Supermodel.ini`）
+### 映像のコーデック
 
-`Config/Supermodel.ini` を編集することで、ストリーミングに使用する映像コーデックを選択できます。
-
-```ini
-Decoder = H265   ; H.265 (HEVC) を使用 — 低ビットレートで高画質
-Decoder = H264   ; H.264 (AVC) を使用  — 互換性重視（デフォルト）
-```
+ランチャーの CODEC で選びます（ini では `Codec = H264` / `Codec = H265`）。
 
 | コーデック | 設定値 | 備考 |
 |-----------|--------|------|
-| H.264 (AVC) | `H264` | デフォルト。互換性が最も高い。 |
-| H.265 (HEVC) | `H265` | 同等画質でビットレートを抑えられる。ホスト側に NVENC 対応 GPU が必要。 |
+| H.264 (AVC) | `H264` | 既定。負荷が軽く、どの PC でも動きます |
+| H.265 (HEVC) | `H265` | 同じ画質でビットレートを抑えられます。クライアントの CPU の負荷は少し上がります |
 
-> **補足:** 設定ファイルのキー名は `Decoder` ですが、本来は `Codec` とすべきところでした。タイポです。
+> クライアントは CPU で映像を読み解くので、クライアントの GPU は問いません。
 
-> ホストとクライアントの両方が選択したコーデックに対応している必要があります。  
-> H.265 はホスト側に NVIDIA RTX 20 シリーズ以降の GPU が必要です。
+### エンコーダ
 
-### H.264 と H.265 の要件比較
-
-| 役割 | H.264（デフォルト） | H.265 (HEVC) |
-|------|-------------------|--------------|
-| **ホスト側 GPU** | GTX 600 シリーズ以降（Kepler世代、2012年〜） | GTX 960 / 950 以上、または GTX 10シリーズ以降（Maxwell第2世代、2015/2016年〜） |
-| **クライアント側 GPU/CPU** | ほぼすべてのPCで対応可能（2011年頃のPCでも可） | 第6世代 Intel CPU 以降、または GTX 960 / GTX 10シリーズ以降 |
-
-H.264 は古くてスペックが低いPCでもほぼ確実に動くのが強みです。H.265 は「ここ10年以内に発売された標準的なPC」であれば、より少ない通信帯域で高画質・低遅延なプレイが可能になります。
-
-> ⚠️ *上記の要件はAIによる情報をもとにしており、正確性を保証するものではありません。詳細はNVIDIA・Intelの公式ドキュメントをご確認ください。*
-
----
-
-## 🖥️ クライアントアプリ
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — クライアントアプリ（映像受信・コントローラ送信）
-
----
-
-## 🔧 関連リポジトリ
-
-- [StreamReceiver](https://github.com/BackPonBeauty/StreamReceiver) — クライアントアプリ（映像受信・コントローラ送信）
-- [Supermodel3-PonMi](https://github.com/BackPonBeauty/Supermodel3-PonMi) — ベースとなるPonMi editionエミュレータ
+| 設定値 | 内容 |
+|--------|------|
+| `AUTO` | NVIDIA の GPU があれば NVENC、なければ FFmpeg |
+| `NVENC` | NVIDIA の GPU で配信（低遅延。CUDA Toolkit は不要、ドライバだけで動作） |
+| `FFMPEG` | CPU で配信（x264 / x265）。どの GPU でも動きます |
 
 ---
 
 ## ⚠️ Windows SmartScreen について
 
-コード署名証明書が未取得のため、初回起動時に SmartScreen の警告が表示される場合があります。  
+コード署名証明書が未取得のため、初回起動時に SmartScreen の警告が表示される場合があります。
 「詳細情報」→「実行」で起動できます。
 
 ---
@@ -580,73 +215,89 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Based on the original [Supermodel3](https://github.com/trzy/Supermodel)  
-License: GPL Ver.3  
+Based on the original [Supermodel3](https://github.com/trzy/Supermodel)
+License: GPL Ver.3
 Copyright 2003-2026 The Supermodel Team
 
-## Included Libraries
+## 使用ライブラリ
 
-This software includes the following libraries:
+このソフトウェアは、次のライブラリを使っています（~~打ち消し線~~ は、今のバージョンでは使っていないもの）。
 
 ### [Firebase](https://firebase.google.com/)
+- Realtime Database と Authentication を REST で使用（SDK は使っていません）
 - License: https://firebase.google.com/terms
 - Copyright 2023 Google LLC.
 
-### [Newtonsoft.Json](https://www.newtonsoft.com/json)
-- License: MIT
-- Copyright (c) 2007 James Newton-King
+### ~~[Newtonsoft.Json](https://www.newtonsoft.com/json)~~
+- ~~License: MIT~~
+- ~~Copyright (c) 2007 James Newton-King~~
 
-### [SharpDX](http://sharpdx.org/)
-- License: MIT
-- Copyright (c) 2010-2015 SharpDX - Alexandre Mutel
+### ~~[SharpDX](http://sharpdx.org/)~~
+- ~~License: MIT~~
+- ~~Copyright (c) 2010-2015 SharpDX - Alexandre Mutel~~
 
-### [System.Reactive](https://github.com/dotnet/reactive)
-- License: MIT 
-- Copyright (c) .NET Foundation and Contributors
+### ~~[System.Reactive](https://github.com/dotnet/reactive)~~
+- ~~License: MIT~~
+- ~~Copyright (c) .NET Foundation and Contributors~~
 
 ### [miniupnpc](https://github.com/miniupnp/miniupnp)
 - [License: BSD 3-Clause License](https://github.com/miniupnp/miniupnp/blob/master/LICENSE)
 - Copyright (c) 2005-2022, Thomas BERNARD. All rights reserved.
 
-### [ViGEm Bus Driver](https://vigem.org/) 
-- [License: MIT License](https://github.com/ViGEm/ViGEmBus/blob/master/LICENSE)
-- Copyright (c) 2016-2022 Nefarius Software Solutions e.U.
+### ~~[ViGEm Bus Driver](https://vigem.org/)~~
+- ~~[License: MIT License](https://github.com/ViGEm/ViGEmBus/blob/master/LICENSE)~~
+- ~~Copyright (c) 2016-2022 Nefarius Software Solutions e.U.~~
 
 ### [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
+- ビルドのときに CUDA ドライバ API のヘッダー（`cuda.h`）だけを使用。実行には不要（CUDA ランタイムは使っていません）
 - [License: CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html)
 - Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
 
 ### [NVIDIA Video Codec SDK](https://developer.nvidia.com/nvidia-video-codec-sdk)
-- [License: NVENC SDK License Agreement](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement) 
+- [License: NVENC SDK License Agreement](https://developer.nvidia.com/nvidia-video-codec-sdk-license-agreement)
 - Copyright (c) 2020 NVIDIA Corporation. All rights reserved.
 
-### [Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)
-- License: Microsoft Public License (MS-PL)
-- Copyright (c) 2015 Logan Stromberg
+### ~~[Concentus & Concentus.Oggfile](https://github.com/lostindetails/Concentus)~~
+- ~~License: Microsoft Public License (MS-PL)~~
+- ~~Copyright (c) 2015 Logan Stromberg~~
 
-### [LiteDB](https://www.litedb.org/)
-- [License: MIT License](https://github.com/mbdavid/LiteDB/blob/master/LICENSE) 
-- Copyright (c) 2015 Maurício David
+### ~~[LiteDB](https://www.litedb.org/)~~
+- ~~[License: MIT License](https://github.com/mbdavid/LiteDB/blob/master/LICENSE)~~
+- ~~Copyright (c) 2015 Maurício David~~
 
-### [NAudio](https://github.com/naudio/NAudio)
-- [License: MIT License](https://github.com/naudio/NAudio/blob/master/LICENSE)
-- Copyright (c) 2020 Mark Heath
+### ~~[NAudio](https://github.com/naudio/NAudio)~~
+- ~~[License: MIT License](https://github.com/naudio/NAudio/blob/master/LICENSE)~~
+- ~~Copyright (c) 2020 Mark Heath~~
 
-### [Mono.Nat](https://github.com/mono/mono.nat)
-- [License: MIT License](https://github.com/mono/mono.nat/blob/master/LICENSE)
-- Copyright (c) Alan McGovern and Contributors
+### ~~[Mono.Nat](https://github.com/mono/mono.nat)~~
+- ~~[License: MIT License](https://github.com/mono/mono.nat/blob/master/LICENSE)~~
+- ~~Copyright (c) Alan McGovern and Contributors~~
 
 ### [FFmpeg](https://www.ffmpeg.org/)
-- [License: LGPL ver.2.1 or later](https://www.ffmpeg.org/legal.html)
+- このビルドは x264 / x265 を含めて作っているため GPL（`--enable-gpl`）
+- 版：`master` のコミット `a5e6c01`（2026-07-15、`8.0.git`）。作り方は [Docs/BUILD_FFMPEG.md](Docs/BUILD_FFMPEG.md)
+- [License: GPL ver.2 or later（このビルド）／ LGPL ver.2.1 or later（FFmpeg 本体）](https://www.ffmpeg.org/legal.html)
 - Copyright (c) 2000-2026 the FFmpeg developers
 
-### [FirebaseDatabase.net](https://github.com/step-up-labs/firebase-database-dotnet)
-- [License: MIT License](https://github.com/step-up-labs/firebase-database-dotnet/blob/master/LICENSE)
-- Copyright (c) 2017 Step Up Labs, Inc.  
+### [x264](https://www.videolan.org/developers/x264.html)（追加）
+- H.264 のソフトウェアエンコード（FFMPEG エンコーダ）
+- 版：0.165.r3222.b35605a（MSYS2 のパッケージ、静的ライブラリ）
+- [License: GPL ver.2 or later](https://code.videolan.org/videolan/x264/-/blob/master/COPYING)
+- Copyright (c) the x264 project
 
-### [FirebaseAuthentication.net](https://github.com/step-up-labs/firebase-authentication-dotnet)
-- [License: MIT License](https://github.com/step-up-labs/firebase-authentication-dotnet/blob/master/LICENSE)  
-- Copyright (c) 2017 Step Up Labs, Inc.
+### [x265](https://www.videolan.org/developers/x265.html)（追加）
+- H.265 のソフトウェアエンコード（FFMPEG エンコーダ）
+- 版：4.1（MSYS2 のパッケージ、静的ライブラリ）
+- [License: GPL ver.2 or later](https://bitbucket.org/multicoreware/x265_git/src/master/COPYING)
+- Copyright (c) MulticoreWare, Inc
+
+### ~~[FirebaseDatabase.net](https://github.com/step-up-labs/firebase-database-dotnet)~~
+- ~~[License: MIT License](https://github.com/step-up-labs/firebase-database-dotnet/blob/master/LICENSE)~~
+- ~~Copyright (c) 2017 Step Up Labs, Inc.~~
+
+### ~~[FirebaseAuthentication.net](https://github.com/step-up-labs/firebase-authentication-dotnet)~~
+- ~~[License: MIT License](https://github.com/step-up-labs/firebase-authentication-dotnet/blob/master/LICENSE)~~
+- ~~Copyright (c) 2017 Step Up Labs, Inc.~~
 
 ### [SDL2](https://www.libsdl.org/)
 - [License: zlib License](https://www.libsdl.org/license.php)
@@ -656,9 +307,14 @@ This software includes the following libraries:
 - [License: zlib License](https://github.com/libsdl-org/SDL2_net/blob/main/LICENSE.txt)
 - Copyright (c) 1997-2026 Sam Lantinga
 
-### [zlib](https://zlib.net/)  
+### [zlib](https://zlib.net/)
 - [License: zlib License](https://zlib.net/zlib_license.html)
 - Copyright (c) 1995-2026 Jean-loup Gailly and Mark Adler
+
+### [Minizip](https://github.com/madler/zlib/tree/master/contrib/minizip)（追加）
+- ROM の zip を読む
+- License: zlib License
+- Copyright (c) 1998-2010 Gilles Vollant
 
 ### [Dear ImGui](https://github.com/ocornut/imgui)
 - [License: MIT License](https://github.com/ocornut/imgui/blob/master/LICENSE.txt)
@@ -666,7 +322,19 @@ This software includes the following libraries:
 
 ### [TinyXML-2](https://github.com/leethomason/tinyxml2)
 - [License: zlib License](https://github.com/leethomason/tinyxml2/blob/master/LICENSE.txt)
-- Copyright (c) 2011-2026 Lee Thomason  
+- Copyright (c) 2011-2026 Lee Thomason
+
+### [GLEW](https://glew.sourceforge.net/)（追加）
+- [License: Modified BSD License / MIT License](https://github.com/nigels-com/glew/blob/master/LICENSE.txt)
+- Copyright (c) the GLEW authors (Milan Ikits, Marcelo Magallon, Nigel Stewart ほか)
+
+### [minimp3](https://github.com/lieff/minimp3)（追加）
+- [License: CC0 1.0](https://github.com/lieff/minimp3/blob/master/LICENSE)
+- lieff
+
+### [libiconv](https://www.gnu.org/software/libiconv/)（追加）
+- [License: LGPL ver.2.1 or later](https://www.gnu.org/software/libiconv/)
+- Copyright (c) Free Software Foundation, Inc.
 
 ### [Opus](https://www.opus-codec.org/)
 - [License: BSD 3-Clause License](https://github.com/xiph/opus/blob/master/COPYING)
@@ -675,6 +343,9 @@ This software includes the following libraries:
 ### [Musashi M68K Emulator](https://github.com/kstenerud/Musashi)
 - [License: MIT License](https://github.com/kstenerud/Musashi/blob/master/LICENSE)
 - Copyright (c) 2011 Karl Stenerud
+
+### 使用しているサービス（追加）
+- [Discord](https://discord.com/)：ログイン（OAuth2 / PKCE）、サーバーのメンバーの確認、Webhook での空き状況の投稿 — [Discord Developer Terms of Service](https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service)
 
 ---
 
