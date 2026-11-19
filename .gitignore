@@ -427,3 +427,5 @@ Src/Model3/EmbeddedCostume.h
 /Docs/spikeout_8link_fix_summary.txt
 /Docs/streaming_design.md
 /Docs/streaming_requirements*.md
+# 11/19 (owner): the bot requirements are not published
+/Docs/BOT_BEHAVIOR.md
