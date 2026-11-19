@@ -681,7 +681,32 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
   if (c->audioDev)
     SDL_PauseAudioDevice(c->audioDev, 0);
 
-  SDL_Joystick *joy = SDL_NumJoysticks() > 0 ? SDL_JoystickOpen(0) : nullptr;
+  // 11/19 (owner): the pad chosen in the lobby - by name first, else by number, else the first pad
+  const std::string padName = Lobby::PadName();
+  const int padIndex = Lobby::PadIndex();
+  auto choosePad = [&]() -> int
+  {
+    int n = SDL_NumJoysticks();
+    if (n <= 0)
+      return -1;
+    if (!padName.empty())
+    {
+      for (int i = 0; i < n; i++)
+      {
+        const char *nm = SDL_JoystickNameForIndex(i);
+        if (nm && padName == nm)
+          return i;
+      }
+      return 0;
+    }
+    return padIndex < n ? padIndex : 0;
+  };
+  auto openPad = [&]() -> SDL_Joystick *
+  {
+    int i = choosePad();
+    return i >= 0 ? SDL_JoystickOpen(i) : nullptr;
+  };
+  SDL_Joystick *joy = openPad();
 
   GLuint tex = 0;
   int texW = 0, texH = 0;
@@ -731,12 +756,22 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
             c->Stop("You left the session.");
         }
       }
-      else if (e.type == SDL_JOYDEVICEADDED && !joy)
-        joy = SDL_JoystickOpen(e.jdevice.which);
+      else if (e.type == SDL_JOYDEVICEADDED)
+      {
+        // none open, or the chosen pad came back while another one is used: open the chosen one again
+        const char *nm = SDL_JoystickNameForIndex(e.jdevice.which);
+        bool chosenBack = joy && !padName.empty() && nm && padName == nm && padName != (SDL_JoystickName(joy) ? SDL_JoystickName(joy) : "");
+        if (!joy || chosenBack)
+        {
+          if (joy)
+            SDL_JoystickClose(joy);
+          joy = openPad();
+        }
+      }
       else if (e.type == SDL_JOYDEVICEREMOVED && joy && e.jdevice.which == SDL_JoystickInstanceID(joy))
       {
         SDL_JoystickClose(joy);
-        joy = SDL_NumJoysticks() > 0 ? SDL_JoystickOpen(0) : nullptr;
+        joy = openPad();
       }
     }
 

@@ -42,6 +42,23 @@ x264 and x265 are the static libraries of the MSYS2 packages (`/mingw64/lib/libx
 
 ---
 
+## Source archives attached to each release
+
+The GPL / LGPL sources of the libraries inside supermodel.exe are attached to the GitHub release as files, next to the zip of the program.
+They are exactly the versions in the tables above, so they stay available even if the upstream sites or the old MSYS2 packages go away.
+
+| File | Contents |
+|------|----------|
+| `ffmpeg-a5e6c0175a7245fc1a9f4639da2810156128aa8b.tar.gz` | FFmpeg at commit `a5e6c01` (`git archive`, no local changes) |
+| `mingw-w64-x264-0.165.r3222.b35605a-2.src.tar.zst` | MSYS2 source package of x264: the x264 git repository (commit `b35605a`), PKGBUILD and patches |
+| `mingw-w64-x265-4.1-2.src.tar.zst` | MSYS2 source package of x265: `x265-4.1.tar.gz` and PKGBUILD |
+| `mingw-w64-libiconv-1.18-1.src.tar.zst` | MSYS2 source package of libiconv: `libiconv-1.18.tar.gz`, PKGBUILD and patches |
+
+The `.src.tar.zst` files are the ones MSYS2 publishes at https://repo.msys2.org/mingw/sources/ . Unpack them with `tar --zstd -xf <file>`.
+The source of supermodel.exe itself is this repository at the tag of the release.
+
+---
+
 ## Steps
 
 Run everything in the MSYS2 **MINGW64** shell.

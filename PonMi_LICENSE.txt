@@ -49,6 +49,10 @@ libiconv (https://www.gnu.org/software/libiconv/)
 License: LGPL ver.2.1 or later
 Copyright (c) Free Software Foundation, Inc.
 
+mingw-w64 winpthreads (https://www.mingw-w64.org/)
+License: MIT License (with a BSD notice of Lockless Inc.)
+Copyright (c) 2011 mingw-w64 project; (C) 2010 Lockless Inc.
+
 NVIDIA Video Codec SDK header nvEncodeAPI.h (https://developer.nvidia.com/nvidia-video-codec-sdk)
 License: MIT License (see the header)
 Copyright (c) 2010-2024 NVIDIA Corporation

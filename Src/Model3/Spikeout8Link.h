@@ -122,6 +122,11 @@ static const Spikeout8LinkPatch s_spikeout8LinkPatches[] =
   { 0x750BC, 0x3C420014, 0x3C420015 },  // node ptr table read
   { 0x75254, 0x3C420014, 0x3C420015 },  // node ptr table read
   { 0x755E0, 0x3C420014, 0x3C420015 },  // node ptr table read
+  // 11/17 (owner): the WARNING screen at power-on stays, but 1 second instead of 10. The game mode byte 0x104008
+  // (0 WARNING_INT, 1 WARNING_DSP, 2 ADV_INT ...) moves on when the countdown 0x10400C (SDA -0x3FF4, -1 a frame at
+  // 0x49350) runs out. WARNING_INT (0x49394) sets it to 0x23F = 575 frames when the "SEGA" mark at 0x1006A0 is not
+  // there yet and 0x100198 == 1, else 3 (WatchWrite 104008: WARNING_DSP frames 260-834). 575 -> 57 (1 s at 57.5 Hz).
+  { 0x493CC, 0x3800023F, 0x38000039 },  // WARNING screen 575 -> 57 frames
 };
 
 /*

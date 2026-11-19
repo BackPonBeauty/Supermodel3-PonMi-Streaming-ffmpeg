@@ -222,6 +222,7 @@ This software is distributed under the **GNU General Public License version 3 (G
 - Anyone may use, modify and redistribute it. When you distribute it (modified or not), provide the source under GPL v3 too.
 - The licenses of the libraries are listed below and in [PonMi_LICENSE.txt](PonMi_LICENSE.txt). Their full license texts are in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt) (include it when you distribute the exe).
 - No game ROM is included.
+- **PonLuncher.exe** (the launcher) is a separate program and is not covered by the GPL: it only writes the ini files and starts supermodel.exe with command-line options. It is freeware. You may use it and redistribute it free of charge, unmodified, together with this package. Its source is not published, and it comes with no warranty.
 
 ```
 Supermodel3-PonMi

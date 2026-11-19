@@ -1002,6 +1002,7 @@ extern SpikeoutMarker g_spkMarker;
 namespace New3D { extern float g_spkMainVp[9]; }
 using New3D::g_spkMainVp;
 
+static void SpkDrawTris(const std::vector<float> &vb, int vx, int vy, int vw, int vh);
 static void SpikeoutDrawMarker()
 {
   static uint32_t lastF = 0; static int still = 0;
@@ -1039,12 +1040,48 @@ static void SpikeoutDrawMarker()
     { 0.86f, 0.16f, 0.16f }, { 0.16f, 0.36f, 0.92f }, { 0.16f, 0.72f, 0.24f }, { 0.98f, 0.55f, 0.08f },
     { 1.00f, 0.43f, 0.71f }, { 0.60f, 0.28f, 0.84f }, { 0.12f, 0.12f, 0.12f }, { 0.96f, 0.96f, 0.96f },
   };
-  const float *col = pal[mk.colour & 7];
+  // 11/17 (user): the line and the ball red for every character (was the bot's own colour, pal[mk.colour & 7])
+  static const float s_red[3] = { 0.92f, 0.10f, 0.10f };
+  const float *col = s_red;
+  (void) pal;
 
   // vertices: x, y (NDC), r, g, b, a
   std::vector<float> vb;
   auto vert = [&](float x, float y, float cr, float cg, float cb, float ca) { vb.insert(vb.end(), { x, y, cr, cg, cb, ca }); };
   const float pxX = 2.0f / vw, pxY = 2.0f / vh;   // one pixel in NDC
+
+  // 11/17 (user): attack-range rings on the floor round the bot - 0.8 (closer: it backs off), 1.5 (it walks in to
+  // here and attacks), 2.5 (the attack range it keeps once in). Floor = own Rob y - 1.15 (players stand 1.15 above
+  // the floor); mk.me is Rob + 0.3 up. 48 segments each, as thin screen-space quads; segments reaching the near
+  // plane are dropped. Over the picture like the rest (no depth).
+  {
+    const float fy = mk.me[1] - 0.3f - 1.15f;
+    auto seg = [&](const float *pa, const float *pb, float hw, float al, const float *rc) {
+      float va[3], vb2[3]; toView(pa, va); toView(pb, vb2);
+      if (va[2] < NEARZ || vb2[2] < NEARZ) return;
+      float na[2], nb[2]; toNdc(va, na); toNdc(vb2, nb);
+      float dx = (nb[0] - na[0]) / pxX, dy = (nb[1] - na[1]) / pxY, dl = std::sqrt(dx * dx + dy * dy);
+      if (dl < 0.01f) return;
+      float ox = -dy / dl * hw * pxX, oy = dx / dl * hw * pxY;
+      vert(na[0] + ox, na[1] + oy, rc[0], rc[1], rc[2], al); vert(na[0] - ox, na[1] - oy, rc[0], rc[1], rc[2], al);
+      vert(nb[0] + ox, nb[1] + oy, rc[0], rc[1], rc[2], al);
+      vert(na[0] - ox, na[1] - oy, rc[0], rc[1], rc[2], al); vert(nb[0] - ox, nb[1] - oy, rc[0], rc[1], rc[2], al);
+      vert(nb[0] + ox, nb[1] + oy, rc[0], rc[1], rc[2], al);
+    };
+    // 11/17 (user, 2nd): 0.8 red, 1.5 yellow, 2.5 green; thin, all the same width, faint (10% opaque)
+    const float RING_HW = 0.5f, RING_AL = 0.50f;   // 11/18 (user): 50% (11/17: 30%, was 10%)
+    static const float cR[3] = { 1.0f, 0.10f, 0.10f }, cY[3] = { 1.0f, 0.90f, 0.10f }, cG[3] = { 0.15f, 0.95f, 0.20f };
+    const struct { float r, hw, al; const float *c; } rings[3] = { { 0.8f, RING_HW, RING_AL, cR }, { 1.5f, RING_HW, RING_AL, cY }, { 2.5f, RING_HW, RING_AL, cG } };
+    const int NSEG = 48;
+    for (const auto &rg : rings)
+      for (int i = 0; i < NSEG; i++)
+      {
+        float a0 = 6.2831853f * i / NSEG, a1 = 6.2831853f * (i + 1) / NSEG;
+        float pa[3] = { mk.me[0] + rg.r * std::cos(a0), fy, mk.me[2] + rg.r * std::sin(a0) };
+        float pb[3] = { mk.me[0] + rg.r * std::cos(a1), fy, mk.me[2] + rg.r * std::sin(a1) };
+        seg(pa, pb, rg.hw, rg.al, rg.c);
+      }
+  }
 
   // line: own head -> target head, clipped to the near plane
   float a[3], b[3];
@@ -1071,34 +1108,61 @@ static void SpikeoutDrawMarker()
   float tv[3]; toView(mk.tg, tv);
   if (tv[2] >= NEARZ)
   {
-    float c[2]; toNdc(tv, c);
-    const float WR = 0.125f;   // 11/15: 0.25 -> 0.125 (user: half)
-    float rx = WR / tv[2] * 2.0f / (R - L), ry = WR / tv[2] * 2.0f / (T - B);
-    float rpx = rx / pxX; if (rpx < 2.0f) { float s = 2.0f / rpx; rx *= s; ry *= s; }
-    const int N = 32;
-    const float oc = (mk.colour & 7) == 6 ? 0.85f : 0.0f;   // black ball: light outline
-    float orx = rx + 1.5f * pxX, ory = ry + 1.5f * pxY;
-    for (int i = 0; i < N; i++)
+    // 11/17 (user): a real sphere with light instead of the flat shaded disc. A UV sphere built in view space round
+    // the target point, each vertex projected with the same frustum, lit per vertex (ambient + diffuse + a white
+    // specular), back faces dropped. Still drawn over the finished picture (it does not hide behind walls).
+    float WR = 0.125f;   // 11/15: 0.25 -> 0.125 (user: half)
     {
-      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
-      vert(c[0], c[1], oc, oc, oc, 0.6f);
-      vert(c[0] + std::cos(a0) * orx, c[1] + std::sin(a0) * ory, oc, oc, oc, 0.6f);
-      vert(c[0] + std::cos(a1) * orx, c[1] + std::sin(a1) * ory, oc, oc, oc, 0.6f);
+      float rpx = WR / tv[2] * 2.0f / (R - L) / pxX;   // radius on screen in pixels
+      if (rpx < 2.0f) WR *= 2.0f / rpx;                 // at least 2 px
     }
-    float hx = c[0] - rx * 0.35f, hy = c[1] + ry * 0.35f;   // highlight point
-    float hc[3] = { col[0] + (1.0f - col[0]) * 0.55f, col[1] + (1.0f - col[1]) * 0.55f, col[2] + (1.0f - col[2]) * 0.55f };
-    float ec[3] = { col[0] * 0.45f, col[1] * 0.45f, col[2] * 0.45f };
-    if ((mk.colour & 7) == 6) { ec[0] = ec[1] = ec[2] = 0.02f; hc[0] = hc[1] = hc[2] = 0.45f; }
-    for (int i = 0; i < N; i++)
-    {
-      float a0 = 6.2831853f * i / N, a1 = 6.2831853f * (i + 1) / N;
-      vert(hx, hy, hc[0], hc[1], hc[2], 1.0f);
-      vert(c[0] + std::cos(a0) * rx, c[1] + std::sin(a0) * ry, ec[0], ec[1], ec[2], 1.0f);
-      vert(c[0] + std::cos(a1) * rx, c[1] + std::sin(a1) * ry, ec[0], ec[1], ec[2], 1.0f);
-    }
+    const int SLAT = 12, SLON = 20;
+    const bool black = false;   // 11/17: always red now
+    const float base[3] = { black ? 0.10f : col[0], black ? 0.10f : col[1], black ? 0.10f : col[2] };
+    float ld[3] = { -0.45f, 0.70f, -0.55f };            // toward the light: up-left, a little toward us
+    { float l = std::sqrt(ld[0] * ld[0] + ld[1] * ld[1] + ld[2] * ld[2]); for (float &x : ld) x /= l; }
+    auto shade = [&](const float *n, const float *p, float *o) {
+      float diff = n[0] * ld[0] + n[1] * ld[1] + n[2] * ld[2]; if (diff < 0) diff = 0;
+      float vl = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]); if (vl < 1e-6f) vl = 1e-6f;
+      float v[3] = { -p[0] / vl, -p[1] / vl, -p[2] / vl };                 // toward the eye
+      float h[3] = { ld[0] + v[0], ld[1] + v[1], ld[2] + v[2] };
+      float hl = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]); if (hl < 1e-6f) hl = 1e-6f;
+      float sp = (n[0] * h[0] + n[1] * h[1] + n[2] * h[2]) / hl; sp = sp > 0 ? std::pow(sp, 24.0f) * (black ? 0.55f : 0.65f) : 0.0f;
+      for (int k = 0; k < 3; k++) { float c2 = base[k] * (0.30f + 0.75f * diff) + sp; o[k] = c2 > 1.0f ? 1.0f : c2; }
+    };
+    auto spherePt = [&](int i, int j, float *p, float *n) {
+      float th = 3.14159265f * i / SLAT, ph = 6.2831853f * j / SLON;
+      n[0] = std::sin(th) * std::cos(ph); n[1] = std::cos(th); n[2] = std::sin(th) * std::sin(ph);
+      for (int k = 0; k < 3; k++) p[k] = tv[k] + n[k] * WR;
+    };
+    for (int i = 0; i < SLAT; i++)
+      for (int j = 0; j < SLON; j++)
+      {
+        float P[4][3], Nn[4][3];
+        spherePt(i, j, P[0], Nn[0]); spherePt(i + 1, j, P[1], Nn[1]); spherePt(i + 1, j + 1, P[2], Nn[2]); spherePt(i, j + 1, P[3], Nn[3]);
+        const int tri[2][3] = { { 0, 1, 2 }, { 0, 2, 3 } };
+        for (const auto &t : tri)
+        {
+          float cn[3] = { 0, 0, 0 }, cp[3] = { 0, 0, 0 };
+          for (int q : t) for (int k = 0; k < 3; k++) { cn[k] += Nn[q][k]; cp[k] += P[q][k]; }
+          if (cn[0] * -cp[0] + cn[1] * -cp[1] + cn[2] * -cp[2] <= 0.0f) continue;   // facing away
+          if (P[t[0]][2] < NEARZ || P[t[1]][2] < NEARZ || P[t[2]][2] < NEARZ) continue;
+          for (int q : t)
+          {
+            float nd[2], cc[3]; toNdc(P[q], nd); shade(Nn[q], P[q], cc);
+            vert(nd[0], nd[1], cc[0], cc[1], cc[2], 1.0f);
+          }
+        }
+      }
   }
   if (vb.empty()) return;
+  SpkDrawTris(vb, vx, vy, vw, vh);
+}
 
+// 11/17: the GL part of the overlay (was the end of SpikeoutDrawMarker), shared with the wall view: triangles of
+// (x, y NDC, r, g, b, a) in the given viewport, GL state put back as found.
+static void SpkDrawTris(const std::vector<float> &vb, int vx, int vy, int vw, int vh)
+{
   static GLuint prog = 0, vao = 0, vbo = 0; static bool failed = false;
   if (failed) return;
   if (!prog)
@@ -1144,12 +1208,81 @@ static void SpikeoutDrawMarker()
   if (!oldBlend) glDisable(GL_BLEND);
 }
 
+/*
+ * 11/17 AIWallView (Model3.cpp SpikeoutWallViewGet): the walls round a bot as lines over the picture - each wall's
+ * top edge and bottom edge in 3D with the game camera and New3D's main frustum (like the target marker). Can't pass:
+ * thick, orange-red. Can be got over (a step, a jump, or player-passable): thin, cyan. Segments are clipped at the
+ * near plane. Not drawn when the data is stale (the AI did not run for a few frames).
+ */
+void SpikeoutWallViewGet(std::vector<float> &out, float *cam6, uint32_t *f);
+static void SpikeoutDrawWalls()
+{
+  static std::vector<float> walls; float cam6[6]; uint32_t wf = 0;
+  static uint32_t lastF = 0; static int still = 0;
+  SpikeoutWallViewGet(walls, cam6, &wf);
+  if (wf == lastF) still++; else { still = 0; lastF = wf; }
+  if (walls.empty() || still > 3 || g_spkMainVp[8] == 0.0f) return;
+  const float L = g_spkMainVp[0], R = g_spkMainVp[1], B = g_spkMainVp[2], T = g_spkMainVp[3];
+  const int vx = (int) g_spkMainVp[4], vy = (int) g_spkMainVp[5], vw = (int) g_spkMainVp[6], vh = (int) g_spkMainVp[7];
+  if (vw <= 0 || vh <= 0 || R == L || T == B) return;
+  float f[3] = { cam6[3] - cam6[0], cam6[4] - cam6[1], cam6[5] - cam6[2] };
+  float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  if (fl < 1e-4f) return;
+  for (float &c : f) c /= fl;
+  float r[3] = { -f[2], 0.0f, f[0] };
+  float rl = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+  if (rl < 1e-4f) return;
+  r[0] /= rl; r[2] /= rl;
+  float u[3] = { r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0] };
+  if (u[1] < 0) { u[0] = -u[0]; u[1] = -u[1]; u[2] = -u[2]; }
+  auto toView = [&](const float *p, float *v) {
+    float d[3] = { p[0] - cam6[0], p[1] - cam6[1], p[2] - cam6[2] };
+    v[0] = d[0] * r[0] + d[1] * r[1] + d[2] * r[2];
+    v[1] = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+    v[2] = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+  };
+  auto toNdc = [&](const float *v, float *n) {
+    n[0] = (2.0f * (v[0] / v[2]) - (R + L)) / (R - L);
+    n[1] = (2.0f * (v[1] / v[2]) - (T + B)) / (T - B);
+  };
+  const float NEARZ = 0.2f, pxX = 2.0f / vw, pxY = 2.0f / vh;
+  std::vector<float> vb;
+  auto line = [&](const float *pa, const float *pb, float hw, const float *col, float al) {
+    float a[3], b[3]; toView(pa, a); toView(pb, b);
+    if (a[2] < NEARZ && b[2] < NEARZ) return;
+    if (a[2] < NEARZ) { float t = (NEARZ - a[2]) / (b[2] - a[2]); for (int k = 0; k < 3; k++) a[k] += (b[k] - a[k]) * t; }
+    if (b[2] < NEARZ) { float t = (NEARZ - b[2]) / (a[2] - b[2]); for (int k = 0; k < 3; k++) b[k] += (a[k] - b[k]) * t; }
+    float na[2], nb[2]; toNdc(a, na); toNdc(b, nb);
+    float dx = (nb[0] - na[0]) / pxX, dy = (nb[1] - na[1]) / pxY, dl = std::sqrt(dx * dx + dy * dy);
+    if (dl < 0.01f || dl > 20000.0f) return;
+    float ox = -dy / dl * hw * pxX, oy = dx / dl * hw * pxY;
+    const float q[6][2] = { { na[0] + ox, na[1] + oy }, { na[0] - ox, na[1] - oy }, { nb[0] + ox, nb[1] + oy },
+                            { na[0] - ox, na[1] - oy }, { nb[0] - ox, nb[1] - oy }, { nb[0] + ox, nb[1] + oy } };
+    for (const auto &p : q) vb.insert(vb.end(), { p[0], p[1], col[0], col[1], col[2], al });
+  };
+  static const float cBlock[3] = { 1.00f, 0.35f, 0.15f }, cPass[3] = { 0.30f, 0.90f, 1.00f };
+  for (size_t i = 0; i + 9 <= walls.size(); i += 9)
+  {
+    const float *w = &walls[i];
+    const bool pass = w[8] > 0.5f;
+    if (pass) continue;   // 11/17 (user): walls that can be got over are not shown
+    const float *col = pass ? cPass : cBlock;
+    const float hw = pass ? 0.7f : 2.0f, al = pass ? 0.75f : 0.9f;
+    const float b0[3] = { w[0], w[1], w[2] }, b1[3] = { w[3], w[4], w[5] };
+    const float t0[3] = { w[0], w[6], w[2] }, t1[3] = { w[3], w[7], w[5] };
+    line(t0, t1, hw, col, al);                 // top edge
+    line(b0, b1, hw * 0.6f, col, al * 0.7f);   // bottom edge (on the floor)
+  }
+  if (!vb.empty()) SpkDrawTris(vb, vx, vy, vw, vh);
+}
+
 void EndFrameVideo()
 {
   // Show crosshairs for light gun games
   if (videoInputs)
     s_crosshair->Update(currentInputs, videoInputs, xOffset, yOffset, xRes, yRes);
 
+  SpikeoutDrawWalls();    // 11/17 AIWallView (does nothing unless a bot filled the wall list lately)
   SpikeoutDrawMarker();   // 11/15 AITargetMarker (does nothing unless a bot filled g_spkMarker this frame)
 
   // Debug: save the frame to shot_<frame>.bmp at the video frames listed in ScreenshotFrames
@@ -3022,6 +3155,43 @@ static ParsedCommandLine ParseCommandLine(int argc, char **argv)
  *
  * Program entry point.
  */
+// 11/17 (owner): on closing, write where the window is to the ini (WindowXPosition / WindowYPosition), so the next
+// start opens it in the same place. The position is SDL's: the client area's top-left in Windows desktop (screen)
+// coordinates - the same thing SDL_SetWindowPosition takes at start-up. Only for a normal window (not full screen, not
+// minimised). The two lines are replaced in place (other lines left as they are); missing lines are not added.
+static void SaveWindowPosToINI()
+{
+  if (s_window == nullptr || s_configFilePath.empty()) return;
+  const Uint32 wf = SDL_GetWindowFlags(s_window);
+  if (wf & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MINIMIZED)) return;
+  int x = 0, y = 0;
+  SDL_GetWindowPosition(s_window, &x, &y);
+  if (x <= -30000 || y <= -30000) return;   // Windows' "minimised" spot
+  std::ifstream in(s_configFilePath);
+  if (!in.is_open()) return;
+  std::stringstream out; std::string line; bool hx = false, hy = false;
+  auto isKey = [](const std::string &l, const char *key) {
+    size_t p = l.find_first_not_of(" \t");
+    if (p == std::string::npos) return false;
+    size_t n = strlen(key);
+    if (l.compare(p, n, key) != 0) return false;
+    size_t q = l.find_first_not_of(" \t", p + n);
+    return q != std::string::npos && l[q] == '=';
+  };
+  while (std::getline(in, line))
+  {
+    if (isKey(line, "WindowXPosition")) { out << "WindowXPosition = " << x << '\n'; hx = true; }
+    else if (isKey(line, "WindowYPosition")) { out << "WindowYPosition = " << y << '\n'; hy = true; }
+    else out << line << '\n';
+  }
+  in.close();
+  if (!hx && !hy) return;
+  std::ofstream of(s_configFilePath, std::ios::trunc);
+  if (!of.is_open()) return;
+  of << out.str();
+  InfoLog("Window position saved: WindowXPosition = %d, WindowYPosition = %d", x, y);
+}
+
 int main(int argc, char **argv)
 { /*
  #ifdef _WIN32
@@ -3504,6 +3674,7 @@ Exit:
   delete Inputs;
   delete Outputs;
   delete s_crosshair;
+  SaveWindowPosToINI();   // 11/17: before the window is gone
   DestroyGLScreen();
   SDL_Quit();
 

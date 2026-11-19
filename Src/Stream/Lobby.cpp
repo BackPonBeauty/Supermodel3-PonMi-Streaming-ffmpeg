@@ -12,6 +12,7 @@
 #include "Remote/FirebaseMatchingCpp.h"
 #include <shellapi.h>
 #include "Pkgs/imgui/imgui.h"
+#include "OSD/SDL/SDLIncludes.h"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -31,6 +32,9 @@ namespace Lobby
   static char s_hostBuf[128] = "127.0.0.1";
   static char s_name[StreamProto::kMaxNameLength + 1] = "guest";
   static int  s_slot = 1;
+  // 11/19 (owner): the pad to send (see Lobby.h PadIndex / PadName)
+  static int  s_padIndex = 0;
+  static std::string s_padName;
 
   static const char *kSettingsFile = "streamclient.ini";
 
@@ -160,6 +164,8 @@ namespace Lobby
       if (key == "StreamLastHost")       snprintf(s_hostBuf, sizeof(s_hostBuf), "%s", val.c_str());
       else if (key == "StreamGuestName") snprintf(s_name, sizeof(s_name), "%s", val.c_str());
       else if (key == "StreamLastSlot")  { int v = atoi(val.c_str()); if (v >= 1 && v <= 8) s_slot = v; }
+      else if (key == "StreamPad")       { int v = atoi(val.c_str()); if (v >= 1 && v <= 16) s_padIndex = v - 1; }
+      else if (key == "StreamPadName")   s_padName = val;
     }
   }
 
@@ -172,6 +178,74 @@ namespace Lobby
     ofs << "StreamLastHost = " << s_hostBuf << "\n";
     ofs << "StreamLastSlot = " << s_slot << "\n";
     ofs << "StreamGuestName = " << s_name << "\n";
+    ofs << "StreamPad = " << (s_padIndex + 1) << "\n";
+    ofs << "StreamPadName = " << s_padName << "\n";
+  }
+
+  int PadIndex()
+  {
+    Load();
+    return s_padIndex;
+  }
+
+  std::string PadName()
+  {
+    Load();
+    return s_padName;
+  }
+
+  // 11/19 (owner): the "Pad" row - the connected pads (SDL joysticks); the choice is saved at once
+  static void DrawPadRow(float scale)
+  {
+    int n = SDL_NumJoysticks();
+    if (n < 0)
+      n = 0;
+    std::vector<std::string> names;
+    for (int i = 0; i < n; i++)
+    {
+      const char *nm = SDL_JoystickNameForIndex(i);
+      names.push_back(nm ? nm : "");
+    }
+    // which one is chosen now: the saved name first, else the saved number
+    int cur = -1;
+    if (!s_padName.empty())
+      for (int i = 0; i < n && cur < 0; i++)
+        if (names[i] == s_padName)
+          cur = i;
+    if (cur < 0 && s_padName.empty() && s_padIndex < n)
+      cur = s_padIndex;
+    std::string preview;
+    if (cur >= 0)
+      preview = std::to_string(cur + 1) + ": " + names[cur];
+    else if (n == 0)
+      preview = "No pad connected";
+    else if (!s_padName.empty())
+      preview = s_padName + " (not connected - pad 1 is used)";
+    else
+      preview = "Pad " + std::to_string(s_padIndex + 1) + " (not connected - pad 1 is used)";
+
+    ImGui::Text("Pad");
+    ImGui::SameLine(140.0f * scale);
+    ImGui::SetNextItemWidth(420.0f * scale);
+    if (ImGui::BeginCombo("##pad", preview.c_str()))
+    {
+      for (int i = 0; i < n; i++)
+      {
+        std::string label = std::to_string(i + 1) + ": " + names[i];
+        ImGui::PushID(i);
+        if (ImGui::Selectable(label.c_str(), i == cur))
+        {
+          s_padIndex = i;
+          s_padName = names[i];
+          Save();
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("sent to the host while connected");
+    ImGui::Spacing();
   }
 
   void Open(const std::string &message)
@@ -301,6 +375,8 @@ namespace Lobby
       }
       ImGui::Spacing();
     }
+
+    DrawPadRow(scale);
 
     // --- Host list (P6, LB-01..03): click a free slot to connect ---
     ImGui::Text("Hosts");

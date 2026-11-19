@@ -45,6 +45,11 @@ namespace Lobby
 
   // SV-18: open the password box for this host / slot (the server asked for a password, or it was wrong)
   void AskPassword(const StreamConnectRequest &req, bool wrong);
+
+  // 11/19 (owner): the pad the client sends (chosen in the lobby, kept in streamclient.ini as StreamPad /
+  // StreamPadName). The client opens the pad with this name first, else this SDL index (0-based), else the first.
+  int PadIndex();
+  std::string PadName();
 }
 
 #endif // INCLUDED_STREAM_LOBBY_H
