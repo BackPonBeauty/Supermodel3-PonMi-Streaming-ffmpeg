@@ -1171,6 +1171,22 @@ static const Spikeout8LinkPatch s_spikeout8PlayersPatches[] =
   { 0x03A50, 0x00000000, 0x614A0170 },  // cave: area score bonus: ori r10, r10, 0x170
   { 0x03A54, 0x00000000, 0x7D45522E },  // cave: area score bonus: lhzx r10, r5, r10
   { 0x03A58, 0x00000000, 0x48026824 },  // cave: area score bonus: b 0x2A27C
+  // 11/20 (owner: bonus stage time-up scores for 05-08): the three bonus-stage results (0x1CF34 -> 0x2A418,
+  // 0x1D020 -> 0x2A2B4, 0x1D08C -> 0x2A38C) and the other players' list (0x1D1A8) read each player's area KOs from the
+  // 4-player table SDA -0x3F28 (0x1040D8), which players 5-8 never fill (cave 0x37B4: node < 4 only), so they read
+  // 0x1040E0+ instead. Read the 8-player area KOs 0x160170 (r5 / r3 = slot * 2 already): addis + lhz 0x170.
+  { 0x2A2F4, 0x394DC0D8, 0x3D450016 },  // bonus rank (0x2A2B4): addis r10, r5, 0x16
+  { 0x2A2F8, 0x7D45522E, 0xA14A0170 },  // bonus rank (0x2A2B4): lhz r10, 0x170(r10)
+  { 0x2A3D4, 0x394DC0D8, 0x3D450016 },  // bonus 50000 (0x2A38C): addis r10, r5, 0x16
+  { 0x2A3D8, 0x7D45522E, 0xA14A0170 },  // bonus 50000 (0x2A38C): lhz r10, 0x170(r10)
+  { 0x2A450, 0x394DC0D8, 0x3D450016 },  // KO count bonus 50000 (0x2A418): addis r10, r5, 0x16
+  { 0x2A454, 0x7D45522E, 0xA14A0170 },  // KO count bonus 50000 (0x2A418): lhz r10, 0x170(r10)
+  { 0x1D2B0, 0x388DC0D8, 0x3C830016 },  // results, other players' KOs (0x1D1A8): addis r4, r3, 0x16
+  { 0x1D2B4, 0x7D23222E, 0xA1240170 },  // results, other players' KOs (0x1D1A8): lhz r9, 0x170(r4)
+  // 11/20 (owner): the same for our own KO count shown at 0x1C790 (index = my Rob +4, stb 0x33(r12)); 0x1BD14 is another place.
+  { 0x1C828, 0x388DC0D8, 0x5463083C },  // own KOs (0x1C790): slwi r3, r3, 1
+  { 0x1C82C, 0x5463083C, 0x3C830016 },  // own KOs (0x1C790): addis r4, r3, 0x16
+  { 0x1C830, 0x7C63222E, 0xA0640170 },  // own KOs (0x1C790): lhz r3, 0x170(r4)
 
   // --- HUD ally HP gauge: display 7 allies in 2 columns (4 in right column, 3 in left column) ---
   { 0x1AA84, 0x3874FFFE, 0x3B20002B },  // ally HUD: initial X = 0x2B (right column)
