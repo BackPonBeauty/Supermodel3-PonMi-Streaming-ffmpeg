@@ -28,6 +28,7 @@
 #include <unordered_map>
 #include "R3DFloat.h"
 #include "Util/BitCast.h"
+#include "Stream/Satellite.h"
 
 #define MAX_RAM_VERTS 300000
 #define MAX_ROM_VERTS 1500000
@@ -511,6 +512,22 @@ void CNew3D::RenderFrame(void)
 	}
 
 	RenderViewport(0x800000);						// build model structure
+	if (g_satView.on && g_satView.vpLog)		// 11/20 satellite: which viewport is which (satvp.txt)
+	{
+		static FILE* f = fopen("satvp.txt", "w");
+		static unsigned frame = 0;
+		if (f && (++frame % 300) == 0)
+		{
+			fprintf(f, "=== frame %u inGame=%d\n", frame, (int)g_satView.inGame);
+			for (const auto& n : m_nodes)
+			{
+				const Viewport& v = n.viewport;
+				fprintf(f, "  vp#%u pri%d sel%d  x%.0f y%.0f w%.0f h%.0f  models=%u  L%.3f R%.3f B%.3f T%.3f\n", (unsigned)v.number, v.priority, v.select,
+					v.vpX, v.vpY, v.vpWidth, v.vpHeight, (unsigned)n.models.size(), v.angle_left, v.angle_right, v.angle_bottom, v.angle_top);
+			}
+			fflush(f);
+		}
+	}
 	
 	m_vbo.Bind(true);
 	m_vbo.BufferSubData(MAX_ROM_VERTS*sizeof(FVertex), m_polyBufferRam.size()*sizeof(FVertex), m_polyBufferRam.data());	// upload all the dynamic data to GPU in one go
@@ -1260,6 +1277,27 @@ void CNew3D::RenderViewport(UINT32 addr)
 
 		// Set up coordinate system and base matrix
 		InitMatrixStack(matrixBase, m_modelMat);
+
+		// 11/20 satellite clone (Stream/Satellite.h): in a game, no priority-3 viewports (Spikeout draws its 3D HUD
+		// there - the minimap, the time arc) and our own camera on the 3D world (priority 0): the correction
+		// "our view x the game's view^-1" goes between the coordinate system matrix and matrix #0.
+		if (g_satView.on && g_satView.inGame)
+		{
+			if (g_satView.hideUI && vp->priority == 3)
+				vpDisabled = true;
+			if (g_satView.cam && g_satView.camValid && vp->priority == 0)
+			{
+				m_modelMat.LoadIdentity();
+				GLfloat m[16];
+				m[CMINDEX(0, 0)] = 0.0;	m[CMINDEX(0, 1)] = 1.0;	m[CMINDEX(0, 2)] = 0.0;	m[CMINDEX(0, 3)] = 0.0;
+				m[CMINDEX(1, 0)] = 0.0;	m[CMINDEX(1, 1)] = 0.0;	m[CMINDEX(1, 2)] = -1.0; m[CMINDEX(1, 3)] = 0.0;
+				m[CMINDEX(2, 0)] = -1.0; m[CMINDEX(2, 1)] = 0.0;	m[CMINDEX(2, 2)] = 0.0;	m[CMINDEX(2, 3)] = 0.0;
+				m[CMINDEX(3, 0)] = 0.0;	m[CMINDEX(3, 1)] = 0.0;	m[CMINDEX(3, 2)] = 0.0;	m[CMINDEX(3, 3)] = 1.0;
+				m_modelMat.LoadMatrix(m);
+				m_modelMat.MultMatrix(g_satView.camFix);
+				MultMatrix(0, m_modelMat);
+			}
+		}
 
 		// Descend down the node link. Need to start with a culling node because that defines our culling radius.
 		if (!vpDisabled) {

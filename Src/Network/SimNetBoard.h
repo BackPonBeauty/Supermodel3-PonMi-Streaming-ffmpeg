@@ -27,6 +27,7 @@
 #include "TCPSend.h"
 #include "TCPReceive.h"
 #include "INetBoard.h"
+#include "Stream/Satellite.h"
 
 enum class State
 {
@@ -112,6 +113,22 @@ private:
 
 	inline bool IsGame(const char* gameName);
 	void ConnectProc(void);
+
+	// 11/20 satellite clone (Stream/Satellite.h): no sockets of our own, the relay's copy of 08 -> 01 feeds us
+	bool m_clone = false;
+	int m_cloneFixed = 0;		// ini SatelliteNode: 1..8 = always follow that node, 0 = the games in the link
+	int m_cloneInterval = 600;	// frames before moving on to the next node of the same game
+	int m_cloneTimer = 0;
+	uint32_t m_cloneSig = 0;	// the link of all nodes last frame (state / join flags / game mask)
+	int m_cloneStable = 0;		// frames it has not changed, without a join going on
+	bool m_spikeofe = false;
+	SatLinkEvent m_cloneNext;
+	bool m_cloneHaveNext = false;
+	bool CloneTesting(uint8_t& numMachines, uint8_t& machineIndex);
+	bool CloneWait(SatLinkEvent& e);
+	bool CloneReady(void);
+	void CloneChoose(const std::vector<std::vector<char>>& segs, const std::vector<std::vector<char>>* next, int n);
+	void PutInputRecord(void);
 };
 
 #endif

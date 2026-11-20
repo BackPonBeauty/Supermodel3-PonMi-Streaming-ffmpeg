@@ -24,6 +24,7 @@
 #include "Supermodel.h"
 #include "SimNetBoard.h"
 #include <OSD/Thread.h>
+#include "Stream/Satellite.h"
 
  // these make 16-bit read/writes much neater
 #define RAM16 *(uint16_t*)&RAM
@@ -43,6 +44,8 @@ CSimNetBoard::CSimNetBoard(const Util::Config::Node& config) : m_config(config)
 CSimNetBoard::~CSimNetBoard(void)
 {
 	m_quit = true;
+	if (m_clone)
+		SatelliteTapStop();
 
 	if (m_connectThread.joinable())
 		m_connectThread.join();
@@ -86,6 +89,36 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 	port_out = m_config["PortOut"].ValueAs<unsigned>();
 	addr_out = m_config["AddressOut"].ValueAs<std::string>();
 
+	// 11/20 satellite clone (Stream/Satellite.h): spikeofe only
+	m_spikeofe = IsGame("spikeofe");
+	m_clone = m_spikeofe && m_config["SatelliteClone"].ValueAsDefault<bool>(false);
+	if (m_clone)
+	{
+		m_cloneFixed = m_config["SatelliteNode"].ValueAsDefault<int>(0);
+		if (m_cloneFixed < 0 || m_cloneFixed > 8)
+			m_cloneFixed = 0;
+		int sec = m_config["SatelliteInterval"].ValueAsDefault<int>(10);
+		m_cloneInterval = sec <= 0 ? 0 : (sec < 2 ? 2 : sec) * 60;	// 0 = stay with one node
+		g_satClone.on = true;
+		g_satView.on = true;
+		g_satView.hideUI = m_config["SatelliteHideUI"].ValueAsDefault<int>(1);
+		g_satView.cam = m_config["SatelliteCam"].ValueAsDefault<int>(0);
+		g_satView.vpLog = m_config["SatelliteVpLog"].ValueAsDefault<int>(0);
+		g_satView.overlay = m_config["SatelliteOverlay"].ValueAsDefault<int>(1);
+		g_satView.title = m_config["SatelliteTitle"].ValueAsDefault<std::string>(g_satView.title);
+		g_satView.ticker = m_config["SatelliteTicker"].ValueAsDefault<std::string>(g_satView.ticker);
+		extern float g_satCamDist, g_satCamHeight, g_satCamLook;
+		extern int g_satCamAxis;
+		g_satCamDist = m_config["SatelliteCamDist"].ValueAsDefault<float>(3.5f);
+		g_satCamHeight = m_config["SatelliteCamHeight"].ValueAsDefault<float>(1.5f);
+		g_satCamLook = m_config["SatelliteCamLook"].ValueAsDefault<float>(0.6f);
+		g_satCamAxis = m_config["SatelliteCamAxis"].ValueAsDefault<int>(1);
+		g_satClone.mirror = m_config["SatelliteMirror"].ValueAsDefault<int>(0);
+		SatelliteTapStart(port_in, addr_out, port_out);
+		printf("[Satellite] Clone: following %s\n", m_cloneFixed ? "a fixed node" : "the games in the link");
+		return Result::OKAY;
+	}
+
 	nets = std::make_unique<TCPSend>(addr_out, port_out);
 	netr = std::make_unique<TCPReceive>(port_in);
 
@@ -100,7 +133,9 @@ void CSimNetBoard::RunFrame(void)
 	switch (m_state)
 	{
 	case State::start:
-		if (!m_connected && !m_connectThread.joinable())
+		if (m_clone)
+			m_connected = true;		// the relay connects on its own
+		else if (!m_connected && !m_connectThread.joinable())
 			m_connectThread = std::thread(&CSimNetBoard::ConnectProc, this);
 		m_status0 = 0;
 		m_status1 = IsGame("dirtdvls") ? 0x4004 : 0xe000;
@@ -143,7 +178,12 @@ void CSimNetBoard::RunFrame(void)
 
 			uint8_t numMachines, machineIndex;
 
-			if (RAM16[0x400] == 0)	// master
+			if (m_clone)
+			{
+				if (!CloneTesting(numMachines, machineIndex))
+					break;
+			}
+			else if (RAM16[0x400] == 0)	// master
 			{
 				// flush receive buffer
 				while (netr->CheckDataAvailable())
@@ -459,6 +499,11 @@ void CSimNetBoard::RunFrame(void)
 		
 		// we only send what we need to; helps cut down on bandwidth
 		// each machine has to receive back its own data (TODO: copy this data manually?)
+		if (m_spikeofe && !m_clone)
+			PutInputRecord();
+		if (m_clone)
+			CloneReady();
+		else
 		for (int i = 0; i < m_numMachines; i++)
 		{
 			nets->Send(CommRAM + 0x100 + i * m_segmentSize, m_segmentSize);
@@ -500,7 +545,7 @@ void CSimNetBoard::RunFrame(void)
 void CSimNetBoard::Reset(void)
 {
 	// if netboard was active, send an "empty" packet so the other machines don't get stuck waiting for data
-	if (m_state == State::ready)
+	if (m_state == State::ready && !m_clone)
 	{
 		nets->Send(nullptr, 0);
 		netr->Receive();
@@ -621,5 +666,254 @@ void CSimNetBoard::WriteIORegister(unsigned reg, uint16_t data)
 		break;
 	default:
 		ErrorLog("write to unknown IO register 0x%02x", reg);
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// 11/20 satellite clone (Stream/Satellite.h)
+// ---------------------------------------------------------------------------------------------------------
+
+// The link test is over when 08 has passed on the number of machines. We take the same number, and the
+// index of the node we follow, as if we were that node.
+bool CSimNetBoard::CloneTesting(uint8_t& numMachines, uint8_t& machineIndex)
+{
+	SatLinkEvent e;
+	while (SatelliteTapPop(e, 0))
+	{
+		if (e.type != SatLinkEvent::Link)
+			continue;			// frames from before the link test
+		int n = e.numMachines;
+		if (n < 2 || n > 8)
+			continue;
+		int k = (m_cloneFixed >= 1 && m_cloneFixed <= n) ? m_cloneFixed : 1;
+		numMachines = (uint8_t)(n - 1);
+		machineIndex = (uint8_t)(k - 1);
+		g_satClone.numMachines = n;
+		g_satClone.node = k;
+		g_satClone.switched = true;
+		g_satClone.havePacket = false;
+		g_satClone.haveInputs = false;
+		m_cloneHaveNext = false;
+		m_cloneTimer = 0;
+		printf("[Satellite] Clone: link of %d machines, following node %d\n", n, k);
+		return true;
+	}
+	return false;
+}
+
+// Which node to follow. The clone has the world of a game only if it was that node when the game began, so:
+// - while our node is in a session (link state 2 select / 4 game): stay; every m_cloneInterval frames move
+//   on to the next node playing in the same group (same world, another point of view);
+// - otherwise (title / attract): when a node at the title presses Start in the coming frame, become that
+//   node before the frame is played, so we start the game with it.
+void CSimNetBoard::CloneChoose(const std::vector<std::vector<char>>& segs, const std::vector<std::vector<char>>* next, int n)
+{
+	for (int m = 1; m <= n; m++)
+	{
+		const auto& s = segs[n - m];
+		// PPC byte b of a segment is s[b ^ 2] (Model3.cpp swaps half words on the comm RAM)
+		g_satClone.linkState[m] = s.size() > 0x40 ? (uint8_t)s[4 ^ 2] : 0;
+		g_satClone.group[m] = s.size() > 0x40 ? (uint8_t)s[0x3C ^ 2] : 0;	// game number = its host node (+0x3C; +0x3E/+0x3F are stage / area)
+	}
+	// satellite.txt (in the cabinet's folder): each node's link state / flags (+8) / game mask (+0x28) once a
+	// second, and every switch
+	static FILE* slog = fopen("satellite.txt", "w");
+	static unsigned frame = 0;
+	auto word = [&](const std::vector<char>& s, unsigned b) -> uint32_t
+	{
+		if (s.size() < b + 4)
+			return 0;
+		return ((uint32_t)(uint8_t)s[b ^ 2] << 24) | ((uint32_t)(uint8_t)s[(b + 1) ^ 2] << 16) | ((uint32_t)(uint8_t)s[(b + 2) ^ 2] << 8) | (uint8_t)s[(b + 3) ^ 2];
+	};
+	if (slog && (++frame % 60) == 0)
+	{
+		fprintf(slog, "f=%u node=%d", frame, g_satClone.node);
+		for (int m = 1; m <= n; m++)
+		{
+			const auto& s = segs[n - m];
+			fprintf(slog, " | %d:st%u f%04X m%08X g%u", m, g_satClone.linkState[m], word(s, 8) & 0xFFFF, word(s, 0x28), g_satClone.group[m]);
+		}
+		fprintf(slog, "\n");
+		fflush(slog);
+	}
+	// Moving to another node is safe only in plain play: the link of every node unchanged (state, the join
+	// flags +8, the game mask +0x28) for 5 seconds and no join going on. (11/20 owner: with a switch in the
+	// middle of 02 joining, 09 stayed on the loading screen at 99%.)
+	{
+		uint32_t sig = 2166136261u;
+		bool joining = false;
+		for (int m = 1; m <= n; m++)
+		{
+			const auto& s = segs[n - m];
+			uint32_t v[3] = { g_satClone.linkState[m], word(s, 8) & 0xFFFF, word(s, 0x28) };
+			for (uint32_t x : v)
+				sig = (sig ^ x) * 16777619u;
+			if (v[1] != 0)
+				joining = true;
+		}
+		if (sig != m_cloneSig || joining)
+			m_cloneStable = 0;
+		else if (m_cloneStable < 1000000)
+			m_cloneStable++;
+		m_cloneSig = sig;
+	}
+	if (m_cloneFixed)
+		return;
+
+	auto playing = [&](int m) { return g_satClone.linkState[m] == 4; };
+	auto session = [&](int m) { return g_satClone.linkState[m] == 2 || g_satClone.linkState[m] == 4; };
+	auto startPressed = [&](int m)
+	{
+		if (!next)
+			return false;
+		const auto& s = (*next)[n - m];
+		if (s.size() < kSatInputOffset + 0x20 || (uint8_t)s[kSatInputOffset ^ 2] != kSatInputMagic)
+			return false;
+		unsigned cnt = (uint8_t)s[(kSatInputOffset + 1) ^ 2];
+		for (unsigned i = 0; i < cnt && i < 4; i++)
+			if (!((uint8_t)s[(kSatInputOffset + 2 + i) ^ 2] & 0x10))
+				return true;
+		return false;
+	};
+	auto alive = [&](int m) { return g_satClone.hp[m] > 0; };	// not dead / on the continue screen (a local countdown)
+	auto nextState = [&](int m) -> int { return next ? (int)(uint8_t)(*next)[n - m][4 ^ 2] : -1; };
+	int cur = g_satClone.node, next_ = 0;
+	// The node we follow leaves the game in the coming frame (no continue) while others of its game go on:
+	// become one of them first, so we stay in that game (11/20 owner: all idle, no continue).
+	if (playing(cur) && next && nextState(cur) != 4)
+	{
+		for (int d = 1; d < n && !next_; d++)
+		{
+			int m = (cur - 1 + d) % n + 1;
+			if (playing(m) && nextState(m) == 4 && g_satClone.group[m] == g_satClone.group[cur] && alive(m))
+				next_ = m;
+		}
+		if (next_ && slog) { fprintf(slog, "f=%u LEAVE %d (state %d next) -> %d\n", frame, cur, nextState(cur), next_); fflush(slog); }
+	}
+	else if (session(cur))
+	{
+		if (m_cloneInterval > 0 && playing(cur) && ++m_cloneTimer >= m_cloneInterval && m_cloneStable >= 300 && alive(cur))
+		{
+			m_cloneTimer = 0;
+			for (int d = 1; d < n && !next_; d++)
+			{
+				int m = (cur - 1 + d) % n + 1;
+				if (playing(m) && g_satClone.group[m] == g_satClone.group[cur] && alive(m))
+					next_ = m;
+			}
+		}
+	}
+	else if (!startPressed(cur))
+	{
+		for (int m = 1; m <= n && !next_; m++)
+			if (g_satClone.linkState[m] == 1 && startPressed(m))
+				next_ = m;
+	}
+	if (next_ && next_ != cur)
+	{
+		printf("[Satellite] Clone: node %d -> %d (state %d, group %d)\n", cur, next_, g_satClone.linkState[next_], g_satClone.group[next_]);
+		if (slog) { fprintf(slog, "f=%u SWITCH %d -> %d\n", frame, cur, next_); fflush(slog); }
+		g_satClone.node = next_;
+		g_satClone.switched = true;
+		g_satClone.mirrorOnce = true;
+		m_cloneTimer = 0;
+	}
+}
+
+bool CSimNetBoard::CloneWait(SatLinkEvent& e)
+{
+	for (;;)
+	{
+		if (m_quit)
+			return false;
+		if (SatelliteTapPop(e, 200))
+			return true;
+	}
+}
+
+// One frame: the N segments 08 sent (like TCPReceive, we block), laid out the way the node we follow
+// received them: its slot j holds node ((k - 1 - j) mod N) + 1, slot N being its own. We also take the
+// next frame (the clone runs behind the ring anyway): the input records in it are what the nodes play
+// the coming frame with.
+bool CSimNetBoard::CloneReady(void)
+{
+	const int n = m_numMachines;
+	auto bad = [&](const SatLinkEvent& e) { return e.type != SatLinkEvent::Frame || e.numMachines != n || (int)e.segs.size() != n; };
+	SatLinkEvent cur;
+	if (m_cloneHaveNext)
+	{
+		cur = std::move(m_cloneNext);
+		m_cloneHaveNext = false;
+	}
+	else if (!CloneWait(cur))
+		return false;
+	if (bad(cur))
+	{
+		printf("[Satellite] Clone: link broken\n");
+		g_satClone.havePacket = false;
+		g_satClone.haveInputs = false;
+		m_state = State::error;
+		m_status1 = 0x40;
+		return false;
+	}
+	if (!CloneWait(m_cloneNext))
+		return false;
+	m_cloneHaveNext = true;
+	const bool nextOk = !bad(m_cloneNext);
+
+	CloneChoose(cur.segs, nextOk ? &m_cloneNext.segs : nullptr, n);
+	const int k = g_satClone.node;
+	for (int j = 1; j <= n; j++)
+	{
+		int m = ((k - 1 - j) % n + n) % n + 1;
+		const auto& s = cur.segs[n - m];
+		size_t len = s.size() < m_segmentSize ? s.size() : m_segmentSize;
+		memcpy(CommRAM + 0x100 + j * m_segmentSize, s.data(), len);
+	}
+
+	const auto& own = cur.segs[n - k];
+	if (own.size() >= 0x900)
+	{
+		for (int o = 0; o < 0x900; o += 4)
+		{
+			uint32_t b0 = (uint8_t)own[o ^ 2], b1 = (uint8_t)own[(o + 1) ^ 2], b2 = (uint8_t)own[(o + 2) ^ 2], b3 = (uint8_t)own[(o + 3) ^ 2];
+			g_satClone.packet[o / 4] = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+		}
+		g_satClone.havePacket = true;
+	}
+
+	g_satClone.haveInputs = false;
+	if (nextOk)
+	{
+		const auto& s = m_cloneNext.segs[n - k];
+		auto at = [&](unsigned b) { return (uint8_t)s[(kSatInputOffset + b) ^ 2]; };
+		if (s.size() >= kSatInputOffset + 0x20 && at(0) == kSatInputMagic)
+		{
+			for (int p = 0; p < 3; p++)
+			{
+				unsigned c = at(1 + p * 5);
+				g_satClone.inpCnt[p] = (uint8_t)(c > 4 ? 4 : c);
+				for (unsigned i = 0; i < 4; i++)
+					g_satClone.inp[p][i] = at(2 + p * 5 + i);
+				if (g_satClone.inpCnt[p])
+					g_satClone.inpLast[p] = g_satClone.inp[p][g_satClone.inpCnt[p] - 1];
+			}
+			g_satClone.haveInputs = true;
+		}
+	}
+	return true;
+}
+
+// Every linked spikeofe cabinet: what our game read from the inputs this frame, into our own segment.
+void CSimNetBoard::PutInputRecord(void)
+{
+	uint8_t* seg = CommRAM + 0x100;
+	auto put = [&](unsigned b, uint8_t v) { seg[(kSatInputOffset + b) ^ 2] = v; };
+	put(0, (uint8_t)kSatInputMagic);
+	for (int p = 0; p < 3; p++)
+	{
+		put(1 + p * 5, g_satInRec.cnt[p]);
+		for (int i = 0; i < 4; i++)
+			put(2 + p * 5 + i, g_satInRec.val[p][i]);
 	}
 }

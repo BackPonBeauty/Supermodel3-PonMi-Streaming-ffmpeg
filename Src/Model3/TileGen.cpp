@@ -173,6 +173,11 @@ void CTileGen::RenderFrameTop(void)
   Render2D->RenderFrameTop();
 }
 
+void CTileGen::SatOverlay(bool inGame, const std::string &title, const std::string &ticker)
+{
+	Render2D->RenderSatelliteOverlay(m_vramP, m_pal[0], inGame, title, ticker);
+}
+
 void CTileGen::EndFrame(void)
 {
 	Render2D->EndFrame();

@@ -231,6 +231,7 @@
 #include "Network/NetBoard.h"
 #include "Network/SimNetBoard.h"
 #include "Model3/Spikeout8Link.h"
+#include "Stream/Satellite.h"
 #include "OSD/Audio.h"
 #include "OSD/Video.h"
 #include "Util/Format.h"
@@ -2443,7 +2444,7 @@ static void SpikeoutSessionTick(const UINT8 *ram)
 
 static void SpikeoutP1StateTick(UINT8 *ram)   // every frame: mark (bot) or unmark (human) our own link record
 {
-	if (!g_spikeofe8task) return;
+	if (!g_spikeofe8task || g_satClone.on) return;   // 11/20: the satellite clone keeps the followed node's mark
 	bool bot = g_spikeoutAI && !g_streamHumanJoined.load();   // a streaming client that took this slot is a human
 	*(UINT32 *) &ram[0x140100 + 0x2FC] = bot ? SPIKEOUT_BOT_MARK : 0;
 }
@@ -6024,6 +6025,37 @@ UINT8 CModel3::ReadInputs(unsigned reg)
 {
   UINT8 adc[8];
   UINT8 data;
+
+  // 11/20 satellite clone (Stream/Satellite.h): every linked cabinet records what the game read from port
+  // 0x04 (bank 0), 0x08 and 0x0C this frame; the clone replays the followed cabinet's record instead.
+  static bool s_satInner = false;
+  if (g_spikeofe8task && !s_satInner)
+  {
+    int p = SatInputPort(reg & 0x3F);
+    if (p == 0 && (inputBank & 1))
+      p = -1;
+    if (p >= 0)
+    {
+      if (g_satClone.on)
+      {
+        SatCloneState &c = g_satClone;
+        if (!c.haveInputs || !c.inpCnt[p])
+          return c.inpLast[p];
+        unsigned i = c.inpIdx[p] < c.inpCnt[p] ? c.inpIdx[p] : c.inpCnt[p] - 1u;
+        c.inpIdx[p]++;
+        return c.inp[p][i];
+      }
+      s_satInner = true;
+      UINT8 d = ReadInputs(reg);
+      s_satInner = false;
+      SatInputRecord &r = g_satInRec;
+      if (r.cnt[p] < 4)
+        r.val[p][r.cnt[p]++] = d;
+      else
+        r.val[p][3] = d;
+      return d;
+    }
+  }
   reg &= 0x3F;
   switch (reg)
   {
@@ -7995,9 +8027,83 @@ static unsigned GetCPUClockFrequencyInHz(const Game &game, Util::Config::Node &c
   return mhz * 1000000;
 }
 
+// 11/20 satellite clone (Stream/Satellite.h): before every frame, make our link records match the node
+// we follow. On a switch: our node number and the record pointers the link code set up at link time
+// (0x6D3EC / 0x6D6E4); the received records are refreshed by sequence (+0x58), so clear those to take the
+// next ones whatever they are. With SatelliteMirror, our own link block 0x140100 is the followed node's.
+static void SatelliteCloneApply(UINT8 *ram)
+{
+	SatCloneState &c = g_satClone;
+	const int n = c.numMachines, me = c.node;
+	if (me < 1 || n < 2 || me > n)
+		return;
+	{
+		// satclone.txt: our own link block vs the followed node's (state +4, flags +8, mask +0x28, seq +0x58),
+		// every change - the clone must stay in step with the node it follows
+		static FILE *f = fopen("satclone.txt", "w");
+		static UINT32 prev[8] = {};
+		const UINT32 *own = (const UINT32 *) &ram[0x140100];
+		UINT32 cur[8] = { own[1] >> 24, own[2] & 0xFFFF, own[0x28 / 4], 0,
+		                  c.havePacket ? c.packet[1] >> 24 : 0, c.havePacket ? c.packet[2] & 0xFFFF : 0, c.havePacket ? c.packet[0x28 / 4] : 0, (UINT32) me };
+		if (f && memcmp(cur, prev, sizeof(cur)) != 0)
+		{
+			fprintf(f, "f=%u node=%u area=%u c0=%08X c1C=%08X/%08X %08X | ours st%u f%04X m%08X seq%08X | node st%u f%04X m%08X seq%08X\n", g_ppcTraceFrame, cur[7],
+			        (unsigned) ram[0x10402D ^ 3], own[0], own[0x1C / 4], c.havePacket ? c.packet[0] : 0, c.havePacket ? c.packet[0x1C / 4] : 0, cur[0], cur[1], cur[2], own[0x58 / 4], cur[4], cur[5], cur[6], c.havePacket ? c.packet[0x58 / 4] : 0);
+			fflush(f);
+			memcpy(prev, cur, sizeof(cur));
+		}
+	}
+	if (c.switched && ram[0x10065A ^ 3] == n)
+	{
+		c.switched = false;
+		auto rec = [&](int node) { return 0x150400u + (UINT32) (((n - 1 + me - node) % n + n) % n) * 0x300u; };
+		ram[0x10065B ^ 3] = (UINT8) me;
+		if (c.havePacket)                                                      // our link sequence (0x140048, +1 a frame into
+			*(UINT32 *) &ram[0x140048] = c.packet[0x58 / 4];                   // block +0x58, 0x6D9DC) is the followed node's
+		*(UINT32 *) &ram[0x104024] = 0x1A0000u + (UINT32) (me - 1) * 0x4000u;   // my Rob (SDA -0x3FDC, 0x11C3C / 0x513D4)
+		*(UINT32 *) &ram[0x106008] = 0x106DFEu + (UINT32) me * 2u;             // SDA -0x1FF8 (0x11C64)
+		UINT32 cam = *(const UINT32 *) &ram[0x104150] & 0x7FFFFF;              // the camera follows player cam+0x4A (set from 0x10065B - 1
+		if (cam >= 0x100000 && cam < 0x7FF000)                                // only at an area's start, 0x4B428)
+			ram[(cam + 0x4A) ^ 3] = (UINT8) (me - 1);
+		*(UINT32 *) &ram[0x140004] = rec(me);
+		*(UINT32 *) &ram[0x140008] = rec(me);
+		*(UINT32 *) &ram[0x14000C] = rec(1);
+		for (int node = 1; node <= n; node++)
+			*(UINT32 *) &ram[0x150060 + 4 * node] = rec(node);
+		for (int i = 0; i < n; i++)
+			*(UINT32 *) &ram[0x152000 + i * 0x900 + 0x58] = 0;
+	}
+	for (int k = 1; k <= 8; k++)
+		c.hp[k] = (INT16) *(const UINT16 *) &ram[(0x1A0000 + (k - 1) * 0x4000 + 0x3F02) ^ 2];
+	if ((c.mirror || c.mirrorOnce) && c.havePacket)
+	{
+		c.mirrorOnce = false;
+		memcpy(&ram[0x140100], c.packet, 0x900);
+	}
+	c.inpIdx[0] = c.inpIdx[1] = c.inpIdx[2] = 0;
+}
+
 void CModel3::RunMainBoardFrame(void)
 {
 	UINT32 start = CThread::GetTicks();
+	if (g_satClone.on) SatelliteCloneApply(ram);
+	if (g_satView.on) g_satView.inGame = ram[0x140104 ^ 3] == 4;
+	if (g_satView.on && g_satView.inGame && m_config["SatelliteFontDump"].ValueAsDefault<bool>(false))
+	{
+		// 11/20 debug: the tile generator's VRAM / registers once, 20 s into a game (tilegen_dump.bin)
+		static unsigned inGameFrames = 0;
+		if (++inGameFrames == 1200)
+		{
+			FILE *f = fopen("tilegen_dump.bin", "wb");
+			if (f)
+			{
+				fwrite(TileGen.SatVRAM(), 1, 0x120000, f);
+				fwrite(TileGen.SatRegs(), 4, 64, f);
+				fclose(f);
+			}
+		}
+	}
+	g_satInRec = SatInputRecord();   // 11/20: this frame's input reads, for the satellite clone
 	m_testFrame++;
 	g_ppcTraceFrame = m_testFrame;
 	if (g_spikeoutScenarioLog) SpikeoutScenarioLog(ram);
@@ -8211,9 +8317,109 @@ void CModel3::RunMainBoardFrame(void)
 	timings.ppcTicks = CThread::GetTicks() - start;
 }
 
+// 11/20 satellite clone: our camera (Stream/Satellite.h SatViewState). The game's view is rebuilt from its camera
+// (*(0x104150): eye +0x10, looks at +0x404), ours chases the followed player from behind (Rob +0x35C 3x3 rows,
+// +0x380 position); New3D puts "ours x game's^-1" in front of the 3D world. Real3D eye axes: forward, right, down.
+// Called where the display list is taken over (SyncGPUs), so camera and picture are of the same frame.
+float g_satCamDist = 3.5f, g_satCamHeight = 1.5f, g_satCamLook = 0.6f;
+int g_satCamAxis = 1;   // the character faces -(row 2) (11/20: with +row 2 we saw the face)
+static void SatelliteCamUpdate(const UINT8 *ram)
+{
+	SatViewState &v = g_satView;
+	v.camValid = false;
+	if (!v.inGame || !v.cam)
+		return;
+	auto rf = [&](UINT32 a) { return *(const float *) &ram[a]; };
+	auto view = [](const float pos[3], const float fwd0[3], float R[9]) -> bool
+	{
+		float f[3] = { fwd0[0], fwd0[1], fwd0[2] };
+		float l = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+		if (l < 1e-4f) return false;
+		for (float &x : f) x /= l;
+		float r[3] = { -f[2], 0.0f, f[0] };            // right = (-fz, 0, fx) (as measured for the bots' lever)
+		float lr = std::sqrt(r[0] * r[0] + r[2] * r[2]);
+		if (lr < 1e-4f) return false;
+		r[0] /= lr; r[2] /= lr;
+		float d[3] = { f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0] };   // down = fwd x right
+		R[0] = f[0]; R[1] = f[1]; R[2] = f[2];
+		R[3] = r[0]; R[4] = r[1]; R[5] = r[2];
+		R[6] = d[0]; R[7] = d[1]; R[8] = d[2];
+		return true;
+	};
+	UINT32 cam = *(const UINT32 *) &ram[0x104150] & 0x7FFFFF;
+	if (cam < 0x100000 || cam > 0x7FF000)
+		return;
+	float ge[3] = { rf(cam + 0x10), rf(cam + 0x14), rf(cam + 0x18) };
+	float gt[3] = { rf(cam + 0x404), rf(cam + 0x408), rf(cam + 0x40C) };
+	float gf[3] = { gt[0] - ge[0], gt[1] - ge[1], gt[2] - ge[2] };
+	float Rg[9];
+	if (!view(ge, gf, Rg))
+		return;
+
+	// ours
+	static float cp[3], ct[3];
+	static int lastNode = -1;
+	float ne[3], nt[3];
+	if (v.cam == 2)
+	{
+		memcpy(ne, ge, sizeof(ne));
+		memcpy(nt, gt, sizeof(nt));
+	}
+	else
+	{
+		int node = g_satClone.node;
+		if (node < 1 || node > 8)
+			return;
+		UINT32 rob = 0x1A0000 + (UINT32) (node - 1) * 0x4000;
+		float p[3] = { rf(rob + 0x380), rf(rob + 0x384), rf(rob + 0x388) };
+		int row = (g_satCamAxis & 2) ? 0 : 2;          // 0: +row 2, 1: -row 2, 2: +row 0, 3: -row 0
+		float sg = (g_satCamAxis & 1) ? -1.0f : 1.0f;
+		float h[3] = { sg * rf(rob + 0x35C + row * 12), 0.0f, sg * rf(rob + 0x35C + row * 12 + 8) };
+		float lh = std::sqrt(h[0] * h[0] + h[2] * h[2]);
+		if (lh < 1e-3f) return;
+		h[0] /= lh; h[2] /= lh;
+		float de[3] = { p[0] - h[0] * g_satCamDist, p[1] + g_satCamHeight, p[2] - h[2] * g_satCamDist };
+		float dt[3] = { p[0] + h[0] * 1.0f, p[1] + g_satCamLook, p[2] + h[2] * 1.0f };
+		float jump = std::fabs(de[0] - cp[0]) + std::fabs(de[1] - cp[1]) + std::fabs(de[2] - cp[2]);
+		if (node != lastNode || jump > 20.0f)
+		{
+			memcpy(cp, de, sizeof(cp));
+			memcpy(ct, dt, sizeof(ct));
+			lastNode = node;
+		}
+		for (int i = 0; i < 3; i++)
+		{
+			cp[i] += (de[i] - cp[i]) * 0.06f;
+			ct[i] += (dt[i] - ct[i]) * 0.15f;
+		}
+		memcpy(ne, cp, sizeof(ne));
+		memcpy(nt, ct, sizeof(nt));
+	}
+	float nf[3] = { nt[0] - ne[0], nt[1] - ne[1], nt[2] - ne[2] };
+	float Rn[9];
+	if (!view(ne, nf, Rn))
+		return;
+
+	// C = [Rn Rg^T, Rn (ge - ne)]
+	float M[9];
+	for (int i = 0; i < 3; i++)
+		for (int j = 0; j < 3; j++)
+			M[i * 3 + j] = Rn[i * 3 + 0] * Rg[j * 3 + 0] + Rn[i * 3 + 1] * Rg[j * 3 + 1] + Rn[i * 3 + 2] * Rg[j * 3 + 2];
+	float d[3] = { ge[0] - ne[0], ge[1] - ne[1], ge[2] - ne[2] };
+	float t[3];
+	for (int i = 0; i < 3; i++)
+		t[i] = Rn[i * 3 + 0] * d[0] + Rn[i * 3 + 1] * d[1] + Rn[i * 3 + 2] * d[2];
+	float *c = v.camFix;
+	for (int col = 0; col < 4; col++)
+		for (int row = 0; row < 4; row++)
+			c[col * 4 + row] = (row < 3 && col < 3) ? M[row * 3 + col] : (row < 3 ? t[row] : (col == 3 ? 1.0f : 0.0f));
+	v.camValid = true;
+}
+
 void CModel3::SyncGPUs(void)
 {
   UINT32 start = CThread::GetTicks();
+  if (g_satView.on) SatelliteCamUpdate(ram);
 
   timings.syncSize = GPU.SyncSnapshots() + TileGen.SyncSnapshots();
   gpusReady = true;
@@ -8234,7 +8440,10 @@ void CModel3::RenderFrame(void)
     TileGen.PreRenderFrame();
     TileGen.RenderFrameBottom();
     GPU.RenderFrame();
-    TileGen.RenderFrameTop();
+    if (!(g_satView.on && g_satView.hideUI && g_satView.inGame))   // 11/20 satellite clone: no HUD
+      TileGen.RenderFrameTop();
+    if (g_satView.on && g_satView.overlay)                        // 11/20 satellite clone: title / name / ticker
+      TileGen.SatOverlay(g_satView.inGame, g_satView.title, g_satView.ticker);
     GPU.EndFrame();
     TileGen.EndFrame();
     m_superAA->Draw();

@@ -41,6 +41,11 @@
 class CTileGen
 {
 public:
+	// 11/20 satellite clone (Stream/Satellite.h): the 2D overlay reads the game's font from VRAM
+	const UINT8 *SatVRAM(void) const { return m_vram; }
+	const UINT32 *SatRegs(void) const { return m_regs; }
+	const UINT32 *SatPal(int i) const { return m_pal[i]; }
+	void SatOverlay(bool inGame, const std::string &title, const std::string &ticker);
 	/*
 	 * SaveState(SaveState):
 	 *

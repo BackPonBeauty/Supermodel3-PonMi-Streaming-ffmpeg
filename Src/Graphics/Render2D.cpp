@@ -286,6 +286,7 @@
   */
 
 #include "Render2D.h"
+#include <algorithm>
 
 #include "Supermodel.h"
 #include "Shader.h"
@@ -379,6 +380,80 @@ void CRender2D::RenderFrameTop(void)
 {
 	Setup2D(false);
 	DrawSurface(m_textureIDs[1]);
+}
+
+void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker)
+{
+	const int W = 496, H = 384, S = 512;
+	if (!vramP || !pal)
+		return;
+	if (!m_satTex)
+	{
+		glGenTextures(1, &m_satTex);
+		glBindTexture(GL_TEXTURE_2D, m_satTex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_upscaleMode == UpscaleMode::Nearest ? GL_NEAREST : GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_upscaleMode == UpscaleMode::Nearest ? GL_NEAREST : GL_LINEAR);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	}
+	m_satBuf.assign(W * H, 0);
+	auto put = [&](int x, int y, uint32_t c) { if (x >= 0 && x < W && y >= 0 && y < H) m_satBuf[y * W + x] = c; };
+	auto glyph = [&](int ch, int x0, int y0)
+	{
+		if (ch >= 'a' && ch <= 'z')
+			ch -= 32;
+		if (ch <= 0x20 || ch >= 0x7F)
+			return;
+		for (int y = 0; y < 8; y++)
+			for (int x = 0; x < 8; x++)
+			{
+				uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
+				uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
+				if (c >= 0x1000000)
+					put(x0 + x, y0 + y, c);
+			}
+	};
+	auto text = [&](const std::string &t, int x, int y) { for (char ch : t) { glyph((unsigned char) ch, x, y); x += 8; } };
+
+	// title, top centre
+	text(title, (W - (int) title.size() * 8) / 2, 6);
+
+	// the followed player's name, cut out of the game's HUD, centred below the title
+	if (inGame && m_drawBuffers[1])
+	{
+		const uint32_t *src = m_drawBuffers[1]->data;
+		int x0 = 40, x1 = 96, y0 = 8, y1 = 24, bx0 = x1, bx1 = x0 - 1;
+		for (int y = y0; y < y1; y++)
+			for (int x = x0; x < x1; x++)
+				if (src[y * S + x] >= 0x1000000) { bx0 = std::min(bx0, x); bx1 = std::max(bx1, x); }
+		if (bx1 >= bx0)
+		{
+			int dx = (W - (bx1 - bx0 + 1)) / 2 - bx0;
+			for (int y = y0; y < y1; y++)
+				for (int x = bx0; x <= bx1; x++)
+					if (src[y * S + x] >= 0x1000000)
+						put(x + dx, y - y0 + 16, src[y * S + x]);
+		}
+	}
+
+	// a line scrolling right to left at the bottom, on a dark band
+	if (!ticker.empty())
+	{
+		int tw = (int) ticker.size() * 8, by = H - 16;
+		for (int y = by - 3; y < by + 11; y++)
+			for (int x = 0; x < W; x++)
+				put(x, y, 0x90000000u);
+		int x = W - (int) (m_satFrame % (unsigned) (W + tw));
+		text(ticker, x, by);
+	}
+	m_satFrame++;
+
+	glBindTexture(GL_TEXTURE_2D, m_satTex);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, m_satBuf.data());
+	Setup2D(false);
+	DrawSurface(m_satTex);
 }
 
 void CRender2D::EndFrame(void)
@@ -476,5 +551,9 @@ CRender2D::~CRender2D(void)
 	for (auto& t : m_textureIDs) {
 		glDeleteTextures(1, &t);
 		t = 0;
+	}
+	if (m_satTex) {
+		glDeleteTextures(1, &m_satTex);
+		m_satTex = 0;
 	}
 }

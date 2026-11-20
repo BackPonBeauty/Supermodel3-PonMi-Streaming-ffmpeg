@@ -35,6 +35,8 @@
 #include "New3D/GLSLShader.h"
 #include "FBO.h"
 #include "../Model3/TileGenBuffer.h"
+#include <string>
+#include <vector>
 
   /*
    * CRender2D:
@@ -79,6 +81,13 @@ public:
 	 * through transparent regions.
 	 */
 	void RenderFrameTop(void);
+
+	/*
+	 * 11/20 satellite clone (Stream/Satellite.h): our own top layer, in the game's 8x8 font (ASCII tiles 0x20-0x7E
+	 * of the 8-bit tile set, palette bank 0): a title at the top centre, the followed player's name cut out of the
+	 * game's HUD (top surface, x 40-96 y 8-24) below it while in a game, and a line scrolling at the bottom.
+	 */
+	void RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker);
 
 	/*
 	 * EndFrame(void):
@@ -209,6 +218,9 @@ private:
 	GLuint m_textureIDs[2];
 	GLSLShader m_drawShader;
 	std::shared_ptr<TileGenBuffer> m_drawBuffers[2];
+	GLuint m_satTex = 0;
+	std::vector<uint32_t> m_satBuf;
+	unsigned m_satFrame = 0;
 };
 
 
