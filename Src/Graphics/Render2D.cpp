@@ -291,6 +291,7 @@
 #include "Supermodel.h"
 #include "Shader.h"
 #include "Shaders2D.h" // fragment and vertex shaders
+#include "Stream/Satellite.h"   // 11/20 SatHud (satellite overlay)
 
 /******************************************************************************
  Frame Display Functions
@@ -382,7 +383,7 @@ void CRender2D::RenderFrameTop(void)
 	DrawSurface(m_textureIDs[1]);
 }
 
-void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker)
+void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker, const SatHud *hud)
 {
 	const int W = 496, H = 384, S = 512;
 	if (!vramP || !pal)
@@ -434,6 +435,42 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 				for (int x = bx0; x <= bx1; x++)
 					if (src[y * S + x] >= 0x1000000)
 						put(x + dx, y - y0 + 16, src[y * S + x]);
+		}
+	}
+
+	// 11/20 (owner): STAGE - AREA top left, the followed player's life under the name, the bosses above the ticker.
+	// Colours are 0xAABBGGRR (the buffer goes up as RGBA bytes).
+	auto bar = [&](int x0, int y0, int w, int h, int v, int vMax, uint32_t fill)
+	{
+		if (vMax <= 0)
+			return;
+		int f = (int) ((long long) (v < 0 ? 0 : v > vMax ? vMax : v) * (w - 2) / vMax);
+		for (int y = y0; y < y0 + h; y++)
+			for (int x = x0; x < x0 + w; x++)
+			{
+				bool edge = y == y0 || y == y0 + h - 1 || x == x0 || x == x0 + w - 1;
+				put(x, y, edge ? 0xFFD8D8D8u : (x - x0 - 1 < f ? fill : 0xC0000000u));
+			}
+	};
+	if (inGame && hud && hud->valid)
+	{
+		std::string sa = "STAGE " + std::to_string(hud->stage) + " - AREA " + std::to_string(hud->area);
+		text(sa, 4, 18);   // a line below the title row (a long title reaches the left side)
+
+		const int bw = 128;
+		int r = hud->hpMax > 0 ? hud->hp * 100 / hud->hpMax : 0;
+		uint32_t col = r > 50 ? 0xFF40E040u : r > 25 ? 0xFF20D0F0u : 0xFF3030F0u;   // green / yellow / red
+		bar((W - bw) / 2, 34, bw, 6, hud->hp, hud->hpMax, col);
+
+		const int bbw = 144, rowH = 12, top = H - 16 - 3 - 4;
+		for (int i = 0; i < hud->nBoss && i < 4; i++)
+		{
+			const SatHudBoss &b = hud->boss[i];
+			std::string nm = b.name;
+			int tw = (int) nm.size() * 8, gap = nm.empty() ? 0 : 6;
+			int x = (W - (tw + gap + bbw)) / 2, y = top - rowH * (hud->nBoss - i);
+			text(nm, x, y);
+			bar(x + tw + gap, y + 1, bbw, 6, b.hp, b.hpMax, 0xFF2058F0u);   // orange-red
 		}
 	}
 

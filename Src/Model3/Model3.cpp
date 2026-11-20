@@ -8416,10 +8416,61 @@ static void SatelliteCamUpdate(const UINT8 *ram)
 	v.camValid = true;
 }
 
+// 11/20 (owner) satellite overlay: stage / area, the followed player's life, the bosses (Stream/Satellite.h SatHud).
+// Names: the game's name table, CROM 0xFFF80A60 + (Rob +0x15C) * 4 -> a string (the HUD's enemy name, 0x1B4A0).
+static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
+{
+	SatHud &h = g_satView.hud;
+	h.valid = false;
+	h.nBoss = 0;
+	int node = g_satClone.node;
+	if (!g_satView.inGame || node < 1 || node > 8)
+		return;
+	auto r16 = [&](UINT32 a) { return (int) (INT16) *(const UINT16 *) &ram[a ^ 2]; };
+	h.stage = ram[0x10402C ^ 3];
+	h.area = ram[0x10402D ^ 3];
+	UINT32 me = 0x1A0000 + (UINT32) (node - 1) * 0x4000;
+	h.hp = r16(me + 0x3F02);
+	h.hpMax = r16(me + 0x3F04);
+	for (int slot = 8; slot < 20 && h.nBoss < 4; slot++)
+	{
+		UINT32 r = 0x1A0000 + (UINT32) slot * 0x4000;
+		if (!(*(const UINT32 *) &ram[r] & 1) || ram[(r + 0x73) ^ 3] < 4 || ram[(r + 0x3F00) ^ 3] == 0x26)
+			continue;
+		int hp = r16(r + 0x3F02);
+		if (hp <= 0)
+			continue;
+		SatHudBoss &b = h.boss[h.nBoss++];
+		b.hp = hp;
+		b.hpMax = r16(r + 0x3F04);
+		b.name[0] = 0;
+		unsigned idx = *(const UINT16 *) &ram[(r + 0x15C) ^ 2];
+		if (crom && idx < 2000)
+		{
+			UINT32 p = *(const UINT32 *) &crom[0x780A60 + idx * 4];
+			if (p >= 0xFF800000u && p < 0xFFFFFFF0u)
+			{
+				UINT32 o = p - 0xFF800000u;
+				int n = 0;
+				for (; n < 15; n++)
+				{
+					UINT8 ch = crom[(o + n) ^ 3];
+					if (ch < 0x20 || ch >= 0x7F)
+						break;
+					b.name[n] = (char) ch;
+				}
+				b.name[n] = 0;
+			}
+		}
+	}
+	h.valid = true;
+}
+
 void CModel3::SyncGPUs(void)
 {
   UINT32 start = CThread::GetTicks();
   if (g_satView.on) SatelliteCamUpdate(ram);
+  if (g_satView.on) SatelliteHudUpdate(ram, crom);
 
   timings.syncSize = GPU.SyncSnapshots() + TileGen.SyncSnapshots();
   gpusReady = true;
@@ -8443,7 +8494,7 @@ void CModel3::RenderFrame(void)
     if (!(g_satView.on && g_satView.hideUI && g_satView.inGame))   // 11/20 satellite clone: no HUD
       TileGen.RenderFrameTop();
     if (g_satView.on && g_satView.overlay)                        // 11/20 satellite clone: title / name / ticker
-      TileGen.SatOverlay(g_satView.inGame, g_satView.title, g_satView.ticker);
+      TileGen.SatOverlay(g_satView.inGame, g_satView.title, g_satView.ticker, &g_satView.hud);
     GPU.EndFrame();
     TileGen.EndFrame();
     m_superAA->Draw();

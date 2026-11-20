@@ -66,6 +66,22 @@ int SatInputPort(unsigned reg);             // 0x04 -> 0, 0x08 -> 1, 0x0C -> 2, 
 // The clone's own view (11/20 owner: "camera from behind each player, no 2D UI, no allies' HP, no minimap").
 // Model3.cpp fills it each frame; Model3::RenderFrame / New3D read it. Display only - the game's RAM is
 // never touched, so the clone stays in step.
+// 11/20 (owner): what the overlay shows besides the title: STAGE - AREA (top left), the followed player's life bar
+// under the name, every boss in the area with its name and life bar. Read from the game's RAM in SyncGPUs (display only).
+struct SatHudBoss
+{
+  char name[16];
+  int hp, hpMax;
+};
+struct SatHud
+{
+  bool valid = false;
+  int stage = 0, area = 0;
+  int hp = 0, hpMax = 0;                    // followed player: Rob +0x3F02 / +0x3F04
+  int nBoss = 0;
+  SatHudBoss boss[4] = {};                  // class (Rob +0x73) >= 4 and Rob +0x3F00 != 0x26, as the game's HUD (0x1B4E0)
+};
+
 struct SatViewState
 {
   bool on = false;                          // this is the clone (spikeofe, SatelliteClone = 1)
@@ -78,5 +94,6 @@ struct SatViewState
   std::string title = "SPIKEOUT SATELLITE";  // ini SatelliteTitle
   std::string ticker = "THIS IS PONMI SPIKEOUTFE STREAMING SYSTEM";   // ini SatelliteTicker
   float camFix[16] = {};                    // Real3D eye space -> eye space (column major), our camera / the game's
+  SatHud hud;
 };
 extern SatViewState g_satView;

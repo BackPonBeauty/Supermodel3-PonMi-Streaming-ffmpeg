@@ -87,7 +87,7 @@ public:
 	 * of the 8-bit tile set, palette bank 0): a title at the top centre, the followed player's name cut out of the
 	 * game's HUD (top surface, x 40-96 y 8-24) below it while in a game, and a line scrolling at the bottom.
 	 */
-	void RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker);
+	void RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker, const struct SatHud *hud = nullptr);
 
 	/*
 	 * EndFrame(void):

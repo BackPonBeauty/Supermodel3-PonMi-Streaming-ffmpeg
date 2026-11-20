@@ -45,7 +45,7 @@ public:
 	const UINT8 *SatVRAM(void) const { return m_vram; }
 	const UINT32 *SatRegs(void) const { return m_regs; }
 	const UINT32 *SatPal(int i) const { return m_pal[i]; }
-	void SatOverlay(bool inGame, const std::string &title, const std::string &ticker);
+	void SatOverlay(bool inGame, const std::string &title, const std::string &ticker, const struct SatHud *hud = nullptr);
 	/*
 	 * SaveState(SaveState):
 	 *
