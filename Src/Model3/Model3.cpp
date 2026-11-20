@@ -9322,6 +9322,45 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
       };
       applyPatches("SpikeoutStartArea", startPatches, sizeof(startPatches) / sizeof(startPatches[0]));
     }
+    // StageTestMenu=1 (default 0, 11/20, owner): the Test button opens the developers' test menu, at STAGE TEST.
+    // The game runs on a major state (0x104008, next one in 0x10400A; names at 0x7EEF0, functions at 0xA0458 + n x 4):
+    // 16/17 TEST_INT/DSP is the operator test menu, 18/19 DBG_TEST_INT (0x4C38C) / DBG_TEST_DSP (0x4C4E8) the
+    // developers' one. DBG_TEST_DSP runs step 0x10400B through 0xB0DF0 (15 tests x {entry, every frame}); STAGE TEST
+    // is steps 8/9 (0x68834 / 0x68884: mode 0x31/0x32, screen 0x183E0 / 0x18478). The Test handler (0x12064; with a
+    // link it marks the own link record +0xC: bit 1 = DBG_TEST, 4 = TEST, and every cabinet acts on every record at
+    // 0x1215C; without a link 0x12220) picks DBG_TEST when bit 0x00800000 of 0x104400 is set and no Service button
+    // is held, but nothing in the retail ROM sets that bit (17 other places read it as "debug build"), so only these
+    // two branches are opened:
+    //   Test -> DBG_TEST at STAGE TEST. Service + Test -> the normal test menu.
+    // In a link game all linked cabinets follow (as with the normal test menu).
+    // On STAGE TEST: P1 lever right/up = STAGE REQ + 1, left/down = - 1 (0..15, names at 0x8B960), P1 Jump = load
+    // that stage (0x10402C = REQ, 0x4F4E8: music + model data; the camera stays where the attract demo left it, so
+    // open it on a 3D demo scene - on the "TEAM SPIKEOUT" logo the logo stays in front). MONO AREA (0x104070, names
+    // 0xFFF74DD4): P1 Beat + 1, Charge - 1, Shift = load (moved from P2, see below). Start 2 held + P1 down / up:
+    // the next / previous test (0x4C530). Checked 11/20 on bin64\host: STAGE TEST text, Jump on BASKET2 over a sea
+    // demo scene shows the Diesel Town geometry, SUNSET (1) only turns the background orange.
+    // One cabinet only: not on a streaming server (Streaming = 1).
+    if (m_config["StageTestMenu"].ValueAsDefault<bool>(false))
+    {
+      if (m_config["Streaming"].ValueAsDefault<bool>(false))
+        InfoLog("SpikeoutStageTest: not on a streaming server (Streaming = 1). Not applied.");
+      else
+      {
+        const Spikeout8LinkPatch dbgTestPatches[] =
+        {
+          { 0x120B8, 0x4182005C, 0x60000000 },  // link: beq 0x12114 (debug bit clear -> record +0xC bit 4, TEST) -> nop
+          { 0x12248, 0x41820034, 0x60000000 },  // no link: beq 0x1227C (debug bit clear -> TEST_INT) -> nop
+          { 0x4C4CC, 0x38000000, 0x38000008 },  // DBG_TEST_INT (0x4C38C): first step 0 (unlabelled character test) -> 8 (STAGE TEST)
+          // STAGE TEST's MONO AREA keys were on P2, which Spikeout does not wire (no joystick2): moved to P1 buttons
+          { 0x6891C, 0x57C04801, 0x57C0B801 },  // MONO + 1: P2 right (0x400000) -> P1 Beat (0x100)
+          { 0x68924, 0x57C05001, 0x57C0B801 },  // MONO + 1: P2 up (0x200000) -> P1 Beat
+          { 0x68930, 0x57C04001, 0x57C0B001 },  // MONO - 1: P2 left (0x800000) -> P1 Charge (0x200)
+          { 0x68938, 0x57C05801, 0x57C0B001 },  // MONO - 1: P2 down (0x100000) -> P1 Charge
+          { 0x68968, 0x77C00008, 0x73C00400 },  // MONO load: andis. 0x80000 (P2 Jump) -> andi. 0x400 (P1 Shift)
+        };
+        applyPatches("SpikeoutStageTest", dbgTestPatches, sizeof(dbgTestPatches) / sizeof(dbgTestPatches[0]));
+      }
+    }
   }
 
   // Configure CPU and PCI bridge
