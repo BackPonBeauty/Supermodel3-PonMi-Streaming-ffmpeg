@@ -24,11 +24,13 @@
 - **Automatic port forwarding with UPnP** — in most homes no router setup is needed
 - **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
 - **H.264 / H.265** video, Opus audio
-- **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one slot per Discord account, old versions cannot connect
+- **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one PonLuncher per PC, one slot per Discord account, old versions cannot connect
+- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker)
 
 ### Spikeout FE changes
 
 - **5–8 players:** players 5–8 get their own costume colours (made from your own ROM when the game starts; no pictures are shipped), their own name colours on the HUD, and the KO / PK counters and ally stats for 8 players
+- **Bonus stages:** players 5–8 get the bonus-stage scores too (all three bonus stages), and their K.O. counts are shown correctly
 - **Joining a running game:** a player who joins always joins **GAME A**, the game already in progress
 - **Time limit:** with 5 or more players in a game, the in-game countdown is held at 99. With 4 or fewer it runs as in the original
 - **3-minute mode is blocked:** pressing START while holding Shift + Beat + Charge + Jump does nothing
@@ -45,7 +47,7 @@
 
 ## ⚙️ Specifications and limits
 
-- **One player per slot** (no spectators). A slot in use cannot be joined
+- **One player per slot** (no streamed spectators; the satellite node 09 shows the game on the host PC). A slot in use cannot be joined
 - **When a player disconnects, their character stands still** (it does not become a bot). The next person who joins that slot takes control
 - **3 minutes without input disconnects you automatically** (a warning is shown for the last 30 seconds)
 - **Connecting over the internet requires Discord sign-in.** Without sign-in you can only connect from the same PC or your home network
@@ -59,21 +61,26 @@
 
 ## 📦 Package contents (host)
 
+One folder per node, next to the launcher (since 20261120):
+
 ```
-spikeout8/
-├── host/
-│   ├── PonLuncher.exe          ← launcher (start here)
+PonMi/
+├── PonLuncher.exe              ← launcher (start here)
+├── Config/
+│   └── PonLuncher.ini          ← the launcher's settings
+├── Roms/                       ← put your ROM files here
+├── 00/                         ← single player / client
+├── 01/                         ← slot 1
 │   ├── supermodel.exe
-│   ├── Config/
-│   │   ├── Supermodel_01.ini   ← slot 1 (… Supermodel_08.ini)
-│   │   └── …
+│   ├── Config/Supermodel.ini
 │   ├── NVRAM/
-│   ├── Roms/                   ← put your ROM files here
 │   └── Assets/
-└── waypoints.txt               ← routes for the bots
+├── 02/ … 08/                   ← slots 2–8 (the same)
+└── 09/                         ← satellite (spectator) node
 ```
 
-A client only needs the same `supermodel.exe`, `Config/Supermodel.ini` and `Roms/`.
+Each node folder has its own `supermodel.exe`, `Config/Supermodel.ini` and `NVRAM/`. The ROMs in `PonMi/Roms/` are used by every node.
+A client only needs `PonMi/00/` and the ROM in `PonMi/Roms/`.
 
 > ⚠️ ROM files are not included. Use ROMs you own.
 
@@ -131,7 +138,7 @@ Allow `supermodel.exe` on both private and public networks.
 
 ### 2. Add the ROM
 
-Put the ROM file (`spikeofe.zip` etc.) in `host/Roms/`.
+Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
 
 ### 3. Start PonLuncher
 
@@ -144,6 +151,7 @@ Put the ROM file (`spikeofe.zip` etc.) in `host/Roms/`.
    - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
    - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
    - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
+   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn. Its title and ticker are `SatelliteTitle` / `SatelliteTicker` in `PonMi/09/Config/Supermodel.ini`
 3. **SLOTS**: choose a mode for each slot
 
 | Mode | Meaning |
@@ -161,7 +169,7 @@ Put the ROM file (`spikeofe.zip` etc.) in `host/Roms/`.
 
 ## 🕹️ Playing (client)
 
-1. Start `supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
+1. Start `PonMi/00/supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
 2. The lobby opens. Press LOGIN under **Discord** at the top
 3. In the host list, press a **green slot (free)**
 4. Once connected, the game screen appears
