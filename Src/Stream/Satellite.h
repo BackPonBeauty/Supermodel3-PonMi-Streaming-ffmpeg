@@ -36,6 +36,8 @@ struct SatCloneState
   bool on = false;
   int mirror = 0;                           // ini SatelliteMirror: copy the followed node's link block into our RAM every frame
   int node = 0;                             // the cabinet we follow (1-based), 0 = not linked yet
+  int view = 0;                             // 11/21 (owner): the player (1-8) our chase camera / HUD shows; 0 = node. The node
+                                            // itself is kept (no switches mid-area any more - the clone went out of step)
   int numMachines = 0;
   bool switched = false;                    // node changed since Model3.cpp last looked
   bool havePacket = false;
@@ -84,10 +86,12 @@ struct SatHud
   int nBoss = 0;
   char name[16] = {};                      // 11/21: the followed player's name (name table, by character)
   int nAlly = 0;                            // 11/21 (owner): the other players in the game (name, life), left side
-  SatHudBoss ally[7] = {};
-  int allySlot[7] = {};
-  uint32_t allyCol[7] = {};                 // 11/21: their name colour (0xAABBGGRR) from the game's name images, 0 = unknown
-  bool allyBot[7] = {};                     // 11/21: their cabinet is a bot (link record +0x2FC = "BOT!") -> "_BOT"
+  SatHudBoss ally[8] = {};
+  int allySlot[8] = {};
+  uint32_t allyCol[8] = {};                 // 11/21: their name colour (0xAABBGGRR) from the game's name images, 0 = unknown
+  bool allyBot[8] = {};                     // 11/21: their cabinet is a bot (link record +0x2FC = "BOT!") -> "_BOT"
+  int allySp[8] = {};                       // 11/21: their special stock (Rob +0x3F25, 0-5) -> lightning marks after the bar
+  uint32_t selfCol = 0;                     // 11/22: the shown player's name colour (as allyCol), 0 = unknown
   bool selfBot = false;                     // 11/21: their player slots (0-7), for their name colours
   int self = 0;                             // 11/21: the followed node (1-8)
   bool loading = false;                     // 11/21: a join / an area or stage change is on: LOADING... in the middle

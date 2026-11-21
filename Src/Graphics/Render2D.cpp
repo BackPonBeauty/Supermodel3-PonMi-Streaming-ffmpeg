@@ -488,7 +488,10 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 	if (inGame && hud && hud->valid && hud->name[0])
 	{
 		uint32_t col = 0xFFFFFFFFu;
-		if (m_drawBuffers[1])
+		// 11/22 (owner: the name was pale): the colour of the game's name image for that player (as the ally list) first;
+		// the HUD sample below only when it is not known yet (the HUD shows the clone's own player, not the shown one).
+		if (hud->selfCol) col = hud->selfCol | 0xFF000000u;   // (not kept as the player's fallback: it is the boss's while a boss is shown)
+		else if (m_drawBuffers[1])
 		{
 			const uint32_t *src = m_drawBuffers[1]->data;
 			int fx = -1;
@@ -563,7 +566,7 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 		bar((W - bw) / 2, nameY + 8 * nameSc + 4, bw, 6, hud->hp, hud->hpMax, col);   // 11/21: under the 3x name
 
 		// 11/21 (owner): the other players on the left - name, then a life bar (same colours as the followed one)
-		for (int i = 0; i < hud->nAlly && i < 7; i++)
+		for (int i = 0; i < hud->nAlly && i < 8; i++)   // 11/22: 8 (all players while a boss is shown)
 		{
 			const SatHudBoss &a = hud->ally[i];
 			const int ay = 80 + i * 12;   // 11/21: below STAGE - AREA
@@ -573,6 +576,38 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 			int ar = a.hpMax > 0 ? a.hp * 100 / a.hpMax : 0;
 			uint32_t ac = ar > 50 ? 0xFF40E040u : ar > 25 ? 0xFF20D0F0u : 0xFF3030F0u;
 			bar(4 + 12 * 8, ay + 1, 64, 6, a.hp, a.hpMax, ac);   // 11/21: after up to 11 letters (TENSHIN_BOT)
+			// 11/21 (owner): their special stock as lightning marks after the bar - drawn here (the game's font has no such
+			// mark): 8x8, yellow with a dark edge, one per stock (5 at most).
+			{
+				static const char *bolt[8] = {
+					"...##...",
+					"..##....",
+					".##.....",
+					"#####...",
+					"...##...",
+					"..##....",
+					".##.....",
+					"##......" };
+				const int sp = hud->allySp[i] < 0 ? 0 : hud->allySp[i] > 5 ? 5 : hud->allySp[i];
+				for (int k = 0; k < sp; k++)
+				{
+					const int bx = 4 + 12 * 8 + 64 + 4 + k * 8, by = ay;
+					for (int y = 0; y < 8; y++)
+						for (int x = 0; x < 8; x++)
+						{
+							if (bolt[y][x] != '#') continue;
+							for (int oy = -1; oy <= 1; oy++)   // dark edge round the mark
+								for (int ox = -1; ox <= 1; ox++)
+								{
+									int nx = x + ox, ny = y + oy;
+									bool inside = nx >= 0 && nx < 8 && ny >= 0 && ny < 8 && bolt[ny][nx] == '#';
+									if (!inside && bx + nx >= 0 && bx + nx < W && by + ny >= 0 && by + ny < H && m_satBuf[(by + ny) * W + bx + nx] == 0)
+										put(bx + nx, by + ny, 0xFF000000u);
+								}
+							put(bx + x, by + y, 0xFF20E0FFu);   // yellow (0xAABBGGRR)
+						}
+				}
+			}
 		}
 
 		const int bbw = 144, rowH = 12, top = H - 20 - 2 - 4;   // above the 2x ticker band

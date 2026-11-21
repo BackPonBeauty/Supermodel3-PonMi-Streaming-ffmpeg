@@ -102,7 +102,8 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 		g_satClone.on = true;
 		g_satView.on = true;
 		g_satView.hideUI = m_config["SatelliteHideUI"].ValueAsDefault<int>(1);
-		g_satView.cam = m_config["SatelliteCam"].ValueAsDefault<int>(0);
+		g_satView.cam = 3;	// 11/21 (owner): always our camera - the game's own camera moved over to the shown player (g_satClone.view)
+		                  	// while the clone keeps its node (1 = the chase camera from behind)
 		g_satView.vpLog = m_config["SatelliteVpLog"].ValueAsDefault<int>(0);
 		g_satView.overlay = m_config["SatelliteOverlay"].ValueAsDefault<int>(1);
 		g_satView.title = m_config["SatelliteTitle"].ValueAsDefault<std::string>(g_satView.title);
@@ -791,28 +792,39 @@ void CSimNetBoard::CloneChoose(const std::vector<std::vector<char>>& segs, const
 		}
 		if (next_ && slog) { fprintf(slog, "f=%u LEAVE %d (state %d next) -> %d\n", frame, cur, nextState(cur), next_); fflush(slog); }
 	}
-	else if (session(cur) && playing(cur) && g_satClone.loadingNow)
-	{
-		// 11/21 (owner): when the area / stage change starts (LOADING...), follow the lowest-numbered node playing in
-		// this game - straight away, once per change.
-		for (int m = 1; m <= n && !next_; m++)
-			if (playing(m) && g_satClone.group[m] == g_satClone.group[cur])
-				next_ = m;
-		if (next_ == cur) next_ = 0;
-		if (next_ && slog) { fprintf(slog, "f=%u LOADING %d -> %d (lowest node)\n", frame, cur, next_); fflush(slog); }
-	}
 	else if (session(cur))
 	{
-		if (m_cloneInterval > 0 && playing(cur) && ++m_cloneTimer >= m_cloneInterval && m_cloneStable >= 300 && alive(cur))
+		// 11/21 (owner): who is shown is the chase camera / HUD's player (g_satClone.view); 11/22 the node follows it below
+		// when the link is quiet (the view alone otherwise, e.g. at LOADING):
+		// at the start of an area / stage change (LOADING...) the lowest-numbered player of this game, then the next one
+		// every SatelliteInterval - players on the field (Rob +0 bit 1) with HP. One that has left the field (dead,
+		// continue screen, gone) is moved off at once.
+		auto shown = [&](int m) { return m >= 1 && m <= n && playing(m) && g_satClone.group[m] == g_satClone.group[cur] && alive(m) && g_satClone.robOn[m]; };
+		static bool wasLoading = false;
+		int v = g_satClone.view >= 1 && g_satClone.view <= n ? g_satClone.view : cur, nv = 0;
+		if (g_satClone.loadingNow && !wasLoading)
 		{
-			m_cloneTimer = 0;
-			for (int d = 1; d < n && !next_; d++)
-			{
-				int m = (cur - 1 + d) % n + 1;
-				if (playing(m) && g_satClone.group[m] == g_satClone.group[cur] && alive(m))
-					next_ = m;
-			}
+			for (int m = 1; m <= n && !nv; m++)
+				if (playing(m) && g_satClone.group[m] == g_satClone.group[cur] && alive(m)) nv = m;
+			if (nv && slog) { fprintf(slog, "f=%u LOADING view %d -> %d (lowest)\n", frame, v, nv); fflush(slog); }
 		}
+		else if (!g_satClone.loadingNow && (!shown(v) || (m_cloneInterval > 0 && ++m_cloneTimer >= m_cloneInterval)))
+		{
+			for (int d = 1; d <= n && !nv; d++)
+			{
+				int m = (v - 1 + d) % n + 1;
+				if (shown(m)) nv = m;
+			}
+			if (nv || shown(v)) m_cloneTimer = 0;
+			if (nv && nv != v && slog) { fprintf(slog, "f=%u VIEW %d -> %d\n", frame, v, nv); fflush(slog); }
+			// 11/22 (owner): the node itself goes too, in plain play only (the link unchanged for 5 s, no join, our node
+			// alive, the next one alive on the field). Tested with satsync.txt: 285 switches, 09 kept every player's and
+			// enemy's position / HP equal to the node it followed.
+			if (nv && nv != cur && m_cloneStable >= 300 && alive(cur))
+				next_ = nv;
+		}
+		wasLoading = g_satClone.loadingNow;
+		if (nv) g_satClone.view = nv;
 	}
 	else if (!startPressed(cur))
 	{
@@ -825,6 +837,7 @@ void CSimNetBoard::CloneChoose(const std::vector<std::vector<char>>& segs, const
 		printf("[Satellite] Clone: node %d -> %d (state %d, group %d)\n", cur, next_, g_satClone.linkState[next_], g_satClone.group[next_]);
 		if (slog) { fprintf(slog, "f=%u SWITCH %d -> %d\n", frame, cur, next_); fflush(slog); }
 		g_satClone.node = next_;
+		g_satClone.view = next_;	// 11/21: the camera goes with it
 		g_satClone.switched = true;
 		g_satClone.mirrorOnce = true;
 		m_cloneTimer = 0;
