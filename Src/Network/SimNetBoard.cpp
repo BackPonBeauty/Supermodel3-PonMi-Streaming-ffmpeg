@@ -751,6 +751,7 @@ void CSimNetBoard::CloneChoose(const std::vector<std::vector<char>>& segs, const
 			if (v[1] != 0)
 				joining = true;
 		}
+		g_satClone.joining = joining;   // 11/21: LOADING... on the satellite
 		if (sig != m_cloneSig || joining)
 			m_cloneStable = 0;
 		else if (m_cloneStable < 1000000)
@@ -789,6 +790,16 @@ void CSimNetBoard::CloneChoose(const std::vector<std::vector<char>>& segs, const
 				next_ = m;
 		}
 		if (next_ && slog) { fprintf(slog, "f=%u LEAVE %d (state %d next) -> %d\n", frame, cur, nextState(cur), next_); fflush(slog); }
+	}
+	else if (session(cur) && playing(cur) && g_satClone.loadingNow)
+	{
+		// 11/21 (owner): when the area / stage change starts (LOADING...), follow the lowest-numbered node playing in
+		// this game - straight away, once per change.
+		for (int m = 1; m <= n && !next_; m++)
+			if (playing(m) && g_satClone.group[m] == g_satClone.group[cur])
+				next_ = m;
+		if (next_ == cur) next_ = 0;
+		if (next_ && slog) { fprintf(slog, "f=%u LOADING %d -> %d (lowest node)\n", frame, cur, next_); fflush(slog); }
 	}
 	else if (session(cur))
 	{

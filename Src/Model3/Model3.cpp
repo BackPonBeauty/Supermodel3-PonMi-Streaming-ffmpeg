@@ -286,7 +286,6 @@ static int g_spikeoutAIChar = -1;   // AIChar (11/14): the character a bot picks
 static bool g_spikeoutAIRandSel = true;   // AIrandSel (11/17): 1 = a continue's select picks a character at random (LEFT 0-3
                                           // times), 0 = keep the same one. Only without AIChar (a set AIChar never picks at random)
 static bool g_spikeoutAIShift = false;  // AIShift=1: hold Shift next to an enemy (off for now)
-static bool g_spikeoutAISpecial = false; // AISpecial=1: special attack (Beat+Charge+Jump) under 30% life (per cabinet; off: suspected link desync)
 static int g_spikeoutAIRoute = -1;       // AIRoute=0..3 (11/10): force the Diesel Town branches - 0 front Mall, 1 back Mall,
                                          // 2 front Shipyard, 3 back Shipyard; -1 (default) = cabinet 02 picks at random
 static int g_spikeoutAIRoute3 = -1;      // AIRoute3=0/1 (11/11): area 30's branch - 0 Door#1, 1 Door#42; -1 (default) = 02 picks at random
@@ -376,6 +375,10 @@ static bool SpikeoutA75BossOnly(const UINT8 *ram)
 	return !(arflg & 0x10u);
 }
 static bool g_spikeoutAITargetMarker = false;
+// BotCanOpenGate=0/1 (11/21, owner; default 1 = as before): 0 = the bots never break a gate (shutters, the doors handled
+// as gates, the recorded jump-kick spots, area 44's hidden-route doors). They wait 3.5 short of it until a player
+// breaks it; once it is broken they go through as before. Doors that open by walking into them still open.
+static bool g_spikeoutBotCanOpenGate = true;
 struct SpikeoutMarker { UINT32 f; int on; float cam[3], itr[3], me[3], tg[3]; unsigned colour; };
 SpikeoutMarker g_spkMarker = { 0, 0, { 0 }, { 0 }, { 0 }, { 0 }, 0 };
 // 11/17 AIWallView=1 (bot cabinets, display only): the walls round the bot, from the live wall list *(*(0x106168)+8)
@@ -434,66 +437,7 @@ static inline bool SpikeoutInStage(const UINT8 *ram)
 }
 static inline bool SpikeoutAttract(const UINT8 *ram) { return ram[0x10402C ^ 3] == 6 && !SpikeoutInStage(ram); }
 
-// JoinLog=1: diagnostic for mid-game joins (e.g. node 5 starts alone, then others join). Writes joinlog.txt
-// whenever any of the link/join state below changes: own mode/submode, own link block 0x140100 (+4 state,
-// +6, +8 flags, +0x28 in-game mask, +0x3C, +0x200), 0x140030 transfer phase, presence mask 0x14002C, and for
-// every node 1-8 the record its pointer in 0x150060+4n points at (+4, +8, +0x28, +0x3C, +0x110, +0x200).
-static bool g_spikeoutJoinLog = false;
-static FILE *g_joinLogFile = nullptr;
 static const UINT8 *SpikeoutMapPtr(UINT32 ptr, UINT32 len);
-static UINT32 g_joinWatchAddr = 0;   // fa_scenario+0x54 (bit31 = "no joining now"): writes to it are logged with PC/LR
-static void SpikeoutJoinLog(const UINT8 *ram)
-{
-	FILE *&f = g_joinLogFile; static char prev[2048] = "";
-	char buf[2048]; int n = 0;
-	auto R32 = [&](UINT32 a) { a &= 0x7FFFFC; return *(const UINT32 *) &ram[a]; };
-	auto R16 = [&](UINT32 a) { a &= 0x7FFFFE; return (unsigned) *(const UINT16 *) &ram[a ^ 2]; };
-	auto R8  = [&](UINT32 a) { a &= 0x7FFFFF; return (unsigned) ram[a ^ 3]; };
-	UINT32 scn = R32(0x10413C) & 0x7FFFFF;
-	g_joinWatchAddr = (scn >= 0x100000 && scn < 0x7FF000) ? scn + 0x54 : 0;
-	n += snprintf(buf + n, sizeof(buf) - n, "area=%u scn=%06X s54=%08X arflg=%08X | ", R8(0x10402D), scn,
-	              g_joinWatchAddr ? R32(scn + 0x54) : 0, g_joinWatchAddr ? R32(scn + 0x284) : 0);
-	// area event script (interpreter 0x5A990): pointer scn+0x10, per-command done bits scn+0x20.. (MSB = command 0)
-	UINT32 scr = g_joinWatchAddr ? R32(scn + 0x10) : 0;
-	if (g_joinWatchAddr)
-		n += snprintf(buf + n, sizeof(buf) - n, "scr=%08X done=%08X %08X %08X %08X s00=%08X s0C=%08X g400=%08X | ", scr, R32(scn + 0x20), R32(scn + 0x24), R32(scn + 0x28), R32(scn + 0x2C),
-		              R32(scn), R32(scn + 0x0C), R32(0x104400));
-	static UINT32 dumpedScr = 0xFFFFFFFF;
-	if (scr && scr != dumpedScr && (f || (f = fopen("joinlog.txt", "w"))))
-	{
-		dumpedScr = scr;
-		fprintf(f, "f=%u SCRIPT %08X (area %u):\n", g_ppcTraceFrame, scr, R8(0x10402D));
-		UINT32 p = scr;
-		for (int idx = 0; idx < 128; idx++)
-		{
-			const UINT8 *h = SpikeoutMapPtr(p & ~3u, 8);
-			if (!h) { fprintf(f, "  (unreadable %08X)\n", p); break; }
-			auto B = [&](UINT32 a) -> unsigned { const UINT8 *q = SpikeoutMapPtr(a & ~3u, 4); return q ? q[(a & 3) ^ 3] : 0; };
-			unsigned type = B(p), op = B(p + 1), len = B(p + 2);
-			fprintf(f, "  #%02d +%03X type=%u op=%02X len=%u :", idx, p - scr, type, op, len);
-			for (unsigned k = 0; k < len && k < 24; k++) fprintf(f, " %02X", B(p + k));
-			fprintf(f, "\n");
-			if (type == 0 || len == 0) break;
-			p += len;
-		}
-		fflush(f);
-	}
-	n += snprintf(buf + n, sizeof(buf) - n, "node=%u/%u mode=%u sub=%u stg=%u ph=%04X pres=%08X | own b4=%02X h6=%04X w8=%08X m28=%08X h3C=%04X w200=%08X |",
-	              R8(0x10065B), R8(0x10065A), R8(0x10400A), R8(0x10400B), R8(0x10402C), R16(0x140030), R32(0x14002C),
-	              R8(0x140104), R16(0x140106), R32(0x140108), R32(0x140128), R16(0x14013C), R32(0x140300));
-	for (int k = 1; k <= 8; k++)
-	{
-		UINT32 p = R32(0x150060 + 4 * k) & 0x7FFFFF;
-		if (p < 0x100000 || p > 0x7FF000) { n += snprintf(buf + n, sizeof(buf) - n, " N%d=-", k); continue; }
-		n += snprintf(buf + n, sizeof(buf) - n, " N%d@%06X b4=%02X w8=%08X m28=%08X h3C=%04X w110=%08X w200=%08X", k, p,
-		              R8(p + 4), R32(p + 8), R32(p + 0x28), R16(p + 0x3C), R32(p + 0x110), R32(p + 0x200));
-	}
-	if (!strcmp(buf, prev)) return;
-	strcpy(prev, buf);
-	if (!f && !(f = fopen("joinlog.txt", "w"))) return;
-	fprintf(f, "f=%u %s\n", g_ppcTraceFrame, buf);
-	fflush(f);
-}
 // ItemLog=1 (11/12): diagnostic for items on the floor (pre-placed and enemy drops). Area objects live at
 // 0x1F4000 + i*0xBC, count = halfword *(0x10411C)+0x10. Per object: +0 flags, +4 def pointer (def+0x21 =
 // pickup bits: 01 HP1/4, 02 time, 04 SP, 08 invincible, 10 HP1/2, 20 HP1/8), +0x2C/30/34 x/y/z, +0x52 timer,
@@ -586,91 +530,6 @@ static void SpikeoutItemLog(const UINT8 *ram)
 	}
 	init = true;
 	if (any) fflush(f);
-}
-// JoinLog=1 also writes synclog.txt: every 60 ticks of the link-synced counter 0x1000A8, a 16-bit hash of
-// each 4 KB page of RAM 0x100000-0x1FFFFF and 0x360000-0x36FFFF plus a few key values. Lines with the same
-// sync value from two cabinets should match except for node-local pages (0x140000 link block etc.); the
-// first pages that differ after a mid-game join show which state the join transfer missed.
-static void SpikeoutSyncLog(const UINT8 *ram)
-{
-	static FILE *f = nullptr; static UINT32 lastSync = 0xFFFFFFFF;
-	UINT32 sync = *(const UINT32 *) &ram[0x1000A8];
-	if (sync == lastSync || (sync % 60) != 0) return;
-	lastSync = sync;
-	if (!f && !(f = fopen("synclog.txt", "w"))) return;
-	UINT32 scn = *(const UINT32 *) &ram[0x10413C] & 0x7FFFFF;
-	fprintf(f, "sync=%u f=%u node=%u area=%u stg=%u mask=%08X arflg=%08X tm=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X P:",
-	        sync, g_ppcTraceFrame, (unsigned) ram[0x10065B ^ 3], (unsigned) ram[0x10402D ^ 3], (unsigned) ram[0x10402C ^ 3],
-	        *(const UINT32 *) &ram[0x14002C], (scn >= 0x100000 && scn < 0x7FF000) ? *(const UINT32 *) &ram[scn + 0x284] : 0,
-	        (unsigned) *(const UINT16 *) &ram[0x106E00 ^ 2], (unsigned) *(const UINT16 *) &ram[0x106E02 ^ 2],
-	        (unsigned) *(const UINT16 *) &ram[0x106E04 ^ 2], (unsigned) *(const UINT16 *) &ram[0x106E06 ^ 2],
-	        (unsigned) *(const UINT16 *) &ram[0x106E08 ^ 2], (unsigned) *(const UINT16 *) &ram[0x106E0A ^ 2],
-	        (unsigned) *(const UINT16 *) &ram[0x106E0C ^ 2], (unsigned) *(const UINT16 *) &ram[0x106E0E ^ 2]);
-	auto page = [&](UINT32 base) {
-		UINT32 h = 2166136261u;
-		const UINT32 *w = (const UINT32 *) &ram[base];
-		for (int i = 0; i < 0x400; i++) { h ^= w[i]; h *= 16777619u; }
-		return (h ^ (h >> 16)) & 0xFFFF;
-	};
-	for (UINT32 b = 0x100000; b < 0x200000; b += 0x1000) fprintf(f, "%04X", page(b));
-	fprintf(f, " Q:");
-	for (UINT32 b = 0x360000; b < 0x370000; b += 0x1000) fprintf(f, "%04X", page(b));
-	// finer: 64-byte chunks of 0x110000-0x11FFFF and 0x1D4000-0x1D7FFF (diverged first after node 1 joined)
-	auto chunk = [&](UINT32 base) {
-		UINT32 h = 2166136261u;
-		const UINT32 *w = (const UINT32 *) &ram[base];
-		for (int i = 0; i < 16; i++) { h ^= w[i]; h *= 16777619u; }
-		return (h ^ (h >> 16)) & 0xFFFF;
-	};
-	fprintf(f, " R:");
-	for (UINT32 b = 0x110000; b < 0x120000; b += 0x40) fprintf(f, "%04X", chunk(b));
-	fprintf(f, " S:");
-	for (UINT32 b = 0x1D4000; b < 0x1D8000; b += 0x40) fprintf(f, "%04X", chunk(b));
-	// game objects: players 0-7 (0x1A0000) and enemies 0-15 (0x1C0000), 0x4000 each: active bit, x, z, HP
-	fprintf(f, " O:");
-	for (int k = 0; k < 24; k++)
-	{
-		UINT32 r = (k < 8 ? 0x1A0000 + k * 0x4000 : 0x1C0000 + (k - 8) * 0x4000);
-		UINT32 fl = *(const UINT32 *) &ram[r];
-		if (!(fl & 1)) { fprintf(f, " %c%d=-", k < 8 ? 'p' : 'e', k < 8 ? k : k - 8); continue; }
-		fprintf(f, " %c%d=%.1f,%.1f,%d", k < 8 ? 'p' : 'e', k < 8 ? k : k - 8, *(const float *) &ram[r + 0x380], *(const float *) &ram[r + 0x388],
-		        (int) (short) *(const UINT16 *) &ram[(r + 0x3F02) ^ 2]);
-	}
-	fprintf(f, "\n");
-	fflush(f);
-	// syncraw.txt: raw words of the ranges that diverged on a late-joining node 1 (11/11 run: only 01 differed in
-	// these right after its join) plus the SDA pointer table 0x104100-0x1041FF that says what they belong to.
-	// Written on the first 3 ticks after the in-game mask changes and every 600 ticks.
-	static FILE *rf = nullptr; static UINT32 lastMask = 0; static int burst = 0;
-	UINT32 mask = *(const UINT32 *) &ram[0x14002C] & 0xFF000000;
-	if (mask != lastMask) { lastMask = mask; burst = 3; }
-	if (burst > 0 || (sync % 600) == 0)
-	{
-		if (burst > 0) burst--;
-		if (rf || (rf = fopen("syncraw.txt", "w")))
-		{
-			static const UINT32 rr[][2] = { {0x104100, 0x104200}, {0x111300, 0x111340}, {0x111E80, 0x112440}, {0x117B00, 0x117B40},
-			                                {0x11CB80, 0x11CCC0}, {0x11D940, 0x11D980}, {0x11E000, 0x11E040} };
-			fprintf(rf, "sync=%u f=%u node=%u mask=%08X\n", sync, g_ppcTraceFrame, (unsigned) ram[0x10065B ^ 3], mask);
-			for (auto &r : rr)
-			{
-				for (UINT32 a = r[0]; a < r[1]; a += 0x20)
-				{
-					fprintf(rf, "  %06X:", a);
-					for (UINT32 k = 0; k < 0x20; k += 4) fprintf(rf, " %08X", *(const UINT32 *) &ram[a + k]);
-					fprintf(rf, "\n");
-				}
-			}
-			fflush(rf);
-		}
-	}
-}
-
-static void SpikeoutJoinWatch(UINT32 addr, UINT32 data, int size)
-{
-	if (!g_joinLogFile) return;
-	fprintf(g_joinLogFile, "f=%u WRITE%d %08X=%08X PC=%08X LR=%08X\n", g_ppcTraceFrame, size, addr, data, ppc_get_pc(), ppc_get_lr());
-	fflush(g_joinLogFile);
 }
 static void SpikeoutScenarioLog(const UINT8 *ram)
 {
@@ -2442,11 +2301,14 @@ static void SpikeoutSessionTick(const UINT8 *ram)
 	g_sessSummary = out;
 }
 
+#define SPIKEOUT_LURE_MARK 0x4C550000u   // "LU" + slot
+static int g_aiLureSlotOut = -1;     // the boss slot we lure / wait with (-1 none), written by SpikeoutP1StateTick
 static void SpikeoutP1StateTick(UINT8 *ram)   // every frame: mark (bot) or unmark (human) our own link record
 {
 	if (!g_spikeofe8task || g_satClone.on) return;   // 11/20: the satellite clone keeps the followed node's mark
 	bool bot = g_spikeoutAI && !g_streamHumanJoined.load();   // a streaming client that took this slot is a human
 	*(UINT32 *) &ram[0x140100 + 0x2FC] = bot ? SPIKEOUT_BOT_MARK : 0;
+	*(UINT32 *) &ram[0x140100 + 0x2D8] = (bot && g_aiLureSlotOut >= 0) ? (SPIKEOUT_LURE_MARK | (UINT32) g_aiLureSlotOut) : 0;   // 11/21: the boss we lure
 }
 static bool SpikeoutP1Started(const UINT8 *ram)   // a human on another linked cabinet has started
 {
@@ -2461,6 +2323,43 @@ static bool SpikeoutP1Started(const UINT8 *ram)   // a human on another linked c
 		if ((st == 2 || st == 4) && mark != SPIKEOUT_BOT_MARK) return true;
 	}
 	return false;
+}
+// 11/21 (owner): every cabinet a bot -> cabinet 01 starts on its own, the other bots join once it has started. "Every
+// cabinet a bot" = every other cabinet's link record is there and carries the bot mark (a LOCAL cabinet, or a STREAM
+// slot - AIPlayer 0, no mark - makes it false: then the bots wait for that human as before). Held 3 s in a row before
+// 01 presses Start (the records of the others arrive a little after the link comes up).
+static bool SpikeoutAllBots(const UINT8 *ram)
+{
+	unsigned total = ram[0x10065A ^ 3];
+	if (total > 8) total = 8;
+	for (unsigned n = 1; n < total; n++)
+	{
+		UINT32 rec = *(const UINT32 *) &ram[0x150060 + 4 * n];
+		if (rec < 0x150000 || rec > 0x160000 - 0x300 || (rec & 3)) return false;   // not there yet
+		if (*(const UINT32 *) &ram[rec + 0x2FC] != SPIKEOUT_BOT_MARK) return false;
+	}
+	return true;
+}
+static bool SpikeoutAnyStarted(const UINT8 *ram)   // another cabinet (bot or not) is at the character select / in a game
+{
+	unsigned total = ram[0x10065A ^ 3];
+	if (total > 8) total = 8;
+	for (unsigned n = 1; n < total; n++)
+	{
+		UINT32 rec = *(const UINT32 *) &ram[0x150060 + 4 * n];
+		if (rec < 0x150000 || rec > 0x160000 - 0x300 || (rec & 3)) continue;
+		unsigned st = ram[(rec + 4) ^ 3];
+		if (st == 2 || st == 4) return true;
+	}
+	return false;
+}
+static bool SpikeoutAllBotStart(const UINT8 *ram, unsigned node)
+{
+	static UINT32 since = 0;
+	if (!SpikeoutAllBots(ram)) { since = 0; return false; }
+	if (node != 1) return SpikeoutAnyStarted(ram);         // 02-08: join once 01 (or anyone) has started
+	if (!since) since = g_ppcTraceFrame ? g_ppcTraceFrame : 1;
+	return g_ppcTraceFrame - since >= 180;                 // 01: start after 3 s of "all bots"
 }
 
 static bool SpikeoutAIWantsStart(const UINT8 *ram)
@@ -2482,7 +2381,7 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 	if (SpikeoutAttract(ram))   // attract (stage id 6 outside a game; the real Shipyard is also 6)
 	{
 		played = false;
-		return hasSelf && SpikeoutP1Started(ram);   // a human on any cabinet has started (11/11: was 01 only; 11/16: from the link records, no file)
+		return hasSelf && (SpikeoutP1Started(ram) || SpikeoutAllBotStart(ram, node));   // a human on any cabinet has started (11/11: was 01 only; 11/16: from the link records, no file); 11/21: all bots -> 01 starts
 	}
 	UINT32 rob = 0x1A0000 + (node - 1) * 0x4000;
 	int energy = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
@@ -2512,7 +2411,7 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 		played = false;
 		return false;
 	}
-	return hasSelf && SpikeoutP1Started(ram);   // join only once a human has started (the mask alone is just "link up")
+	return hasSelf && (SpikeoutP1Started(ram) || SpikeoutAllBotStart(ram, node));   // join only once a human has started (the mask alone is just "link up"); 11/21: or all bots
 }
 
 static UINT32 g_aiContT0 = 0;    // 11/15: start frame of the current continue attempt (0 = not continuing); the coin / Start timing
@@ -2537,6 +2436,14 @@ static int g_aiBotSt = 0; static UINT32 g_aiBotStF = 0;
 static bool g_aiItemSeekHp = false; // 11/18: the item being gone for this frame is an HP item
 static bool g_aiHolding = false;     // 11/18: we hold a thing this frame (attacks: b b b only, 10% b+c = throw)
 static bool g_aiCrowd4 = false;     // 11/18: 4+ live enemies within 3 (same level) this frame - B+C goes out as the special B+C+J
+static bool g_lureWait = false; static int g_lureWaitSlot = -1;   // 11/21 (2nd): wait mode - a boss is after us (slot) and nothing else to fight
+static int g_aiBossOnMe = -1;      // 11/21: the nearest live boss whose target is us (Rob +0x32E4), -1 none
+static const bool kBossLure = false;   // 11/21 (user, 2nd): the lure to the waypoint is off (code kept)
+// 11/21 (user): while a bot leads a boss (lure) or waits at the lure point with it, the other bots don't attack that boss.
+// The luring cabinet puts SPIKEOUT_LURE_MARK | boss slot at +0x2D8 of its own link record (in the never-used +0x230..+0x2DF;
+// +0x2E0.. carries the satellite inputs, +0x2FC the bot mark); the others read it from the records they get (0x150060 + 4n).
+static UINT32 g_aiLuredMask = 0;     // enemy slots another cabinet's bot is luring (this frame)   // 11/21: at the lure point - wait facing the boss (slot), keeping off it
+static bool g_aiLureOn = false;     // 11/21: leading a boss to the area's lure point this frame (no attacks, no boss escape)
 static bool g_aiItemSeek = false;   // 11/17: going for an item this frame (top priority: no back-off, no boss escape over it)
 static bool g_aiWeaponPress = false;   // 11/17: standing on a weapon to pick up: B+C (pulsed) this frame
 // 11/17 (user, log 23:02): chairs / tables are there from the start and can't be stood on, only picked up - the bots
@@ -2597,6 +2504,10 @@ static bool SpikeoutGatePassedCam(float x, float z)
 	return false;
 }
 struct SpikeoutWpKick { unsigned area; float x, y, z; };
+// 11/21 (user): boss lure. In these areas the LAST line of ../waypoints.txt for the area is not a jump-kick spot but
+// the point a bot leads a boss to (area 87 = PHOENIX's map). See g_aiLureOn.
+static bool SpikeoutLureArea(unsigned a) { return a == 87; }
+static bool g_lureOk[256] = {}; static float g_lureX[256], g_lureZ[256];
 static std::vector<SpikeoutWpKick> g_wpk;
 // Mall area 44 hidden route (11/10): when the pick is the heavy door D#5 (the other way is the A+B gate wall at
 // S#12), the bots follow the area 44 lines of ../waypoints.txt in file order: Beat Door#11/#12 open (it takes two
@@ -2626,16 +2537,20 @@ static void SpikeoutWpKickLoad()
 	if (raw == g_wpkRaw) return;
 	g_wpkRaw = raw;
 	std::vector<SpikeoutWpKick> v;
+	bool lureOk[256] = {}; float lureX[256] = {}, lureZ[256] = {};
 	raw.push_back(0);
 	for (const char *p = raw.data(); *p; )
 	{
 		const char *e = strchr(p, '\n');
 		SpikeoutWpKick w;
-		if (sscanf(p, "area=%u x=%f y=%f z=%f", &w.area, &w.x, &w.y, &w.z) == 4 && w.area != 53 && w.area != 44 && w.area != 47) v.push_back(w);
+		if (sscanf(p, "area=%u x=%f y=%f z=%f", &w.area, &w.x, &w.y, &w.z) == 4 && w.area < 256 && SpikeoutLureArea(w.area))
+		{ lureOk[w.area] = true; lureX[w.area] = w.x; lureZ[w.area] = w.z; }   // 11/21: the boss lure point (the last line wins)
+		else if (sscanf(p, "area=%u x=%f y=%f z=%f", &w.area, &w.x, &w.y, &w.z) == 4 && w.area != 53 && w.area != 44 && w.area != 47) v.push_back(w);
 		if (!e) break;
 		p = e + 1;
 	}
 	g_wpk = v; g_wpkDone.assign(v.size(), false);
+	for (int a = 0; a < 256; a++) { g_lureOk[a] = lureOk[a]; g_lureX[a] = lureX[a]; g_lureZ[a] = lureZ[a]; if (lureOk[a]) printf("[LURE] area %d: lead the boss to (%.2f, %.2f)\n", a, lureX[a], lureZ[a]); }
 	printf("[WPKICK] %u spot(s) loaded, area 44 route %u point(s)\n", (unsigned) v.size(), (unsigned) g_r44.size());
 }
 static int g_aiLogFlee = 0;   // for ai.txt: the target looks like it is running away
@@ -2868,6 +2783,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 {
 	static unsigned fr = 0; fr++;
 	g_aiItemSeek = false;   // 11/17: set again below by the item seek when it runs this call
+	g_aiLureSlotOut = -1;   // 11/21: set again by the lure / wait below
+	g_lureWait = false; g_aiBossOnMe = -1;   // 11/21: set again by the target pick below
 	g_aiWeaponPress = false;
 	unsigned node = ram[0x10065B ^ 3];
 	if (g_spikeoutAILog && node >= 1 && node <= 8 && ram[0x10402D ^ 3]) SpikeoutGateFlagLog(ram, node);
@@ -2972,6 +2889,28 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 		// specials' motions, and the enemy was last hit by that player (enemy +0x1BD0 = its slot) within 3, or else is the
 		// enemy nearest to it within 2.5.
 		UINT32 lockMask = 0;
+		{   // 11/21 (user): bosses another cabinet's bot is luring / waiting with: not attacked (as a held one)
+			unsigned tl = ram[0x10065A ^ 3]; if (tl > 8) tl = 8;
+			g_aiLuredMask = 0;
+			for (unsigned n = 1; n < tl; n++)
+			{
+				UINT32 rec = *(const UINT32 *) &ram[0x150060 + 4 * n];
+				if (rec < 0x150000 || rec > 0x160000 - 0x300 || (rec & 3)) continue;
+				const UINT32 lw = *(const UINT32 *) &ram[rec + 0x2D8];
+				if ((lw & 0xFFFF0000u) == SPIKEOUT_LURE_MARK && (lw & 0xFFFFu) < 20u) g_aiLuredMask |= 1u << (lw & 0xFFFFu);
+			}
+			lockMask |= g_aiLuredMask;
+			// 11/21 (user, 2nd): a boss after US is not attacked by us (as a held one): others first; nothing else -> wait mode
+			float bd = 1e30f;
+			for (int j = 0; j < ne; j++)
+			{
+				UINT32 er = 0x1A0000 + (unsigned) elist[j] * 0x4000;
+				if (ram[(er + 0x73) ^ 3] < 4 || (*(const UINT32 *) &ram[er + 0x32E4] & 0x7FFFFF) != (rob & 0x7FFFFF)) continue;
+				float dx = eex[j] - px, dz = eez[j] - pz, dd = dx * dx + dz * dz;
+				if (dd < bd) { bd = dd; g_aiBossOnMe = elist[j]; }
+			}
+			if (g_aiBossOnMe >= 0) lockMask |= 1u << g_aiBossOnMe;
+		}
 		{
 			unsigned pcL = ram[0x10065A ^ 3]; if (pcL > 8) pcL = 8;
 			auto specMot = [](unsigned chr, int mot) -> bool {
@@ -3106,7 +3045,28 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				float dx = eex[j] - px, dz = eez[j] - pz, d = dx * dx + dz * dz;
 				if (d < bd) { bd = d; boss = sl; }
 			}
-			if (boss >= 0 && (node & 1)) mine = boss;   // 11/17 (user, 2nd): boss first only on odd nodes (1, 3, 5, 7); even nodes as before
+			// 11/21 (user, 3rd): area 87 (PHOENIX's map) - the boss first (the nearest one we can go for; one after US is
+			// left out, as everywhere: wait mode). 11/21 (user, 4th): every area - the boss first whenever no enemy is after
+			// US (no live enemy with +0x32E4 = our Rob); with one after us, the enemies other than bosses come first as before.
+			bool anyOnMe = false;
+			for (int j = 0; j < ne && !anyOnMe; j++)
+				if ((*(const UINT32 *) &ram[0x1A0000 + (unsigned) elist[j] * 0x4000 + 0x32E4] & 0x7FFFFF) == (rob & 0x7FFFFF)) anyOnMe = true;
+			const bool a87Boss = !anyOnMe && boss >= 0;
+			if (a87Boss) mine = boss;
+			(void) boss;   // 11/21 (user, 2nd): no more "boss first" (was: odd nodes) - the enemies other than bosses come first:
+			if (!a75BossOnly && !a87Boss && mine >= 0 && ram[(0x1A0000 + (unsigned) mine * 0x4000 + 0x73) ^ 3] >= 4)
+			{
+				float nb = 1e30f; int nonBoss = -1;
+				for (int j = 0; j < ne; j++)
+				{
+					const int sl = elist[j];
+					if (ram[(0x1A0000 + (unsigned) sl * 0x4000 + 0x73) ^ 3] >= 4) continue;
+					if (hitExcl(sl) || hExcl(sl) || lockExcl(sl) || invul(sl)) continue;
+					float dx = eex[j] - px, dz = eez[j] - pz, d = dx * dx + dz * dz;
+					if (d < nb) { nb = d; nonBoss = sl; }
+				}
+				if (nonBoss >= 0) mine = nonBoss;
+			}
 			float cd = 2.25f; int close = -1;   // 1.5^2 (was 0.8^2)
 			for (int j = 0; j < ne; j++)
 			{
@@ -3122,6 +3082,9 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 		// 11/18 (user): an enemy held by a player (tsukamare) - or one a player is doing a special on - is not attacked: when
 		// no other one could be picked above it stays the target, but as a down one does: wait by it, no swing.
 		g_aiTgtInvul = invul(mine) || lockExcl(mine);
+		// 11/21 (user, 2nd): a boss is after us and there is nothing else for us -> wait mode (late, below)
+		g_lureWait = g_aiBossOnMe >= 0 && (mine < 0 || mine == g_aiBossOnMe);
+		g_lureWaitSlot = g_aiBossOnMe;
 		if (mine >= 0)
 		{
 			UINT32 er = 0x1A0000 + (unsigned) mine * 0x4000;
@@ -3248,6 +3211,21 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// recorded combo instead, gkPh 6).
 				if (!s_aiAttack0Test && specReady && grabbing && !grabAlly && grabHp > 0 && grabHp < 150 && ram[(rob + 0x3F00) ^ 3] != 2) grabSpecial = true;   // holding an enemy, low on life
 				else if (!s_aiAttack0Test && specReady && bossHold) grabSpecial = true;                                            // held by a boss
+				else if (!s_aiAttack0Test && specReady && grabbing && grabAlly && grabHp > 0 && ram[(rob + 0x3F00) ^ 3] != 2)
+				{
+					// 11/21 (user): holding an ALLY with 3+ live enemies around (within 3, height within 1.5, as the crowd
+					// special): the special B+C+J instead of letting go. Not Linda (her hold gives no special, as above).
+					const float myYg = *(const float *) &ram[rob + 0x384];
+					int nNearG = 0;
+					for (unsigned e3 = estart; e3 < 20; e3++)
+					{
+						UINT32 er = 0x1A0000 + e3 * 0x4000;
+						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0) continue;
+						float ox = *(const float *) &ram[er + 0x380] - px, oz = *(const float *) &ram[er + 0x388] - pz;
+						if (ox * ox + oz * oz < 9.0f && fabsf(*(const float *) &ram[er + 0x384] - myYg) < 1.5f) nNearG++;
+					}
+					if (nNearG >= 3) grabSpecial = true; else grabEsc = true;
+				}
 				else if (grabbed || (grabbing && grabAlly)) grabEsc = true;               // held, or holding an ally: get out (inputs at the end)
 			}
 			bool grabEnemy = grabbing && !grabAlly && grabHasPartner && !grabSpecial;   // holding an enemy: knee x2, then a throw (end)
@@ -3599,7 +3577,18 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				teStallKick = stallPush;
 				if (!(a75On && g_aiLogA75 >= 2)) g_aiLogA75 = stallPush ? 11 : (tePush ? 10 : 9);   // a75= in ai.txt: 9 going to the table exit, 10 at it, 11 stuck short of it: kicking there
 			}
-			bool enemyWalk = false;                                   // walking up to an enemy (within 4): no random/stuck high jump
+			// BotCanOpenGate=0 (11/21, owner): a gate to break (table shutter / door handled as a gate, a shutter from game
+			// memory) is not taken - the bot fights as usual, and with no enemy waits 3.5 short of it (gateHold, below).
+			// A broken gate is no longer teShutter / found by the memory search, so the way on is taken as before.
+			bool gateHold = false; float ghX = 0.0f, ghZ = 0.0f;
+			if (!g_spikeoutBotCanOpenGate)
+			{
+				if (teOn && teShutter) { gateHold = true; ghX = tex; ghZ = tez; teOn = false; }
+				if (mgOn && (mgKind == 1 || mgKind == 3)) { if (!gateHold) { gateHold = true; ghX = gtx; ghZ = gtz; } mgOn = false; }
+				wpkIdx = -1;   // recorded jump-kick spots = where gates are kicked
+				teStallKick = false;   // a door stuck shut is not kicked open either (walking into it still opens it)
+			}
+			bool enemyWalk = false;                                  // walking up to an enemy (within 4): no random/stuck high jump
 			g_aiLogPy = py;
 			// Surround: when other players are on our target too, each cabinet attacks from its own side
 			// (node * 45 degrees round it) instead of everyone piling in from the front. Inside 4 of it and more than
@@ -3636,11 +3625,57 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				}
 				else sSlot = -1;
 			}
-			if (a75On && (!found || g_aiLogA75 >= 2))                // in Area 75 start room: exit room first; otherwise if no enemies, head to Area 75 gate
+			// 11/21 (user): boss lure. In an area with a lure point (SpikeoutLureArea, the last waypoints.txt line of the area),
+			// a bot that a live boss (class >= 4) is after (boss Rob +0x32E4 = our Rob) leads it there: more than 6 from the
+			// boss - wait for it; within 6 - walk to the point; within 3.5 - dash. Within 3 of the point: lure off, for the
+			// rest of this area visit. Stops (and may start again) while no boss is after us. a75 = 150 wait, 151 walk, 152 dash.
+			float lureBd2 = 1e30f;
+			{
+				static bool lureOn = false, lureDone = false; static unsigned lureArea = ~0u; static int lureSlot = -1;
+				const unsigned curA = (navKey >> 8) & 0xFF;
+				if (curA != lureArea) { lureArea = curA; lureOn = false; lureDone = false; lureSlot = -1; }
+				g_aiLureOn = false;
+				if (kBossLure && SpikeoutLureArea(curA) && g_lureOk[curA] && !lureDone && !grabbing && !grabbed)
+				{
+					int lb = -1;
+					for (unsigned e8 = estart; e8 < 20 && lb < 0; e8++)
+					{
+						UINT32 er = 0x1A0000 + e8 * 0x4000;
+						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0 || ram[(er + 0x73) ^ 3] < 4) continue;
+						if ((*(const UINT32 *) &ram[er + 0x32E4] & 0x7FFFFF) == (rob & 0x7FFFFF)) lb = (int) e8;
+					}
+					const float ldx = g_lureX[curA] - px, ldz = g_lureZ[curA] - pz;
+					if (ldx * ldx + ldz * ldz < 9.0f) { if (lureOn) { lureDone = true; g_lureWait = lureSlot >= 0; g_lureWaitSlot = lureSlot; SpikeoutGateNote(g_ppcTraceFrame, "[LURE] node %u: at the lure point in area %u - lure off, wait mode (boss E%d)\n", node, curA, lureSlot); } lureOn = false; }
+					else lureOn = lb >= 0;
+					if (lureOn)
+					{
+						lureSlot = lb;
+						UINT32 br = 0x1A0000 + (unsigned) lb * 0x4000;
+						float bx = *(const float *) &ram[br + 0x380] - px, bz = *(const float *) &ram[br + 0x388] - pz;
+						lureBd2 = bx * bx + bz * bz;
+						g_aiLureOn = true;
+						g_aiLureSlotOut = lb;
+					}
+				}
+			}
+			if (g_aiLureOn)
+			{
+				const unsigned curA = (navKey >> 8) & 0xFF;
+				if (lureBd2 > 36.0f) { mode = 0; if (prevMode != 0) fstate = 0; g_aiLogA75 = 150; }   // too far ahead of it: wait
+				else
+				{
+					mode = 2; if (prevMode != 2) fstate = 0;
+					tx = g_lureX[curA]; tz = g_lureZ[curA]; followMode = 1;
+					dashMode = lureBd2 < 12.25f;                     // it is close: dash
+					g_aiLogA75 = dashMode ? 152 : 151;
+				}
+				attack = 0;
+			}
+			else if (a75On && (!found || g_aiLogA75 >= 2))                // in Area 75 start room: exit room first; otherwise if no enemies, head to Area 75 gate
 			{
 				mode = 2; if (prevMode != 2) fstate = 0;
 				tx = a75x; tz = a75z; followMode = 1;
-				if (a75Push) { fstate = 0; stucks = 0; gatePush = 1; if (g_aiLogA75 == 6) { jkWant = true; jkGx = a75x; jkGz = a75z; } }   // jump-kick only the exit shutter
+				if (a75Push) { fstate = 0; stucks = 0; gatePush = 1; if (g_aiLogA75 == 6 && g_spikeoutBotCanOpenGate) { jkWant = true; jkGx = a75x; jkGz = a75z; } }   // jump-kick only the exit shutter
 			}
 			// An exit is lit (going to / opening the gate): no enemy is focused on the way (11/08) - before, any enemy
 			// within 8 pulled the bots off the gate. If the gate won't open because the script wants a wave cleared,
@@ -3676,6 +3711,15 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				if ((wx - px) * (wx - px) + (wz - pz) * (wz - pz) > 1.0f) { mode = 2; if (prevMode != 2) fstate = 0; tx = wx; tz = wz; followMode = 1; }
 				else { mode = 0; if (prevMode != 0) fstate = 0; }
 				g_aiLogA75 = 60;
+			}
+			else if (gateHold && !found)                             // BotCanOpenGate=0: wait 3.5 short of the gate for a player to break it
+			{
+				float ax = px - ghX, az = pz - ghZ, al = sqrtf(ax * ax + az * az);
+				if (al < 0.01f) { ax = 1.0f; az = 0.0f; al = 1.0f; }
+				float wx = ghX + ax / al * 3.5f, wz = ghZ + az / al * 3.5f;
+				if (al > 4.5f) { mode = 2; if (prevMode != 2) fstate = 0; tx = wx; tz = wz; followMode = 1; dashMode = al > 8.0f; }
+				else { mode = 0; if (prevMode != 0) fstate = 0; }
+				g_aiLogA75 = 70;
 			}
 			else if (mgOn)                                           // 3. No enemies: head to target door / shutter gate in game memory
 			{
@@ -4811,8 +4855,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			{
 				static UINT32 specUntil = 0;
 				int hpNow = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
-				// ini AISpecial=1 only (11/08): the link went out of sync (a cabinet dropped into another session) since
-				// bots started using it, and the special-attack count did not go down - under investigation.
+				// (The ini switch AISpecial is gone, 11/21: the link desync it was kept off for is fixed; the specials below always run.)
 				// 11/13: only from a hold (grabSpecial: low on life holding an enemy, or held by a boss) - no more in open fights.
 				// 11/15 (user): also with 3+ live enemies around (within 3, height within 1.5) and SP left (Rob +0x3F25).
 				// 11/15 (user, replaces that): low on life (under 150, as the grab special) with 4+ live enemies around (within 3,
@@ -4848,7 +4891,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			// At a gate, every 72 frames: big jump kick = Charge + Jump held 30 frames, then Beat (frames 30-34, still
 			// holding); then a kick (Beat). Some gates sit a little high for standing hits. The stick keeps pushing.
 			if (jkBeat) buttons |= BEAT;                     // running big jump kick: the kick in the air
-			if (r44Beat) buttons |= BEAT;                    // area 44 hidden route: Beat Door#11/#12
+			if (r44Beat && g_spikeoutBotCanOpenGate) buttons |= BEAT;   // area 44 hidden route: Beat Door#11/#12 (not with BotCanOpenGate=0)
 			if (gateMash)
 			{
 				const unsigned GATE_HOLD = 30, GATE_CYCLE = 72;
@@ -5185,7 +5228,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					tdx = *(const float *) &ram[tr + 0x380] - px; tdz = *(const float *) &ram[tr + 0x388] - pz; td2 = tdx * tdx + tdz * tdz;
 					tdy = *(const float *) &ram[tr + 0x384] - *(const float *) &ram[rob + 0x384];
 				}
-				bool tsBusy = grabbing || grabbed || gatePush || jkWant || wpClimb || g_aiItemSeek;   // 11/17: an item first
+				bool tsBusy = grabbing || grabbed || gatePush || jkWant || wpClimb || g_aiItemSeek || g_aiLureOn || g_lureWait;   // 11/17: an item first; 11/21: not while luring a boss
 				if (tsBusy || !found || tSlot != tsSlot) tsPh = 0;
 				if (tsPh == 0 && !tsBusy && found && tSlot >= 0)
 				{
@@ -5595,6 +5638,167 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 							if (r >= 3u * TD + 2u && r < 3u * TD + 6u) bits |= BEAT;
 						}
 						g_aiLogA75 = tauntKind == 1 ? (e < TW + TR ? 135 : 136) : (e < TW + TR ? 133 : 134);   // 133/134 now: let go BY an ally
+					}
+				}
+				// 11/21 (user, 2nd): a boss as our target (not one after us): from behind it (outside its front 60 degrees: its
+				// angle Rob +0x2A vs its angle to us, +0x3260 + 2 * our object) Shift + C held 60 frames, then let go; a dizzy
+				// boss (mot_kind 0x00000800) C held 80 frames (11/21: was 60), then let go, from any side. Within 2.5, same level, facing it
+				// (within 30 degrees - else the usual turning), not grabbing / held. 30 frames between. a75 = 170 Shift+C held,
+				// 171 C held (dizzy), 172 let go.
+				{
+					static UINT32 bcF = 0, bcEnd = 0; static int bcSlot = -1; static bool bcOn = false, bcShift = false;
+					bool want = false, wShift = false;
+					if (!bcOn && found && tSlot >= (int) estart && tSlot < 20 && tSlot != g_aiBossOnMe && !g_lureWait && !grabbing && !grabbed && hpN > 0 &&
+					    bestd < 6.25f && g_ppcTraceFrame - bcEnd >= 30u)
+					{
+						const UINT32 br = 0x1A0000 + (unsigned) tSlot * 0x4000;
+						const UINT32 bk = *(const UINT32 *) &ram[br + 0x44];
+						const bool bBoss = ram[(br + 0x73) ^ 3] >= 4 && (short) *(const UINT16 *) &ram[(br + 0x3F02) ^ 2] > 0;
+						const bool level = fabsf(*(const float *) &ram[br + 0x384] - *(const float *) &ram[rob + 0x384]) < 1.5f;
+						float myErr = 3.2f, backErr = 0.0f;
+						const unsigned bo = ram[(br + 0x72) ^ 3], mo = ram[(rob + 0x72) ^ 3];
+						if (bo < 20) { const UINT16 tA = *(const UINT16 *) &ram[(rob + 0x3260 + 2 * bo) ^ 2], myA = *(const UINT16 *) &ram[(rob + 0x2A) ^ 2];
+						               myErr = fabsf((float) (INT16) (UINT16) (myA - tA)) * (6.2831853f / 65536.0f); }
+						if (mo < 20) { const UINT16 uA = *(const UINT16 *) &ram[(br + 0x3260 + 2 * mo) ^ 2], bA = *(const UINT16 *) &ram[(br + 0x2A) ^ 2];
+						               backErr = fabsf((float) (INT16) (UINT16) (bA - uA)) * (6.2831853f / 65536.0f); }
+						if (bBoss && level && myErr < 0.5236f)
+						{
+							if (bk & 0x00000800u) want = true;                                                     // dizzy: C
+							else if (!(bk & 0x00028001u) && *(const UINT16 *) &ram[(br + 0x3F22) ^ 2] == 0 && backErr > 0.5236f) { want = true; wShift = true; }   // behind: Shift + C
+						}
+					}
+					if (want) { bcOn = true; bcF = g_ppcTraceFrame; bcSlot = tSlot; bcShift = wShift; }
+					if (bcOn && (grabbing || grabbed || hpN <= 0 || tSlot != bcSlot)) { bcOn = false; bcEnd = g_ppcTraceFrame; }
+					if (bcOn)
+					{
+						const unsigned be = g_ppcTraceFrame - bcF;
+						bits &= ~(DIRS | 0x0F); comboPat = -1;
+						const unsigned hold = bcShift ? 60u : 80u;    // 11/21 (user): dizzy 80 frames (behind: 60)
+						if (be < hold) { bits |= CHG | (bcShift ? SHIFT : 0); g_aiLogA75 = bcShift ? 170 : 171; }
+						else if (be < hold + 10u) g_aiLogA75 = 172;   // let go: the charge attack comes out
+						else { bcOn = false; bcEnd = g_ppcTraceFrame; }
+					}
+				}
+				// 11/21 (user): wait mode (2nd: whenever a boss is after us and we have nothing else to fight; the lure is off). Facing the boss, kept 4-6
+				// away (out of its reach): closer than 4 - back off (Shift + lever away, still facing it); further than 6 - close
+				// in (Shift + lever toward it); in between - stand, and turn to it (lever toward it 2 frames in 8) when more than
+				// 30 degrees off (own angle Rob +0x2A vs the angle to its object, Rob +0x3260 + 2 * obj, as elsewhere). No attacks
+				// yet. Ends when the boss is gone (or the area changes). a75 = 160 stand, 161 back off, 162 close in, 163 turn.
+				if (g_lureWait)
+				{
+					const int ws = g_lureWaitSlot;
+					const UINT32 wr = 0x1A0000 + (UINT32) (ws < 0 ? 0 : ws) * 0x4000;
+					const bool wAlive = ws >= (int) estart && ws < 20 && (*(const UINT32 *) &ram[wr] & 1) && (short) *(const UINT16 *) &ram[(wr + 0x3F02) ^ 2] > 0 && ram[(wr + 0x73) ^ 3] >= 4;
+					if (!wAlive) g_lureWait = false;
+					else if (!grabbing && !grabbed && hpN > 0)
+					{
+						const float vx = *(const float *) &ram[wr + 0x380] - px, vz = *(const float *) &ram[wr + 0x388] - pz, w2 = vx * vx + vz * vz;
+						const float fx3 = g_stFx, fz3 = g_stFz, fw3 = vx * fx3 + vz * fz3, rg3 = vx * (-fz3) + vz * fx3, th3 = 0.38f * sqrtf(w2);
+						UINT8 tw = 0, aw = 0;
+						if (fw3 > th3) { tw |= UP; aw |= DOWN; } else if (fw3 < -th3) { tw |= DOWN; aw |= UP; }
+						if (rg3 > th3) { tw |= RIGHT; aw |= LEFT; } else if (rg3 < -th3) { tw |= LEFT; aw |= RIGHT; }
+						if (!tw) { tw = UP; aw = DOWN; }
+						bits &= ~(DIRS | 0x0F); comboPat = -1;
+						if (w2 < 16.0f) { bits |= aw | SHIFT; g_aiLogA75 = 161; }
+						else if (w2 > 36.0f) { bits |= tw | SHIFT; g_aiLogA75 = 162; }
+						else
+						{
+							float err = 0.0f;
+							const unsigned wo = ram[(wr + 0x72) ^ 3];
+							if (wo < 20)
+							{
+								const UINT16 tA = *(const UINT16 *) &ram[(rob + 0x3260 + 2 * wo) ^ 2], myA = *(const UINT16 *) &ram[(rob + 0x2A) ^ 2];
+								err = fabsf((float) (INT16) (UINT16) (myA - tA)) * (6.2831853f / 65536.0f);
+							}
+							if (err > 0.5236f && (g_ppcTraceFrame & 7) < 2) { bits |= tw; g_aiLogA75 = 163; }
+							else g_aiLogA75 = 160;
+						}
+					}
+				}
+				// 11/21 (user): only bosses left (every live enemy class Rob +0x73 >= 4) and our target - a boss within 3, on our
+				// level - is down (mot_kind down 0x00020000 / down_pose 0x00008000): nothing to hit, so one of these, picked at
+				// random each time it goes down: (0) hold C while it is down, let go once it gets up (rise 0x00010000 or no down
+				// bits any more) = the charge attack; (1) the lever once round clockwise (right, down, left, up - the timing of
+				// the taunt above, which is known to come out) + B on the up, then wait. a75 = 140 C held, 141 C let go,
+				// 142 lever round, 143 waiting after it.
+				{
+					static int bdSlot = -1, bdAct = 0; static UINT32 bdF = 0, bdRelF = 0, bdRng = 0x9E3779B9u, bdDelay = 0; static bool bdHold = false;
+					bool onlyBoss = found && tSlot >= (int) estart && tSlot < 20 && ram[(0x1A0000 + (unsigned) tSlot * 0x4000 + 0x73) ^ 3] >= 4;
+					for (unsigned e6 = estart; e6 < 20 && onlyBoss; e6++)
+					{
+						UINT32 er = 0x1A0000 + e6 * 0x4000;
+						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0) continue;
+						if (ram[(er + 0x73) ^ 3] < 4) onlyBoss = false;
+					}
+					UINT32 bk = 0; bool bLevel = false;
+					if (onlyBoss)
+					{
+						UINT32 br = 0x1A0000 + (unsigned) tSlot * 0x4000;
+						bk = *(const UINT32 *) &ram[br + 0x44];
+						bLevel = fabsf(*(const float *) &ram[br + 0x384] - *(const float *) &ram[rob + 0x384]) < 1.5f;
+					}
+					const bool bDown = onlyBoss && bLevel && bestd < 9.0f && (bk & 0x00028000u) && !(bk & 0x00010000u) && !(bk & 0x08000000u);
+					const bool free_ = !tauntOn && !grabbing && !grabbed && hpN > 0 && !g_aiItemSeek && !g_aiWeaponPress && !g_aiLureOn && !g_lureWait && !(tSlot >= 0 && tSlot < 20 && ((g_aiLuredMask >> tSlot) & 1u));
+					if (bDown && free_ && tSlot != bdSlot)     // it just went down: pick what to do
+					{
+						bdSlot = tSlot; bdF = g_ppcTraceFrame; bdRelF = 0;
+						bdRng = bdRng * 1103515245u + 12345u + node;
+						bdAct = (int) ((bdRng >> 16) & 1u);
+						bdHold = bdAct == 0;
+						bdRng = bdRng * 1103515245u + 12345u;
+						bdDelay = (bdRng >> 16) % 21u;   // 11/21 (user): C held after a random 0-20 frames
+					}
+					if (bdSlot >= 0 && (!onlyBoss || tSlot != bdSlot || !free_)) { bdSlot = -1; bdHold = false; }
+					if (bdSlot >= 0)
+					{
+						const bool up = !(bk & 0x00028000u) || (bk & 0x00010000u);   // getting up / standing
+						const unsigned e = g_ppcTraceFrame - bdF;
+						if (bdAct == 0)
+						{
+							// 11/21 (user, 2nd): let go only once it is up AND no longer invincible (mot_kind muteki 0x1, timer Rob +0x3F22)
+							const UINT32 bdr = 0x1A0000 + (unsigned) tSlot * 0x4000;
+							const bool vuln = up && !(bk & 0x00000001u) && *(const UINT16 *) &ram[(bdr + 0x3F22) ^ 2] == 0;
+							if (bdHold && !vuln)
+							{
+								// 11/21 (user): Shift held, closing in on it (lever toward it while further than 1.0); C held from a
+								// random 0-20 frames after it went down
+								bits &= ~(DIRS | 0x0F); bits |= SHIFT | (e >= bdDelay ? CHG : 0); comboPat = -1; g_aiLogA75 = 140;
+								if (bestd > 1.0f)
+								{
+									const UINT32 tr = 0x1A0000 + (unsigned) tSlot * 0x4000;
+									const float vx = *(const float *) &ram[tr + 0x380] - px, vz = *(const float *) &ram[tr + 0x388] - pz;
+									const float fw = vx * g_stFx + vz * g_stFz, rg = vx * (-g_stFz) + vz * g_stFx, th = 0.38f * sqrtf(vx * vx + vz * vz);
+									UINT8 tw = 0;
+									if (fw > th) tw |= UP; else if (fw < -th) tw |= DOWN;
+									if (rg > th) tw |= RIGHT; else if (rg < -th) tw |= LEFT;
+									bits |= tw ? tw : UP;
+								}
+							}
+							else if (bdHold) { bdHold = false; bdRelF = g_ppcTraceFrame ? g_ppcTraceFrame : 1; }   // let go: the charge attack
+							if (!bdHold)
+							{
+								if (bdRelF && g_ppcTraceFrame - bdRelF < 20u) { bits &= ~0x0F; comboPat = -1; g_aiLogA75 = 141; }   // no button over the release
+								else bdSlot = -1;   // done: the fight goes on as usual
+							}
+						}
+						else
+						{
+							const unsigned TN = 2u, TD = 6u, TR = TN + 4u * TD;
+							static const UINT8 RW[4] = { 0x40 /*RIGHT*/, 0x10 /*DOWN*/, 0x80 /*LEFT*/, 0x20 /*UP*/ };
+							if (e < TR)
+							{
+								bits &= ~(DIRS | 0x0F); comboPat = -1;
+								if (e >= TN)
+								{
+									const unsigned r = e - TN;
+									bits |= RW[r / TD];
+									if (r >= 3u * TD + 2u && r < 3u * TD + 6u) bits |= BEAT;
+								}
+								g_aiLogA75 = 142;
+							}
+							else if (!up) g_aiLogA75 = 143;   // done: wait (as before) until it gets up
+							else bdSlot = -1;
+						}
 					}
 				}
 			}
@@ -7252,8 +7456,6 @@ void CModel3::Write8(UINT32 addr, UINT8 data)
     // spikeofe: log writes to the fa_enemy type table (one byte per enemy index), i.e. enemy creation
     if (m_traceEnemyCreate && addr >= 0x1113FC && addr < 0x11140C)
       printf("[ENEMY] frame=%u index=%u type=%u PC=%08X LR=%08X\n", m_testFrame, addr - 0x1113FC, data, ppc_get_pc(), ppc_get_lr());
-    if (g_joinWatchAddr && addr >= g_joinWatchAddr && addr < g_joinWatchAddr + 4)
-      SpikeoutJoinWatch(addr, data, 8);
     if (addr >= m_watchStart && addr < m_watchEnd)
       WLOG("[WATCH] frame=%u sync=%u w8 %08X=%02X PC=%08X LR=%08X\n", m_testFrame, *(UINT32 *) &ram[0x1000A8], addr, data, ppc_get_pc(), ppc_get_lr());
     TASKLOG(addr, 1, 8);
@@ -7399,8 +7601,6 @@ void CModel3::Write16(UINT32 addr, UINT16 data)
   // RAM (most frequently accessed)
   if (addr < 0x00800000)
   {
-    if (g_joinWatchAddr && addr + 2 > g_joinWatchAddr && addr < g_joinWatchAddr + 4)
-      SpikeoutJoinWatch(addr, data, 16);
     if (addr + 2 > m_watchStart && addr < m_watchEnd)
       WLOG("[WATCH] frame=%u w16 %08X=%04X PC=%08X LR=%08X call=%08X(%08X,%08X,%08X,%08X)\n", m_testFrame, addr, data, ppc_get_pc(), ppc_get_lr(),
         g_ppcTraceCallInfo[0], g_ppcTraceCallInfo[1], g_ppcTraceCallInfo[2], g_ppcTraceCallInfo[3], g_ppcTraceCallInfo[4]);
@@ -7517,8 +7717,6 @@ void CModel3::Write32(UINT32 addr, UINT32 data)
   // RAM (most frequently accessed)
   if (addr<0x00800000)
   {
-    if (g_joinWatchAddr && addr + 4 > g_joinWatchAddr && addr < g_joinWatchAddr + 4)
-      SpikeoutJoinWatch(addr, data, 32);
     if (addr + 4 > m_watchStart && addr < m_watchEnd)
       WLOG("[WATCH] frame=%u sync=%u w32 %08X=%08X PC=%08X LR=%08X call=%08X(%08X,%08X,%08X,%08X)\n", m_testFrame, *(UINT32 *) &ram[0x1000A8], addr, data, ppc_get_pc(), ppc_get_lr(),
         g_ppcTraceCallInfo[0], g_ppcTraceCallInfo[1], g_ppcTraceCallInfo[2], g_ppcTraceCallInfo[3], g_ppcTraceCallInfo[4]);
@@ -8074,7 +8272,17 @@ static void SatelliteCloneApply(UINT8 *ram)
 			*(UINT32 *) &ram[0x152000 + i * 0x900 + 0x58] = 0;
 	}
 	for (int k = 1; k <= 8; k++)
+	{
 		c.hp[k] = (INT16) *(const UINT16 *) &ram[(0x1A0000 + (k - 1) * 0x4000 + 0x3F02) ^ 2];
+		c.robOn[k] = (*(const UINT32 *) &ram[0x1A0000 + (k - 1) * 0x4000] & 1) != 0;
+	}
+	// 11/21 (owner): an area / stage change (LOADING...: no player on the field, or the passage area 36) - CloneChoose
+	// then follows the lowest-numbered node of the game.
+	{
+		bool anyOn = false;
+		for (int k = 1; k <= 8; k++) anyOn = anyOn || c.robOn[k];
+		c.loadingNow = ram[0x140104 ^ 3] == 4 && (!anyOn || ram[0x10402D ^ 3] == SPIKEOUT_AREA_GATE_PASSAGE);
+	}
 	if ((c.mirror || c.mirrorOnce) && c.havePacket)
 	{
 		c.mirrorOnce = false;
@@ -8107,7 +8315,6 @@ void CModel3::RunMainBoardFrame(void)
 	m_testFrame++;
 	g_ppcTraceFrame = m_testFrame;
 	if (g_spikeoutScenarioLog) SpikeoutScenarioLog(ram);
-	if (g_spikeoutJoinLog) { SpikeoutJoinLog(ram); SpikeoutSyncLog(ram); }
 	if (g_spikeoutItemLog) SpikeoutItemLog(ram);
 	SpikeoutP1StateTick(ram);   // bot cabinets mark their link record, so the bots can tell a started human (bots must not start a game on their own)
 	SpikeoutSessionTick(ram);   // 11/17: the games in the link, for the lobby / Discord
@@ -8154,7 +8361,9 @@ void CModel3::RunMainBoardFrame(void)
 	if (g_spikeofe8task)
 	{
 		UINT32 inGame = *(const UINT32 *) &ram[0x140128];
-		if (__builtin_popcount(inGame) >= 5 || (g_spikeoutTimerStop && inGame != 0))
+		// 11/21 (owner): the satellite clone always holds them (it timed out to a game over; it sends nothing that
+		// counts for the others, so this does not touch the link). Timers that are 0 (not started) stay 0.
+		if (__builtin_popcount(inGame) >= 5 || (g_spikeoutTimerStop && inGame != 0) || g_satClone.on)
 		{
 			for (unsigned i = 0; i < 8; i++)
 			{
@@ -8423,6 +8632,15 @@ static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
 	SatHud &h = g_satView.hud;
 	h.valid = false;
 	h.nBoss = 0;
+	h.nAlly = 0;
+	h.self = g_satClone.node;
+	// 11/21 (owner): LOADING... while someone joins (a node's join flags), in the area-change passage (area 36), or while no
+	// player is on the field (the stage / area change: every player's Rob +0 bit 1 goes off together).
+	{
+		bool anyOn = false;
+		for (int s = 0; s < 8; s++) if (*(const UINT32 *) &ram[0x1A0000 + (UINT32) s * 0x4000] & 1) anyOn = true;
+		h.loading = g_satClone.joining || ram[0x10402D ^ 3] == SPIKEOUT_AREA_GATE_PASSAGE || !anyOn;
+	}
 	int node = g_satClone.node;
 	if (!g_satView.inGame || node < 1 || node > 8)
 		return;
@@ -8432,6 +8650,31 @@ static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
 	UINT32 me = 0x1A0000 + (UINT32) (node - 1) * 0x4000;
 	h.hp = r16(me + 0x3F02);
 	h.hpMax = r16(me + 0x3F04);
+	// a name from the game's name table (CROM 0xFFF80A60, index n: 0 SPIKE 1 WHITE 2 LINDA 3 TENSHIN 4 JUNIOR ...)
+	auto nameOf = [&](unsigned idx, char out[16])
+	{
+		out[0] = 0;
+		if (!crom || idx >= 2000)
+			return;
+		UINT32 p = *(const UINT32 *) &crom[0x780A60 + idx * 4];
+		if (p < 0xFF800000u || p >= 0xFFFFFFF0u)
+			return;
+		UINT32 o = p - 0xFF800000u;
+		int n = 0;
+		for (; n < 15; n++)
+		{
+			UINT8 ch = crom[(o + n) ^ 3];
+			if (ch < 0x20 || ch >= 0x7F)
+				break;
+			out[n] = (char) ch;
+		}
+		out[n] = 0;
+	};
+	{
+		unsigned ch = ram[(me + 0x3F00) ^ 3];
+		nameOf(ch <= 4 ? ch : 0, h.name);
+		if (ch > 4) snprintf(h.name, sizeof(h.name), "P%d", node);
+	}
 	for (int slot = 8; slot < 20 && h.nBoss < 4; slot++)
 	{
 		UINT32 r = 0x1A0000 + (UINT32) slot * 0x4000;
@@ -8443,25 +8686,66 @@ static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
 		SatHudBoss &b = h.boss[h.nBoss++];
 		b.hp = hp;
 		b.hpMax = r16(r + 0x3F04);
-		b.name[0] = 0;
-		unsigned idx = *(const UINT16 *) &ram[(r + 0x15C) ^ 2];
-		if (crom && idx < 2000)
+		nameOf(*(const UINT16 *) &ram[(r + 0x15C) ^ 2], b.name);
+	}
+	// 11/21 (owner): name colours and bots for the list. A player's name colour number 0-7 (fa_player +0xA0 + slot; same
+	// character colours in pick order) picks the name image 0x9A-0x9D / 0xF6-0xF9 (HudColors); its palette (xBGR555 after
+	// the count, pattern table of the copies at bank 13 + 0x3E0000) gives the colour: the most vivid entry (the brightest
+	// for the grey / white ones). A bot cabinet carries "BOT!" at +0x2FC of its link record (copies at 0x150400 + k * 0x300).
+	static uint32_t nameCol[8] = {}; static bool colDone = false;
+	if (!colDone && crom)
+	{
+		colDone = true;
+		static const UINT16 img[8] = { 0x9A, 0x9B, 0x9C, 0x9D, 0xF6, 0xF7, 0xF8, 0xF9 };
+		const UINT32 BANK13 = 0x800000 + 13 * 0x800000;
+		for (int k = 0; k < 8; k++)
 		{
-			UINT32 p = *(const UINT32 *) &crom[0x780A60 + idx * 4];
-			if (p >= 0xFF800000u && p < 0xFFFFFFF0u)
+			UINT32 p = *(const UINT32 *) &crom[BANK13 + 0x3E0000 + 4 * img[k]];
+			if ((p & 0xFF000000u) != 0xFF000000u || p == 0xFFFFFFFFu) continue;   // (HudColors not applied: unused table)
+			const UINT32 base = BANK13 + (p & 0x7FFFFF);
+			auto H = [&](UINT32 off) { return *(const UINT16 *) &crom[base + (off ^ 2)]; };
+			unsigned cnt = H(0); if (cnt > 64) cnt = 0;
+			float bestS = -1.0f; UINT16 best = 0;
+			for (unsigned j = 0; j < cnt; j++)
 			{
-				UINT32 o = p - 0xFF800000u;
-				int n = 0;
-				for (; n < 15; n++)
-				{
-					UINT8 ch = crom[(o + n) ^ 3];
-					if (ch < 0x20 || ch >= 0x7F)
-						break;
-					b.name[n] = (char) ch;
-				}
-				b.name[n] = 0;
+				UINT16 c = H(2 + 2 * j);
+				if ((c & 0x7FFF) == 0) continue;
+				float r = (c & 31) / 31.0f, g = ((c >> 5) & 31) / 31.0f, b = ((c >> 10) & 31) / 31.0f;
+				float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b));
+				float score = (mx - mn) * mx * 4.0f + mx;          // vivid first; among greys the brightest
+				if (score > bestS) { bestS = score; best = c; }
 			}
+			if (bestS >= 0.0f)
+				nameCol[k] = 0xFF000000u | ((UINT32) (((best >> 10) & 31) * 255 / 31) << 16) | ((UINT32) (((best >> 5) & 31) * 255 / 31) << 8) | (UINT32) ((best & 31) * 255 / 31);
 		}
+	}
+	const UINT32 faP = *(const UINT32 *) &ram[0x104114] & 0x7FFFFF;
+	auto colOf = [&](int slot) -> uint32_t { return (faP >= 0x100000 && faP < 0x7FF000) ? nameCol[ram[(faP + 0xA0 + slot) ^ 3] & 7] : 0u; };
+	const int nm_ = g_satClone.numMachines;
+	auto isBot = [&](int nd) -> bool {
+		if (nm_ < 1 || nd < 1 || nd > nm_) return false;
+		const UINT32 rec = 0x150400u + (UINT32) (((nm_ - 1 + node - nd) % nm_ + nm_) % nm_) * 0x300u;
+		return *(const UINT32 *) &ram[rec + 0x2FC] == SPIKEOUT_BOT_MARK;
+	};
+	h.selfBot = isBot(node);
+	// 11/21 (owner): the other players (slots 0-7 but the followed one) that are in this world: Rob +0 bit 1, max life set.
+	// Name: their character (Rob +0x3F00: 0 Spike, 1 White, 2 Linda, 3 Tenshin, 4 Junior = the name table's first rows).
+	for (int slot = 0; slot < 8 && h.nAlly < 7; slot++)
+	{
+		if (slot == node - 1)
+			continue;
+		UINT32 r = 0x1A0000 + (UINT32) slot * 0x4000;
+		if (!(*(const UINT32 *) &ram[r] & 1) || r16(r + 0x3F04) <= 0)
+			continue;
+		h.allySlot[h.nAlly] = slot;
+		h.allyCol[h.nAlly] = colOf(slot);
+		h.allyBot[h.nAlly] = isBot(slot + 1);
+		SatHudBoss &a = h.ally[h.nAlly++];
+		a.hp = r16(r + 0x3F02);
+		a.hpMax = r16(r + 0x3F04);
+		unsigned ch = ram[(r + 0x3F00) ^ 3];
+		nameOf(ch <= 4 ? ch : 0, a.name);
+		if (ch > 4) snprintf(a.name, sizeof(a.name), "P%d", slot + 1);
 	}
 	h.valid = true;
 }
@@ -8494,7 +8778,17 @@ void CModel3::RenderFrame(void)
     if (!(g_satView.on && g_satView.hideUI && g_satView.inGame))   // 11/20 satellite clone: no HUD
       TileGen.RenderFrameTop();
     if (g_satView.on && g_satView.overlay)                        // 11/20 satellite clone: title / name / ticker
-      TileGen.SatOverlay(g_satView.inGame, g_satView.title, g_satView.ticker, &g_satView.hud);
+      {
+        // 11/21 (owner): title and ticker hard-coded. A slot is free when its node is not at the character select / in a
+        // game (link state not 2 / 4: a STREAM slot nobody took, or a player whose game is over).
+        bool freeSlot = false;
+        for (int m = 1; m <= g_satClone.numMachines && m <= 8; m++)
+          if (g_satClone.linkState[m] != 2 && g_satClone.linkState[m] != 4) freeSlot = true;
+        static const std::string satTitle = "SPIKEOUT FE SATELLITE";
+        static const std::string tickFree = "We look forward to your participation.    Please join our Discord server.";
+        static const std::string tickFull = "This is PonMi's Spikeout Final Edition 8-Player-Link online system. Please join our Discord server.";   // 11/21 (owner)
+        TileGen.SatOverlay(g_satView.inGame, satTitle, freeSlot ? tickFree : tickFull, &g_satView.hud);
+      }
     GPU.EndFrame();
     TileGen.EndFrame();
     m_superAA->Draw();
@@ -9262,7 +9556,6 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   }
   g_spikeoutWaypointRecord = (game.name == "spikeofe" && m_config["WaypointRecord"].ValueAsDefault<bool>(false));
   g_spikeoutScenarioLog = (game.name == "spikeofe" && m_config["ScenarioLog"].ValueAsDefault<bool>(false));
-  g_spikeoutJoinLog = (game.name == "spikeofe" && m_config["JoinLog"].ValueAsDefault<bool>(false));
   g_texGhost = (game.name == "spikeofe" && m_config["New3DEngine"].ValueAsDefault<bool>(true));   // 11/12: costumes 4-7 to ghost texture pages
   g_spikeoutItemLog = (game.name == "spikeofe" && m_config["ItemLog"].ValueAsDefault<bool>(false));
   // 11/13: skip the frame-wait polling loops (ppc.cpp ppc_idle_check). IdleSkip=0 turns it off.
@@ -9270,7 +9563,6 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_spikeoutIdleLog = (game.name == "spikeofe" && m_config["IdleSkipLog"].ValueAsDefault<bool>(false));
   g_floorDump = (game.name == "spikeofe" && m_config["FloorDump"].ValueAsDefault<bool>(false));
   g_spikeoutAIShift =(game.name == "spikeofe" && m_config["AIShift"].ValueAsDefault<bool>(false));
-  g_spikeoutAISpecial = (game.name == "spikeofe" && m_config["AISpecial"].ValueAsDefault<bool>(false));
   g_spikeoutAIRoute = m_config["AIRoute"].ValueAsDefault<int>(-1);
   if (g_spikeoutAIRoute < 0 || g_spikeoutAIRoute > 3) g_spikeoutAIRoute = -1;
   g_spikeoutAIRoute2 = m_config["AIRoute2"].ValueAsDefault<int>(-1);
@@ -9281,6 +9573,8 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_spikeoutAILog = (game.name == "spikeofe" && m_config["AIPlayerLog"].ValueAsDefault<bool>(false));
   g_spikeoutCpicLog = (game.name == "spikeofe" && m_config["CpicLog"].ValueAsDefault<bool>(false));
   g_spikeoutAITargetMarker = (game.name == "spikeofe" && m_config["AITargetMarker"].ValueAsDefault<bool>(false));
+  g_spikeoutBotCanOpenGate = m_config["BotCanOpenGate"].ValueAsDefault<bool>(true);
+  if (game.name == "spikeofe" && !g_spikeoutBotCanOpenGate) InfoLog("BotCanOpenGate = 0: the bots do not break gates.");
   g_spikeoutWallView = (game.name == "spikeofe" && m_config["AIWallView"].ValueAsDefault<bool>(false));   // 11/17: walls on screen (bot cabinets)
   {
     extern bool g_texLog;   // Graphics/New3D/R3DShader.cpp (11/15): textures the meshes use in the costume areas -> texlog.txt

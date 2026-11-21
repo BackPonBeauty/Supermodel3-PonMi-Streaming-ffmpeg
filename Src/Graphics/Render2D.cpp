@@ -399,6 +399,18 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 	}
 	m_satBuf.assign(W * H, 0);
+	// 11/21 (owner: LOADING... never showed): our text uses the game's own font tiles and palette in VRAM, which are
+	// replaced while an area / stage loads - so keep a copy taken in plain play and draw from that.
+	{
+		static uint32_t fontCopy[0x800], palCopy[256]; static bool haveFont = false;
+		if (!haveFont && inGame && hud && hud->valid && !hud->loading && (vramP['A' * 16] | vramP['A' * 16 + 4] | vramP['A' * 16 + 8]))
+		{
+			memcpy(fontCopy, vramP, sizeof(fontCopy));
+			memcpy(palCopy, pal, sizeof(palCopy));
+			haveFont = true;
+		}
+		if (haveFont) { vramP = fontCopy; pal = palCopy; }
+	}
 	auto put = [&](int x, int y, uint32_t c) { if (x >= 0 && x < W && y >= 0 && y < H) m_satBuf[y * W + x] = c; };
 	auto glyph = [&](int ch, int x0, int y0)
 	{
@@ -416,25 +428,113 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 			}
 	};
 	auto text = [&](const std::string &t, int x, int y) { for (char ch : t) { glyph((unsigned char) ch, x, y); x += 8; } };
+	// 11/21: text at sc x size; col != 0 paints the font's bright pixels in that colour (its dark edge stays dark)
+	auto textC = [&](const std::string &t, int x0, int y0, int sc, uint32_t col)
+	{
+		for (size_t i = 0; i < t.size(); i++)
+		{
+			int ch = (unsigned char) t[i];
+			if (ch >= 'a' && ch <= 'z') ch -= 32;
+			if (ch <= 0x20 || ch >= 0x7F) continue;
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+				{
+					uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
+					uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
+					if (c < 0x1000000) continue;
+					if (col)
+					{
+						int lum = (int) (c & 0xFF) + (int) ((c >> 8) & 0xFF) + (int) ((c >> 16) & 0xFF);
+						c = lum < 200 ? 0xFF000000u : col;
+					}
+					for (int dy = 0; dy < sc; dy++)
+						for (int dx = 0; dx < sc; dx++)
+							put(x0 + ((int) i * 8 + x) * sc + dx, y0 + y * sc + dy, c);
+				}
+		}
+	};
+	// 11/21 (owner): each player's name colour, learnt from the HUD while we follow them (slot 0-7; 0 = not seen yet)
+	static uint32_t s_slotCol[8] = {};
 
 	// title, top centre
-	text(title, (W - (int) title.size() * 8) / 2, 6);
-
-	// the followed player's name, cut out of the game's HUD, centred below the title
-	if (inGame && m_drawBuffers[1])
+	// 11/21 (owner): the title 3x tall, as wide as fits (up to 3x)
 	{
-		const uint32_t *src = m_drawBuffers[1]->data;
-		int x0 = 40, x1 = 96, y0 = 8, y1 = 24, bx0 = x1, bx1 = x0 - 1;
-		for (int y = y0; y < y1; y++)
-			for (int x = x0; x < x1; x++)
-				if (src[y * S + x] >= 0x1000000) { bx0 = std::min(bx0, x); bx1 = std::max(bx1, x); }
-		if (bx1 >= bx0)
+		const int sy = 3, n = (int) title.size();
+		const float sx = n > 0 ? std::min(3.0f, (float) (W - 8) / (float) (n * 8)) : 3.0f;
+		const int tx0 = (W - (int) (n * 8 * sx)) / 2;
+		for (int i = 0; i < n; i++)
 		{
-			int dx = (W - (bx1 - bx0 + 1)) / 2 - bx0;
-			for (int y = y0; y < y1; y++)
-				for (int x = bx0; x <= bx1; x++)
-					if (src[y * S + x] >= 0x1000000)
-						put(x + dx, y - y0 + 16, src[y * S + x]);
+			int ch = (unsigned char) title[i];
+			if (ch >= 'a' && ch <= 'z') ch -= 32;
+			if (ch <= 0x20 || ch >= 0x7F) continue;
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+				{
+					uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
+					uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
+					if (c < 0x1000000) continue;
+					const int px0 = tx0 + (int) ((i * 8 + x) * sx), px1 = tx0 + (int) ((i * 8 + x + 1) * sx);
+					for (int dy = 0; dy < sy; dy++)
+						for (int px = px0; px < px1; px++)
+							put(px, 4 + y * sy + dy, c);
+				}
+		}
+	}
+
+	// the followed player's name, centred below the title. 11/21 (owner): drawn as text from the name table (SatHud::name)
+	// at 3x, in the player's colour: the most common bright colour of the FIRST letter of the game's own HUD name (x 40-127,
+	// y 8-23 of the top layer). Cut out of the HUD as a picture, an old longer name's tail stayed (LINDA + TENSHIN's "IN").
+	const int nameY = 32, nameSc = 3;   // 11/21: below the 3x title (4-27)
+	if (inGame && hud && hud->valid && hud->name[0])
+	{
+		uint32_t col = 0xFFFFFFFFu;
+		if (m_drawBuffers[1])
+		{
+			const uint32_t *src = m_drawBuffers[1]->data;
+			int fx = -1;
+			for (int x = 40; x < 128 && fx < 0; x++)
+				for (int y = 8; y < 24; y++)
+					if (src[y * S + x] >= 0x1000000) { fx = x; break; }
+			if (fx >= 0)
+			{
+				uint32_t cs[8] = {}; int cn[8] = {}, nc = 0;
+				for (int y = 8; y < 24; y++)
+					for (int x = fx; x < fx + 7; x++)
+					{
+						uint32_t c = src[y * S + x];
+						if (c < 0x1000000) continue;
+						int lum = (int) (c & 0xFF) + (int) ((c >> 8) & 0xFF) + (int) ((c >> 16) & 0xFF);
+						if (lum < 200) continue;                           // the dark outline
+						int k = 0;
+						while (k < nc && cs[k] != c) k++;
+						if (k == nc) { if (nc == 8) continue; cs[nc] = c; cn[nc++] = 0; }
+						cn[k]++;
+					}
+				int best = -1;
+				for (int k = 0; k < nc; k++) if (best < 0 || cn[k] > cn[best]) best = k;
+				if (best >= 0) col = cs[best] | 0xFF000000u;
+				if (best >= 0 && hud->self >= 1 && hud->self <= 8) s_slotCol[hud->self - 1] = col;
+			}
+		}
+		const std::string nm = std::string(hud->name) + (hud->selfBot ? "_BOT" : "");   // 11/21: "_BOT" for a bot cabinet
+		const int x0 = (W - (int) nm.size() * 8 * nameSc) / 2;
+		for (size_t i = 0; i < nm.size(); i++)
+		{
+			int ch = (unsigned char) nm[i];
+			if (ch >= 'a' && ch <= 'z') ch -= 32;
+			if (ch <= 0x20 || ch >= 0x7F) continue;
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+				{
+					uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
+					uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
+					if (c < 0x1000000) continue;
+					int lum = (int) (c & 0xFF) + (int) ((c >> 8) & 0xFF) + (int) ((c >> 16) & 0xFF);
+					uint32_t o = lum < 200 ? 0xFF000000u : col;        // the font's dark edge stays dark, the rest in the colour
+					for (int dy = 0; dy < nameSc; dy++)
+						for (int dx = 0; dx < nameSc; dx++)
+							put(x0 + ((int) i * 8 + x) * nameSc + dx, nameY + y * nameSc + dy, o);
+				}
 		}
 	}
 
@@ -455,14 +555,27 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 	if (inGame && hud && hud->valid)
 	{
 		std::string sa = "STAGE " + std::to_string(hud->stage) + " - AREA " + std::to_string(hud->area);
-		text(sa, 4, 18);   // a line below the title row (a long title reaches the left side)
+		text(sa, 4, 66);   // 11/21: under the name / life bar row (a 3x "TENSHIN_BOT" reaches the left side)
 
 		const int bw = 128;
 		int r = hud->hpMax > 0 ? hud->hp * 100 / hud->hpMax : 0;
 		uint32_t col = r > 50 ? 0xFF40E040u : r > 25 ? 0xFF20D0F0u : 0xFF3030F0u;   // green / yellow / red
-		bar((W - bw) / 2, 34, bw, 6, hud->hp, hud->hpMax, col);
+		bar((W - bw) / 2, nameY + 8 * nameSc + 4, bw, 6, hud->hp, hud->hpMax, col);   // 11/21: under the 3x name
 
-		const int bbw = 144, rowH = 12, top = H - 16 - 3 - 4;
+		// 11/21 (owner): the other players on the left - name, then a life bar (same colours as the followed one)
+		for (int i = 0; i < hud->nAlly && i < 7; i++)
+		{
+			const SatHudBoss &a = hud->ally[i];
+			const int ay = 80 + i * 12;   // 11/21: below STAGE - AREA
+			const int as = hud->allySlot[i];
+			const uint32_t ac0 = hud->allyCol[i] ? hud->allyCol[i] : ((as >= 0 && as < 8) ? s_slotCol[as] : 0u);
+			textC(std::string(a.name) + (hud->allyBot[i] ? "_BOT" : ""), 4, ay, 1, ac0);   // 11/21: their colour, "_BOT" for bots
+			int ar = a.hpMax > 0 ? a.hp * 100 / a.hpMax : 0;
+			uint32_t ac = ar > 50 ? 0xFF40E040u : ar > 25 ? 0xFF20D0F0u : 0xFF3030F0u;
+			bar(4 + 12 * 8, ay + 1, 64, 6, a.hp, a.hpMax, ac);   // 11/21: after up to 11 letters (TENSHIN_BOT)
+		}
+
+		const int bbw = 144, rowH = 12, top = H - 20 - 2 - 4;   // above the 2x ticker band
 		for (int i = 0; i < hud->nBoss && i < 4; i++)
 		{
 			const SatHudBoss &b = hud->boss[i];
@@ -477,12 +590,19 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 	// a line scrolling right to left at the bottom, on a dark band
 	if (!ticker.empty())
 	{
-		int tw = (int) ticker.size() * 8, by = H - 16;
-		for (int y = by - 3; y < by + 11; y++)
+		// 11/21 (owner): 2x
+		int tw = (int) ticker.size() * 16, by = H - 20;
+		for (int y = by - 2; y < by + 18; y++)
 			for (int x = 0; x < W; x++)
 				put(x, y, 0x90000000u);
 		int x = W - (int) (m_satFrame % (unsigned) (W + tw));
-		text(ticker, x, by);
+		textC(ticker, x, by, 2, 0);
+	}
+	// 11/21 (owner): LOADING... in the middle, white, 4x (a join / an area or stage change)
+	if (inGame && hud && hud->valid && hud->loading)
+	{
+		const std::string ld = "LOADING...";
+		textC(ld, (W - (int) ld.size() * 32) / 2, (H - 32) / 2, 4, 0xFFFFFFFFu);
 	}
 	m_satFrame++;
 

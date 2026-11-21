@@ -43,6 +43,9 @@ struct SatCloneState
   uint8_t linkState[9];                     // [1..8] each node's link state (block +4: 1 title, 2 select, 4 game)
   uint8_t group[9];                         // [1..8] block +0x3C byte (the game number = its host node), 0 = none
   int16_t hp[9] = {};                       // [1..8] each player's HP in our RAM (Rob +0x3F02), for the switches
+  bool loadingNow = false;                  // 11/21: the area / stage change itself (no player on the field, or area 36)
+  bool joining = false;                     // 11/21: a node's join flags (+8) are set: someone is coming in (HERE COMES A NEW PLAYER)
+  bool robOn[9] = {};                       // 11/21: [1..8] Rob +0 bit 1 (on the field; off on the continue screen)
   bool mirrorOnce = false;                  // copy the block once (after a switch)
   // The followed node's inputs for the frame we are about to run (SatInputRecord), replayed by ReadInputs
   bool haveInputs = false;
@@ -79,6 +82,15 @@ struct SatHud
   int stage = 0, area = 0;
   int hp = 0, hpMax = 0;                    // followed player: Rob +0x3F02 / +0x3F04
   int nBoss = 0;
+  char name[16] = {};                      // 11/21: the followed player's name (name table, by character)
+  int nAlly = 0;                            // 11/21 (owner): the other players in the game (name, life), left side
+  SatHudBoss ally[7] = {};
+  int allySlot[7] = {};
+  uint32_t allyCol[7] = {};                 // 11/21: their name colour (0xAABBGGRR) from the game's name images, 0 = unknown
+  bool allyBot[7] = {};                     // 11/21: their cabinet is a bot (link record +0x2FC = "BOT!") -> "_BOT"
+  bool selfBot = false;                     // 11/21: their player slots (0-7), for their name colours
+  int self = 0;                             // 11/21: the followed node (1-8)
+  bool loading = false;                     // 11/21: a join / an area or stage change is on: LOADING... in the middle
   SatHudBoss boss[4] = {};                  // class (Rob +0x73) >= 4 and Rob +0x3F00 != 0x26, as the game's HUD (0x1B4E0)
 };
 
