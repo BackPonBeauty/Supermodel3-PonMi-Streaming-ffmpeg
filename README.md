@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261116 / PonLuncher 2.0.0
+> Build 20261121 / PonLuncher 2.0.0
 
 ---
 
@@ -25,7 +25,7 @@
 - **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
 - **H.264 / H.265** video, Opus audio
 - **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one PonLuncher per PC, one slot per Discord account, old versions cannot connect
-- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker)
+- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker). Since 20261121: the followed player's name in its HUD colour, allies on the left with their colours (`_BOT` on bot cabinets), `LOADING...` during joins and area / stage changes, and the timer held at 99 so the satellite never times out
 
 ### Spikeout FE changes
 
@@ -36,6 +36,11 @@
 - **3-minute mode is blocked:** pressing START while holding Shift + Beat + Charge + Jump does nothing
 - **Enemy textures:** when someone joins, enemy textures that could not be loaded are loaded again (no more black enemies until the next area)
 - **Bots** can tell humans from bots through the link itself (no helper files). Their character is chosen in the launcher (BOT CHAR), and they can pick a random character when they continue
+- **Bots (20261121):**
+  - With every slot a BOT, slot 1 starts the game by itself. With a LOCAL or STREAM slot, the bots wait for the player to start
+  - When no enemy is after a bot, it goes for the boss first. A bot the boss is after keeps 4–6 away and faces it
+  - Charge attacks on bosses: from behind, on a dizzy boss, and on a downed boss (released once it is up and no longer invincible), or a lever turn + Beat
+  - A bot holding an ally with 3 or more enemies around uses the special attack
 
 ---
 
@@ -151,7 +156,14 @@ Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
    - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
    - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
    - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
-   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn. Its title and ticker are `SatelliteTitle` / `SatelliteTicker` in `PonMi/09/Config/Supermodel.ini`
+   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn
+   - BOSS HP x1: the boss's life stays as for one player, whatever the number of players
+   - 01 INVINCIBLE: slot 1 takes no damage (for testing)
+   - TIMER STOP: the in-game countdown stays at 99 for every number of players
+   - TARGET MARKER: a marker over the enemy each bot is aiming at
+   - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: TOY SHOP / PARKING, ROUTE3: COURTYARD / DIRECT
+   - BOT CAN OPEN GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
+   - DEVELOP: log switches for testing (leave them off)
 3. **SLOTS**: choose a mode for each slot
 
 | Mode | Meaning |
