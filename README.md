@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261121 / PonLuncher 2.0.0
+> Build 20261122 / PonLuncher 2.0.0
 
 ---
 
@@ -25,7 +25,7 @@
 - **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
 - **H.264 / H.265** video, Opus audio
 - **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one PonLuncher per PC, one slot per Discord account, old versions cannot connect
-- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker). Since 20261121: the followed player's name in its HUD colour, allies on the left with their colours (`_BOT` on bot cabinets), `LOADING...` during joins and area / stage changes, and the timer held at 99 so the satellite never times out. Since 20261122 (source): the camera is the game's own camera moved over to the shown player, following smoothly and gliding to the next one without going through walls; while a boss is out it shows the boss (every 10 s the next boss), with all 8 players in the ally list and ⚡ marks for their specials; the satellite also changes the cabinet it copies mid-game (only while the link is quiet and both players are alive)
+- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker). Since 20261121: the followed player's name in its HUD colour, allies on the left with their colours (`_BOT` on bot cabinets), `LOADING...` during joins and area / stage changes, and the timer held at 99 so the satellite never times out. Since 20261122: the camera is the game's own camera moved over to the shown player, following smoothly and gliding to the next one without going through walls; while a boss is out it shows the boss (every 10 s the next boss), with all 8 players in the ally list and ⚡ marks for their specials; the satellite also changes the cabinet it copies mid-game (only while the link is quiet and both players are alive)
 
 ### Spikeout FE changes
 
@@ -41,7 +41,7 @@
   - When no enemy is after a bot, it goes for the boss first. A bot the boss is after keeps 4–6 away and faces it
   - Charge attacks on bosses: from behind, on a dizzy boss, and on a downed boss (released once it is up and no longer invincible), or a lever turn + Beat
   - A bot holding an ally with 3 or more enemies around uses the special attack
-- **Bots (20261122, source):**
+- **Bots (20261122):**
   - A bot keeps its target for at least 1.5 seconds (it changes earlier only when the target is gone, grabbed by another player, or replaced by the boss coming after the bot)
   - When a juggled enemy is not hit in the air for a while, the bot dashes at it and finishes with a big jump kick
   - Specials: B+C+J mashed for one second; a special when the bot is low on health while holding or held by an enemy; a lever turn when held by a boss
