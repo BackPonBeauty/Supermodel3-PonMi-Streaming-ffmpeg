@@ -21,11 +21,17 @@ struct SatLinkEvent
   enum Type { Link, Frame, Broken };
   Type type = Frame;
   int numMachines = 0;                      // Link / Frame
+  int node = 0;                             // Link: the sender's own node (its machine index + 1); 08 on the ring
   std::vector<std::vector<char>> segs;      // Frame: as 08 sent them; segs[i] = node (N - i)'s data
 };
 
 bool SatelliteTapStart(int portIn, const std::string &addrOut, int portOut);
 void SatelliteTapStop();
+// 11/23 main6 netlink (Network/Netlink.h): the tap fed from a socket of our own instead of the relay.
+void SatelliteTapExternalStart();
+void SatelliteTapFeed(const char *p, int n);   // bytes as the ring carries them (int length + message)
+void SatelliteTapFeedReset();                  // a new connection: parse from the start
+void SatelliteTapFeedBroken();                 // the connection is gone: "link broken" to the clone
 int SatelliteTapRelayState();               // 0 off, 1 connecting to 01, 2 waiting for 08, 3 relaying
 int SatelliteTapBacklog();                  // events not taken yet
 bool SatelliteTapPop(SatLinkEvent &e, int timeoutMs);

@@ -195,6 +195,7 @@ SRC_FILES = \
 	Src/Network/TCPSend.cpp \
 	Src/Network/NetBoard.cpp \
 	Src/Network/SimNetBoard.cpp \
+	Src/Network/Netlink.cpp \
 	$(PLATFORM_SRC_FILES)
 
 ifeq ($(strip $(ENABLE_DEBUGGER)),1)

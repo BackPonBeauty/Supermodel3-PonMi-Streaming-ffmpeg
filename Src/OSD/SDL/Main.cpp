@@ -845,16 +845,18 @@ static void TestPolygonHeaderBits(IEmulator *Emu)
 static const int STATE_FILE_VERSION = 6; // save state file version
 static const int NVRAM_FILE_VERSION = 0; // NVRAM file version
 static unsigned s_saveSlot = 0;          // save state slot #
+#include "Network/Netlink.h"
 // 11/23 main6: save / load on the same frame on every linked node (Network/SimNetBoard.cpp)
 extern bool g_netStateSyncOn;
 extern int g_netStateReq, g_netStateReqSlot;
 extern int g_netStateDo, g_netStateDoSlot;
 
-static void SaveState(IEmulator *Model3)
+static void SaveState(IEmulator *Model3, std::string file_path = std::string())
 {
   CBlockFile SaveState;
 
-  std::string file_path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << Model3->GetGame().name << ".st" << s_saveSlot;
+  if (file_path.empty())
+    file_path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << Model3->GetGame().name << ".st" << s_saveSlot;
   if (Result::OKAY != SaveState.Create(file_path, "Supermodel Save State", "Supermodel Version " SUPERMODEL_VERSION))
   {
     ErrorLog("Unable to save state to '%s'.", file_path.c_str());
@@ -1753,6 +1755,30 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         }
     }
 
+    // 11/23 main6 netlink client: the host's state, before our next frame (the link data waits for it)
+    {
+      std::vector<char> st;
+      if (NetlinkClientTakeState(st))
+      {
+        std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << "netlink_client.st";
+        bool written = false;
+        if (FILE *f = fopen(path.c_str(), "wb"))
+        {
+          written = fwrite(st.data(), 1, st.size(), f) == st.size();
+          fclose(f);
+        }
+        if (written)
+        {
+          Model3->PauseThreads();
+          LoadState(Model3, path);
+          Model3->ResumeThreads();
+        }
+        else
+          ErrorLog("Netlink: cannot write '%s'.", path.c_str());
+        NetlinkClientStateLoaded();
+      }
+    }
+
     bool currentLoadStatePressed = Inputs->uiLoadState->Pressed();
     if (replayRequested && !replayStarted)
     {
@@ -1763,6 +1789,24 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     if (!Inputs->Poll(&game, xOffset, yOffset, xRes, yRes))
     {
       quit = true;
+    }
+    // 11/23 main6 netlink phase 1: on a client, our pad (read with our own ini) goes to the host's node in its
+    // STREAM layout; our own game (the clone) plays what that node read, so it never sees these directly.
+    if (NetlinkClientOn())
+    {
+      NetlinkInputMsg m;
+      auto on = [](const std::shared_ptr<CSwitchInput> &s) { return s && s->value; };
+      if (on(Inputs->shift))    m.buttons |= 1u << 0;
+      if (on(Inputs->beat))     m.buttons |= 1u << 2;
+      if (on(Inputs->charge))   m.buttons |= 1u << 3;
+      if (on(Inputs->jump))     m.buttons |= 1u << 5;
+      if (on(Inputs->coin[0]))  m.buttons |= 1u << 6;
+      if (on(Inputs->start[0])) m.buttons |= 1u << 7;
+      if (on(Inputs->up[0]))    m.hat |= 0x01;
+      if (on(Inputs->right[0])) m.hat |= 0x02;
+      if (on(Inputs->down[0]))  m.hat |= 0x04;
+      if (on(Inputs->left[0]))  m.hat |= 0x08;
+      NetlinkClientSendInput(m);
     }
     static bool frameFlip = false;
     // Render if paused, otherwise run a frame (alternate every 2 loops if 120fps interpolation is active)
@@ -1788,6 +1832,30 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     else
     {
       Model3->RunFrame();
+    }
+
+    // 11/23 main6 netlink: a new client on our node gets our state at the end of this frame (Network/Netlink.h)
+    if (NetlinkHostTakeSaveRequest())
+    {
+      std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << "netlink_host.st";
+      Model3->PauseThreads();
+      SaveState(Model3, path);
+      Model3->ResumeThreads();
+      std::vector<char> st;
+      if (FILE *f = fopen(path.c_str(), "rb"))
+      {
+        fseek(f, 0, SEEK_END);
+        long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (n > 0)
+        {
+          st.resize((size_t) n);
+          if (fread(st.data(), 1, (size_t) n, f) != (size_t) n)
+            st.clear();
+        }
+        fclose(f);
+      }
+      NetlinkHostSetState(std::move(st));
     }
 
     // 11/23 main6: the link frame of a synced save / load has just ended (set by the net board in RunFrame)
@@ -3515,6 +3583,46 @@ int main(int argc, char **argv)
   std::string selectedInputSystem = s_runtime_config["InputSystem"].ValueAs<std::string>();
   for (char &c : selectedInputSystem)   // "NONE" (streaming server, P3) is usually written in capitals
     c = (char) tolower((unsigned char) c);
+
+  // 11/23 main6 netlink phase 1 (HO-1, HO-5): a host node with NetlinkServe = 1 is played from its netlink client:
+  // no local pads (input system NONE), no bot, the controls in the fixed STREAM layout the client sends. Runtime
+  // only - the ini is not changed, so whatever the launcher wrote for the slot stays.
+  if (s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0))
+  {
+    selectedInputSystem = "none";
+    s_runtime_config.Set("AIPlayer", 0);
+    static const char *const kNetlinkMap[][2] = {
+      { "InputStart1", "JOY1_BUTTON8" }, { "InputCoin1", "JOY1_BUTTON7" }, { "InputShift", "JOY1_BUTTON1" },
+      { "InputBeat", "JOY1_BUTTON3" }, { "InputCharge", "JOY1_BUTTON4" }, { "InputJump", "JOY1_BUTTON6" },
+      { "InputJoyUp", "JOY1_POV1_UP" }, { "InputJoyDown", "JOY1_POV1_DOWN" }, { "InputJoyLeft", "JOY1_POV1_LEFT" },
+      { "InputJoyRight", "JOY1_POV1_RIGHT" } };
+    for (const auto &kv : kNetlinkMap)
+      s_runtime_config.Set(kv[0], std::string(kv[1]));
+    printf("[Netlink] Host node: input from the netlink client (input system NONE, no bot)\n");
+  }
+
+  // 11/23 main6 netlink (R-4 / LB-3): a client connects before the game is loaded and plays with the host's game
+  // settings (SpikeJr, EnemyKnockMul, PowerPCFrequency ...) over its own, or its world is another one. Runtime only.
+  {
+    std::string nl = s_runtime_config["NetlinkConnect"].ValueAsDefault<std::string>("");
+    size_t colon = nl.rfind(':');
+    if (s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) && !nl.empty() && colon != std::string::npos && colon > 0)
+    {
+      printf("[Netlink] Client: waiting for the host's settings (%s)\n", nl.c_str());
+      std::vector<std::pair<std::string, std::string>> kv;
+      if (NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), 120000, kv))
+      {
+        for (const auto &p : kv)
+        {
+          s_runtime_config.Set(p.first, p.second);
+          InfoLog("Netlink: host setting %s = %s", p.first.c_str(), p.second.c_str());
+        }
+        s_runtime_config.Set("AIPlayer", 0);
+      }
+      else
+        ErrorLog("Netlink: no settings from the host %s in 2 minutes; playing with our own (the world may differ).", nl.c_str());
+    }
+  }
 
   // P4 (2026-11-16, design 3.1): a streaming server's ports follow from its slot (LinkPlay 1..8):
   // base = 55000 + (slot - 1) * 4 -> input, session, video, audio. Other LinkPlay values (e.g. 9 for tests)

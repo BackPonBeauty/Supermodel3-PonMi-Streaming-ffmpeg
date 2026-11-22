@@ -40,6 +40,7 @@ namespace
     size_t pos = 0;
     int phase = 0;                          // 0 = unknown, 1 = testing (got a GUID), 2 = got the index, 3 = ready
     int numMachines = 0;
+    int index = 0;                          // the sender's machine index (0-based)
     SatLinkEvent frame;
 
     void Push(SatLinkEvent &&e)
@@ -80,7 +81,10 @@ namespace
       if (len == 1)
       {
         if (phase == 1)
-          phase = 2;                        // the previous machine's index
+        {
+          phase = 2;                        // the sender's machine index
+          index = (uint8_t) p[0];
+        }
         else if (phase == 2)
         {
           numMachines = (uint8_t) p[0] + 1;
@@ -89,6 +93,7 @@ namespace
           SatLinkEvent e;
           e.type = SatLinkEvent::Link;
           e.numMachines = numMachines;
+          e.node = index + 1;
           Push(std::move(e));
         }
         return;
@@ -279,11 +284,40 @@ bool SatelliteTapStart(int portIn, const std::string &addrOut, int portOut)
 
 void SatelliteTapStop()
 {
-  if (!s_tapRelay.joinable())
-    return;
   s_relayRun.store(false);
   s_tapCv.notify_all();
-  s_tapRelay.join();
+  if (s_tapRelay.joinable())
+    s_tapRelay.join();
+}
+
+// 11/23 main6 netlink: no relay; Network/Netlink.cpp's client thread hands us the bytes.
+namespace { TapParser s_extTap; std::mutex s_extMutex; }
+
+void SatelliteTapExternalStart()
+{
+  s_tapOn = true;
+  s_relayRun.store(true);
+}
+
+void SatelliteTapFeed(const char *p, int n)
+{
+  std::lock_guard<std::mutex> lk(s_extMutex);
+  s_extTap.Feed(p, n);
+}
+
+void SatelliteTapFeedReset()
+{
+  std::lock_guard<std::mutex> lk(s_extMutex);
+  s_extTap.Reset();
+}
+
+void SatelliteTapFeedBroken()
+{
+  std::lock_guard<std::mutex> lk(s_extMutex);
+  s_extTap.Reset();
+  SatLinkEvent e;
+  e.type = SatLinkEvent::Broken;
+  s_extTap.Push(std::move(e));
 }
 
 int SatelliteTapRelayState() { return s_relayState.load(); }

@@ -25,6 +25,8 @@
 #include "SimNetBoard.h"
 #include <OSD/Thread.h>
 #include "Stream/Satellite.h"
+#include "Stream/Protocol.h"
+#include "Netlink.h"
 
  // these make 16-bit read/writes much neater
 #define RAM16 *(uint16_t*)&RAM
@@ -44,8 +46,12 @@ CSimNetBoard::CSimNetBoard(const Util::Config::Node& config) : m_config(config)
 CSimNetBoard::~CSimNetBoard(void)
 {
 	m_quit = true;
+	if (m_netlinkClient)
+		NetlinkClientStop();
 	if (m_clone)
 		SatelliteTapStop();
+	if (m_netlinkServe)
+		NetlinkHostStop();
 	if (m_segDump)
 	{
 		fclose(m_segDump);
@@ -121,6 +127,47 @@ void CSimNetBoard::LoadState(CBlockFile* SaveState)
 	SaveState->Read(&status0, sizeof(status0));
 	SaveState->Read(&status1, sizeof(status1));
 
+	if (m_netlinkClient)
+	{
+		// 11/23 netlink: the host's node k saved this at the end of frame F; we become that node, linked, and the
+		// host's frames F+1.. follow. Everything comes back, the comm RAM header and status1 included (they are
+		// node k's, which we play).
+		if ((State)state != State::ready || numMachines < 2 || numMachines > 8 || segmentSize == 0)
+		{
+			InfoLog("NetState: netlink client: the host's state is not of a running link (state %u, %u machines).", state, numMachines);
+			return;
+		}
+		SaveState->Read(RAM, 0x10000);
+		SaveState->Read(Buffer, 0x20000);
+		m_numMachines = numMachines;
+		m_segmentSize = segmentSize;
+		m_counter = counter;
+		m_IRQ2ack = irq2ack;
+		m_status0 = status0;
+		m_status1 = status1;
+		m_running = running != 0;
+		m_connected = true;
+		m_commbank = bank != 0;
+		CommRAM = m_commbank ? Buffer + 0x10000 : Buffer;
+		externalCommRAM = m_commbank ? Buffer : Buffer + 0x10000;
+		m_state = State::ready;
+		// our node: status1 = 0x2021 + (machines - 1) * 0x20 + index (the link test above)
+		int k = ((status1 - 0x2021) & 0x1F) + 1;
+		if (k < 1 || k > numMachines)
+			k = 1;
+		m_machineIndex = (uint8_t)(k - 1);
+		m_cloneFixed = k;
+		g_satClone.numMachines = numMachines;
+		g_satClone.node = k;
+		g_satClone.view = k;
+		g_satClone.switched = true;
+		g_satClone.havePacket = false;
+		g_satClone.haveInputs = false;
+		m_cloneHaveNext = false;
+		m_cloneTimer = 0;
+		InfoLog("NetState: netlink client: node %d of %u, link frame %u.", k, numMachines, counter);
+		return;
+	}
 	if (m_clone)
 	{
 		InfoLog("NetState: satellite clone: the link comes from the relay, not from the save.");
@@ -217,9 +264,39 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 				printf("[Satellite] SegDump: segdump.bin\n");
 			}
 		}
+		// 11/23 main6 netlink phase 1: NetlinkConnect = host:port -> the link data from the host's node k, which we
+		// follow with the game's own camera and HUD (no satellite view)
+		std::string nl = m_config["NetlinkConnect"].ValueAsDefault<std::string>("");
+		size_t colon = nl.rfind(':');
+		if (!nl.empty() && colon != std::string::npos && colon > 0)
+		{
+			m_netlinkClient = true;
+			g_satView.on = false;
+			NetlinkClientStart(nl.substr(0, colon), atoi(nl.c_str() + colon + 1));
+			printf("[Netlink] Client: the clone follows the host's node\n");
+			return Result::OKAY;
+		}
 		SatelliteTapStart(port_in, addr_out, port_out);
 		printf("[Satellite] Clone: following %s\n", m_cloneFixed ? "a fixed node" : "the games in the link");
 		return Result::OKAY;
+	}
+
+	// 11/23 main6 netlink phase 1: serve our link data to one client on TCP (slot base port + 2, or NetlinkPort)
+	if (m_spikeofe && m_config["NetlinkServe"].ValueAsDefault<int>(0))
+	{
+		int port = m_config["NetlinkPort"].ValueAsDefault<int>(0);
+		int slot = m_config["LinkPlay"].ValueAsDefault<int>(0);
+		if (port <= 0)
+			port = StreamProto::SlotBasePort(slot >= 1 && slot <= 8 ? slot : 1) + StreamProto::PORT_VIDEO;
+		m_netlinkServe = true;
+		std::string settings;
+		for (int i = 0; i < kNetlinkGameKeyCount; i++)
+		{
+			std::string v = m_config[kNetlinkGameKeys[i]].ValueAsDefault<std::string>("");
+			if (!v.empty())
+				settings += std::string(kNetlinkGameKeys[i]) + "=" + v + "\n";
+		}
+		NetlinkHostStart(port, settings);
 	}
 
 	nets = std::make_unique<TCPSend>(addr_out, port_out);
@@ -383,6 +460,7 @@ void CSimNetBoard::RunFrame(void)
 			}
 
 			m_numMachines = numMachines + 1;
+			m_machineIndex = machineIndex;
 
 			m_status0 = 0;		// supposed to cycle between 0 and 1 (also 2 for Daytona 2); doesn't seem to matter
 			m_status1 = 0x2021 + (numMachines * 0x20) + machineIndex;
@@ -622,12 +700,16 @@ void CSimNetBoard::RunFrame(void)
 				m_state = State::error;
 				if (m_gameType == GameType::one)
 					m_status1 = 0x40;			// send "link broken" message to mainboard
+				if (m_netlinkServe)
+					NetlinkHostBroken();
 				break;
 			}
 			memcpy(CommRAM + 0x100 + (i + 1) * m_segmentSize, recv_data.data(), recv_data.size());
 			if (m_spikeofe)
 				NetStateRead(recv_data);
 		}
+		if (m_netlinkServe && m_state == State::ready)
+			NetlinkHostFrame(CommRAM, m_numMachines, m_machineIndex + 1, m_segmentSize);
 		if (m_spikeofe && !m_clone && m_state == State::ready)
 			NetStateEnd();
 
@@ -799,6 +881,10 @@ bool CSimNetBoard::CloneTesting(uint8_t& numMachines, uint8_t& machineIndex)
 		if (n < 2 || n > 8)
 			continue;
 		int k = (m_cloneFixed >= 1 && m_cloneFixed <= n) ? m_cloneFixed : 1;
+		if (m_netlinkClient && e.node >= 1 && e.node <= n)
+			k = e.node;		// 11/23 netlink: the host's node (its header), whatever the ini says
+		if (m_netlinkClient)
+			m_cloneFixed = k;	// and stay with it (no switches)
 		numMachines = (uint8_t)(n - 1);
 		machineIndex = (uint8_t)(k - 1);
 		g_satClone.numMachines = n;
@@ -963,7 +1049,11 @@ bool CSimNetBoard::CloneWait(SatLinkEvent& e)
 		if (m_quit)
 			return false;
 		if (SatelliteTapPop(e, 200))
+		{
+			if (m_netlinkClient && e.type == SatLinkEvent::Link)
+				continue;	// 11/23 netlink: the host's link header after its state; we are linked already
 			return true;
+		}
 	}
 }
 

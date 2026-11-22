@@ -152,6 +152,12 @@ private:
 	void NetStateRead(const std::vector<char>& seg);
 	void NetStateEnd(void);
 	void NetStateOffer(int action, int slot, uint16_t target);
+
+	// 11/23 main6 netlink phase 1 (Netlink.h): host = serve our link data (ini NetlinkServe), client = the clone
+	// fed from the host's socket (ini NetlinkConnect = host:port) instead of the 09 relay
+	bool m_netlinkServe = false;
+	bool m_netlinkClient = false;
+	uint8_t m_machineIndex = 0;
 };
 
 // 11/23 main6 (Main.cpp <-> SimNetBoard, both on the main thread)
