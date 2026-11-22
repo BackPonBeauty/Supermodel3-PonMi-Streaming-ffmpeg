@@ -290,6 +290,8 @@ bool FirebaseMatchingCpp::RegisterHost(const std::string &externalIp,
         ss << ",\"available\":" << (availableSlots[slot] ? "true" : "false");
         if (m_locked)
             ss << ",\"locked\":true";   // SV-18 (only written when set, so public hosts work with older rules)
+        if (m_netlink)
+            ss << ",\"mode\":\"netlink\"";   // 11/23 netlink (only written when set, like locked)
         ss << "}";
         std::string path = "/hosts/" + key + "/slot" + std::to_string(slot) + ".json?auth=" + Token();
         std::string resp = HttpPatch(dbHost, std::wstring(path.begin(), path.end()), ss.str(), Token());
@@ -962,6 +964,7 @@ bool FirebaseMatchingCpp::FetchHosts(std::vector<LobbyHostCpp> &out)
             host.slots[s].available = slot->GetBool("available");
             host.slots[s].player = slot->GetString("player");
             host.slots[s].locked = slot->GetBool("locked");
+            host.slots[s].netlink = slot->GetString("mode") == "netlink";   // 11/23
             if (ts >= host.timestamp)
                 host.sess = slot->GetString("sess");   // 11/17: games in the link (from the most recently updated slot)
             if (host.slots[s].locked)

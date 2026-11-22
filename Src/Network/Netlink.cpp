@@ -2,12 +2,17 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <windows.h>
 #include <bcrypt.h>
 #include <zlib.h>
 #include "Netlink.h"
 #include "Stream/Satellite.h"
 #include "Stream/RemoteInputSystem.h"
+#include "Stream/Protocol.h"
+#include "Stream/DiscordAuth.h"
+#include "Stream/RoomPassword.h"
+#include "Stream/Ticket.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -249,8 +254,16 @@ namespace
     return SendAll(c, (const char *) &n, 4) && SendAll(c, packed.data(), packed.size());
   }
 
+  // 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254/16: this PC or the home network (like SessionServer's LB-07)
+  bool IsLocalOrPrivate(const sockaddr_in &a)
+  {
+    uint32_t ip = ntohl(a.sin_addr.s_addr);
+    return (ip >> 24) == 127 || (ip >> 24) == 10 || (ip >> 20) == 0xAC1 || (ip >> 16) == 0xC0A8 || (ip >> 16) == 0xA9FE;
+  }
+
   // ---- Host ----
   std::thread s_hostThread;
+  std::atomic<bool> s_hostDrop{ false };        // phase 3: the room session of our client ended (Main.cpp)
   std::atomic<bool> s_hostRun{ false };
   std::atomic<bool> s_hostStreaming{ false };   // a client has its header: frames are queued
   std::atomic<bool> s_hostOverflow{ false };
@@ -340,6 +353,8 @@ namespace
       char ip[64] = "?";
       inet_ntop(AF_INET, &ca.sin_addr, ip, sizeof(ip));
       printf("[Netlink] Host: client %s connected\n", ip);
+      s_hostDrop.store(false);
+      bool sessionMode = false;
 
       // 2. who it is (10 s), then our game settings at once (it waits for them before it loads the game)
       {
@@ -353,6 +368,18 @@ namespace
           continue;
         }
         std::string why = HostCheckHello(hello);
+        // phase 3: with the room's session running here (a NETLINK slot), only its client - same IP, its session
+        // key from WELCOME - gets the link data; without one (a test on this PC / the home network) no outsider
+        sessionMode = StreamProto::HasMediaHelloValidator();
+        if (why.empty() && sessionMode)
+        {
+          StreamProto::Header mh;
+          StreamProto::FillHeader(mh, StreamProto::T_MEDIA_HELLO, (uint32_t) strtoul(Field(hello, "key").c_str(), nullptr, 10));
+          if (!StreamProto::IsValidMediaHello((const char *) &mh, (int) sizeof(mh), ca))
+            why = "join this slot from the lobby (no room session for this address)";
+        }
+        else if (why.empty() && !IsLocalOrPrivate(ca))
+          why = "this slot has no room session: only this PC / the home network can join";
         if (!why.empty())
         {
           printf("[Netlink] Host: client %s refused: %s\n", ip, why.c_str());
@@ -453,6 +480,11 @@ namespace
           printf("[Netlink] Host: the link is broken, client told\n");
           break;
         }
+        if (s_hostDrop.load())
+        {
+          printf("[Netlink] Host: the client's room session ended\n");
+          break;
+        }
         // inputs (non-blocking look)
         for (;;)
         {
@@ -475,7 +507,9 @@ namespace
           if (len < 0 || len > 4096) { ok = false; break; }
           if (in.size() - pos < 4 + (size_t) len)
             break;
-          if (len == (int) sizeof(NetlinkInputMsg) && memcmp(in.data() + pos + 4, "NLI1", 4) == 0)
+          // inputs on this socket only without a room session (a home test); with one they come over UDP to the
+          // SessionServer (idle kick and all)
+          if (!sessionMode && len == (int) sizeof(NetlinkInputMsg) && memcmp(in.data() + pos + 4, "NLI1", 4) == 0)
           {
             NetlinkInputMsg m;
             memcpy(&m, in.data() + pos + 4, sizeof(m));
@@ -490,7 +524,8 @@ namespace
         std::lock_guard<std::mutex> lk(s_hostMutex);
         s_hostQueue.clear();
       }
-      HostClear();
+      if (!sessionMode)
+        HostClear();                              // (with a session the SessionServer clears the input)
       closesocket(c);
       printf("[Netlink] Host: client %s gone after %llu frames\n", ip, (unsigned long long) frames);
     }
@@ -498,17 +533,18 @@ namespace
     WSACleanup();
   }
 
-  // ---- Client ----
+  // ---- Client state ----
   std::thread s_clientThread;
   std::atomic<bool> s_clientRun{ false };
   std::atomic<bool> s_clientOn{ false };
+  std::atomic<bool> s_clientEverOn{ false };    // phase 3: we were playing (the link data flowed) at some point
   std::mutex s_clientSendMutex;
   SOCKET s_clientSock = INVALID_SOCKET;
   std::mutex s_clientStateMutex;
   std::condition_variable s_clientSettingsCv;
   std::vector<std::pair<std::string, std::string>> s_clientSettings;
   bool s_clientSettingsHave = false;            // (under s_clientStateMutex)
-  bool s_clientFailed = false;                  // (under s_clientStateMutex) refused / no answer
+  bool s_clientFailed = false;                  // (under s_clientStateMutex) refused / no answer / ended
   std::string s_clientError;
   std::vector<char> s_clientState;              // the host's save state, waiting for Main.cpp
   bool s_clientStateHave = false;
@@ -519,20 +555,295 @@ namespace
     printf("[Netlink] Client: %s\n", why.c_str());
     {
       std::lock_guard<std::mutex> lk(s_clientStateMutex);
+      if (!s_clientFailed)
+        s_clientError = why;                    // the first reason counts
       s_clientFailed = true;
-      s_clientError = why;
     }
     s_clientSettingsCv.notify_all();
   }
 
+  // ---- Client: the room's UDP session (phase 3), as the video client has it (Stream/Protocol.h, StreamClient.cpp) ----
+  // HELLO (codecs = 0: a netlink client) -> nonce challenge -> entry ticket (Discord, Worker) / room password ->
+  // WELCOME (session key); heartbeat every 2 s; INPUT to base + 0 (the SessionServer applies it and does the idle
+  // kick); BYE when leaving; no answer for 6 s = gone.
+  struct NlSession
+  {
+    bool want = false;                          // a lobby join (NetlinkClientSetSession), not a home test
+    int slot = 0;
+    std::string name, password;
+    SOCKET sock = INVALID_SOCKET;
+    sockaddr_in sessAddr = {}, inputAddr = {};
+    uint32_t key = 0;
+    std::atomic<bool> up{ false };
+    std::atomic<bool> run{ false };
+    std::atomic<uint64_t> lastReply{ 0 };
+    std::mutex lock;                            // seq, notice
+    uint16_t seq = 0;
+    std::string notice;
+    uint64_t noticeTime = 0;
+    std::thread thread;
+  };
+  NlSession s_sess;
+
+  const char *RejectText(uint8_t reason)
+  {
+    using namespace StreamProto;
+    switch (reason)
+    {
+    case R_VERSION:           return "The host runs a different version. Please update.";
+    case R_NOT_MEMBER:        return "Refused: you are not a member of the Discord server.";
+    case R_SLOT_BUSY:         return "That slot is in use. Please choose another slot.";
+    case R_LOGIN_REQUIRED:    return "Refused: please log in to Discord (top of the lobby). Without login only this PC / home network can connect.";
+    case R_LOGIN_UNAVAILABLE: return "Refused: the entry-ticket server could not check your Discord login now. Please try again later.";
+    case R_TICKET_INVALID:    return "Refused: the host did not accept the entry ticket. Please try again.";
+    case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
+    case R_ALREADY_CONNECTED: return "Refused: your Discord account is already connected to another slot of this host.";
+    case R_STREAM_SLOT:       return "That slot is a video (STREAM) slot.";
+    case R_PASSWORD_WRONG:    return "Wrong password.";
+    case R_PASSWORD_LOCKED:   return "Too many wrong passwords. Please wait 5 minutes and try again.";
+    case R_PASSWORD_REQUIRED: return "This host needs a password.";
+    default:                  return "Refused by the host.";
+    }
+  }
+
+  void SessSend(const void *p, int n, const sockaddr_in &to)
+  {
+    sendto(s_sess.sock, (const char *) p, n, 0, (const sockaddr *) &to, sizeof(to));
+  }
+
+  // The handshake (5 s for each answer). True = WELCOME; else why.
+  bool SessionHandshake(const std::string &host, std::string &why)
+  {
+    using namespace StreamProto;
+    addrinfo hints = {}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res)
+    {
+      why = "Cannot find the host " + host + ".";
+      return false;
+    }
+    sockaddr_in addr = *(sockaddr_in *) res->ai_addr;
+    freeaddrinfo(res);
+    int base = SlotBasePort(s_sess.slot);
+    s_sess.sessAddr = addr;
+    s_sess.sessAddr.sin_port = htons((u_short) (base + PORT_SESSION));
+    s_sess.inputAddr = addr;
+    s_sess.inputAddr.sin_port = htons((u_short) (base + PORT_INPUT));
+
+    s_sess.sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s_sess.sock == INVALID_SOCKET)
+    {
+      why = "Cannot open a network socket.";
+      return false;
+    }
+    BOOL newBehavior = FALSE;
+    DWORD bytes = 0;
+    WSAIoctl(s_sess.sock, SIO_UDP_CONNRESET, &newBehavior, sizeof(newBehavior), nullptr, 0, &bytes, nullptr, nullptr);
+    sockaddr_in local = {};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = INADDR_ANY;
+    bind(s_sess.sock, (sockaddr *) &local, sizeof(local));
+    DWORD timeout = 200;
+    setsockopt(s_sess.sock, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout, sizeof(timeout));
+
+    Hello hello = {};
+    FillHeader(hello.h, T_HELLO, 0);
+    hello.codecs = 0;                           // a netlink client: no video
+    hello.login = LOGIN_NONE;
+    memcpy(hello.name, s_sess.name.c_str(), std::min(s_sess.name.size(), (size_t) kMaxNameLength));
+    std::string token;
+    bool loggedIn = DiscordAuth::GetAccessToken(token) && !token.empty() && token.size() <= 256;
+    if (loggedIn)
+      hello.login = LOGIN_DISCORD;
+    char hostIp[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, (void *) &addr.sin_addr, hostIp, sizeof(hostIp));
+
+    std::string ticketPayload, ticketSig;
+    std::vector<char> packet;
+    auto build = [&]() {
+      size_t tl = ticketPayload.size();
+      hello.ticketLen = (uint16_t) tl;
+      packet.assign(sizeof(hello) + (tl ? tl + Ticket::kSigLength : 0), 0);
+      memcpy(packet.data(), &hello, sizeof(hello));
+      if (tl)
+      {
+        memcpy(packet.data() + sizeof(hello), ticketPayload.data(), tl);
+        memcpy(packet.data() + sizeof(hello) + tl, ticketSig.data(), Ticket::kSigLength);
+      }
+    };
+    build();
+
+    char buf[512];
+    uint64_t start = GetTickCount64(), lastSend = 0;
+    int answers = 0;
+    uint8_t ticketProblem = 0;
+    while (GetTickCount64() - start < 5000 && s_clientRun.load())
+    {
+      if (GetTickCount64() - lastSend >= 500)
+      {
+        SessSend(packet.data(), (int) packet.size(), s_sess.sessAddr);
+        lastSend = GetTickCount64();
+      }
+      sockaddr_in from = {};
+      int fromLen = sizeof(from);
+      int n = recvfrom(s_sess.sock, buf, sizeof(buf), 0, (sockaddr *) &from, &fromLen);
+      Header h;
+      if (n <= 0 || !ParseHeader(buf, n, &h))
+        continue;
+      if (h.type == T_REJECT && n >= (int) sizeof(Reject))
+      {
+        Reject r;
+        memcpy(&r, buf, sizeof(r));
+        if (r.reason == R_CHALLENGE && r.nonce != 0)
+        {
+          if (r.nonce == hello.nonce || ++answers > 3)
+            continue;
+          if ((r.needs & NEED_PASSWORD) && s_sess.password.empty())
+          {
+            why = RejectText(R_PASSWORD_REQUIRED);
+            return false;
+          }
+          hello.nonce = r.nonce;
+          memset(hello.pwProof, 0, sizeof(hello.pwProof));
+          if (r.needs & NEED_PASSWORD)
+            RoomPassword::Proof(r.nonce, s_sess.password, hello.pwProof);
+          ticketPayload.clear();
+          ticketSig.clear();
+          if ((r.needs & NEED_TICKET) && loggedIn)
+          {
+            Ticket::Fetch f = Ticket::Request(token, hostIp, s_sess.slot, r.nonce, ticketPayload, ticketSig);
+            if (f != Ticket::Fetch::Ok)
+            {
+              ticketPayload.clear();
+              ticketSig.clear();
+              ticketProblem = f == Ticket::Fetch::LoginInvalid ? R_LOGIN_INVALID : f == Ticket::Fetch::NotMember ? R_NOT_MEMBER : R_LOGIN_UNAVAILABLE;
+            }
+          }
+          build();
+          SessSend(packet.data(), (int) packet.size(), s_sess.sessAddr);
+          lastSend = start = GetTickCount64();
+          continue;
+        }
+        uint8_t reason = r.reason;
+        if ((reason == R_LOGIN_REQUIRED || reason == R_TICKET_INVALID) && ticketProblem)
+          reason = ticketProblem;
+        why = RejectText(reason);
+        return false;
+      }
+      if (h.type == T_WELCOME && n >= (int) sizeof(Welcome))
+      {
+        s_sess.key = h.key;
+        s_sess.lastReply.store(GetTickCount64());
+        return true;
+      }
+    }
+    why = "No answer from " + host + " (slot " + std::to_string(s_sess.slot) + "). Is the host running?";
+    return false;
+  }
+
+  void SessionBye()
+  {
+    if (s_sess.sock == INVALID_SOCKET || !s_sess.up.load())
+      return;
+    StreamProto::Header bye;
+    StreamProto::FillHeader(bye, StreamProto::T_BYE, s_sess.key);
+    for (int i = 0; i < 3; i++)
+      SessSend(&bye, sizeof(bye), s_sess.sessAddr);
+  }
+
+  // the session or the link data is over: say why (the lobby shows it) and stop the client thread
+  void ClientEnd(const std::string &why)
+  {
+    ClientFail(why);
+    s_clientRun.store(false);
+  }
+
+  // Heartbeat, and what the host says (NOTICE, BYE); no answer for 6 s = gone
+  void SessionThread()
+  {
+    using namespace StreamProto;
+    uint64_t lastHb = 0;
+    char buf[1024];
+    while (s_sess.run.load())
+    {
+      uint64_t now = GetTickCount64();
+      if (now - lastHb >= kHeartbeatIntervalMs)
+      {
+        Header h;
+        FillHeader(h, T_HB, s_sess.key);
+        SessSend(&h, sizeof(h), s_sess.sessAddr);
+        lastHb = now;
+      }
+      if (now - s_sess.lastReply.load() > kDropTimeoutMs)
+      {
+        ClientEnd("The host stopped answering (no reply for 6 s).");
+        break;
+      }
+      sockaddr_in from = {};
+      int fromLen = sizeof(from);
+      int n = recvfrom(s_sess.sock, buf, sizeof(buf), 0, (sockaddr *) &from, &fromLen);
+      Header h;
+      if (n <= 0 || !ParseHeader(buf, n, &h) || h.version != kVersion || h.key != s_sess.key)
+        continue;
+      s_sess.lastReply.store(GetTickCount64());
+      if (h.type == T_NOTICE && n >= (int) sizeof(Notice))
+      {
+        Notice nt;
+        memcpy(&nt, buf, sizeof(nt));
+        nt.text[sizeof(nt.text) - 1] = '\0';
+        printf("[Netlink] Host says: %s\n", nt.text);
+        std::lock_guard<std::mutex> lk(s_sess.lock);
+        s_sess.notice = nt.text;
+        s_sess.noticeTime = GetTickCount64();
+      }
+      else if (h.type == T_BYE)
+      {
+        std::string why;
+        {
+          std::lock_guard<std::mutex> lk(s_sess.lock);
+          if (!s_sess.notice.empty() && GetTickCount64() - s_sess.noticeTime < 3000)
+            why = s_sess.notice;            // the reason sent right before BYE (kick, no input)
+        }
+        s_sess.up.store(false);
+        ClientEnd(why.empty() ? "The host ended the session." : why);
+        break;
+      }
+    }
+  }
+
+  // ---- Client ----
   void ClientThread(std::string host, int port)
   {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
     SOCKET s = INVALID_SOCKET;
+
+    // phase 3: a lobby join goes into the room first (entry ticket / password), then asks for the link data with
+    // the session key
+    if (s_sess.want)
+    {
+      std::string why;
+      printf("[Netlink] Client: joining slot %d of %s\n", s_sess.slot, host.c_str());
+      if (!SessionHandshake(host, why))
+      {
+        ClientFail(why);
+        SatelliteTapFeedBroken();
+        WSACleanup();
+        return;
+      }
+      s_sess.up.store(true);
+      s_sess.run.store(true);
+      s_sess.thread = std::thread(SessionThread);
+      printf("[Netlink] Client: in the room (slot %d)\n", s_sess.slot);
+    }
+
     printf("[Netlink] Client: connecting to %s:%d\n", host.c_str(), port);
+    uint64_t connectStart = GetTickCount64();
     while (s_clientRun.load())
     {
+      if (s_sess.want && GetTickCount64() - connectStart > 10000)
+        break;                                  // in the room but the link data port does not answer
       addrinfo hints = {}, *res = nullptr;
       hints.ai_family = AF_INET;
       hints.ai_socktype = SOCK_STREAM;
@@ -554,6 +865,9 @@ namespace
     }
     if (s == INVALID_SOCKET)
     {
+      if (s_clientRun.load())
+        ClientFail("The host's link data port (TCP " + std::to_string(port) + ") does not answer.");
+      SatelliteTapFeedBroken();
       WSACleanup();
       return;
     }
@@ -571,7 +885,10 @@ namespace
 
     // who we are, then the host's answer: refused, or its game settings (Main.cpp waits for them)
     {
-      if (!SendBlock(s, kHelloMagic, s_identity))
+      std::string hello = s_identity;
+      if (s_sess.want)
+        hello += "key=" + std::to_string(s_sess.key) + "\n";   // our room session (the host checks it and our IP)
+      if (!SendBlock(s, kHelloMagic, hello))
         return quit("cannot talk to the host");
       char magic[4];
       std::string text;
@@ -630,6 +947,7 @@ namespace
       s_clientSock = s;
     }
     s_clientOn.store(true);
+    s_clientEverOn.store(true);
 
     // chunks: u32 packed size + packed (u8 type + payload)
     Unpacker up;
@@ -679,6 +997,8 @@ namespace
     closesocket(s);
     SatelliteTapFeedBroken();
     printf("[Netlink] Client: disconnected (%llu bytes received for %llu bytes of link data)\n", (unsigned long long) wire, (unsigned long long) raw);
+    if (s_clientRun.load())
+      ClientEnd("The link data from the host stopped.");   // (a session end has said why already)
     WSACleanup();
   }
 }
@@ -800,10 +1120,43 @@ bool NetlinkClientStart(const std::string &host, int port)
 
 void NetlinkClientStop()
 {
+  s_clientRun.store(false);                     // we are leaving: the host closing the link data is no news
+  SessionBye();                                 // phase 3: leave the room at once (the slot is free again)
+  s_sess.up.store(false);
+  s_sess.run.store(false);
+  if (s_sess.thread.joinable())
+    s_sess.thread.join();
+  if (s_sess.sock != INVALID_SOCKET)
+  {
+    closesocket(s_sess.sock);
+    s_sess.sock = INVALID_SOCKET;
+  }
   if (!s_clientThread.joinable())
     return;
   s_clientRun.store(false);
   s_clientThread.join();
+}
+
+void NetlinkClientSetSession(int slot, const std::string &name, const std::string &password)
+{
+  s_sess.want = slot >= 1 && slot <= 8;
+  s_sess.slot = slot;
+  s_sess.name = name;
+  s_sess.password = password;
+}
+
+bool NetlinkClientEnded(std::string &why)
+{
+  std::lock_guard<std::mutex> lk(s_clientStateMutex);
+  if (!s_clientEverOn.load() || s_clientOn.load() || !s_clientFailed)
+    return false;
+  why = s_clientError;
+  return true;
+}
+
+void NetlinkHostDropClient()
+{
+  s_hostDrop.store(true);
 }
 
 bool NetlinkClientWaitSettings(const std::string &host, int port, int timeoutMs, std::vector<std::pair<std::string, std::string>> &out, std::string &error)
@@ -847,6 +1200,23 @@ bool NetlinkClientOn()
 
 void NetlinkClientSendInput(const NetlinkInputMsg &m)
 {
+  // phase 3: in a room, the input goes to the SessionServer over UDP (as the video client's does)
+  if (s_sess.want)
+  {
+    if (!s_sess.up.load())
+      return;
+    StreamProto::Input in = {};
+    {
+      std::lock_guard<std::mutex> lk(s_sess.lock);
+      StreamProto::FillHeader(in.h, StreamProto::T_INPUT, s_sess.key);
+      in.seq = ++s_sess.seq;
+    }
+    in.padConnected = m.pad;
+    in.buttons = m.buttons;
+    in.hat = m.hat;
+    SessSend(&in, sizeof(in), s_sess.inputAddr);
+    return;
+  }
   std::lock_guard<std::mutex> lk(s_clientSendMutex);
   if (s_clientSock == INVALID_SOCKET)
     return;

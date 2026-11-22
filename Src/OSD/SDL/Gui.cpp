@@ -2011,7 +2011,9 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
             if (action == Lobby::Action::Connect)
             {
                 Lobby::Close();
-                exitLaunch = false;     // no ROM launch: Main runs the stream client (Lobby::Request())
+                // no ROM launch: Main runs the stream client (Lobby::Request()); 11/23 a NETLINK slot launches the ROM
+                // (Main joins as that slot's clone)
+                exitLaunch = Lobby::Request().netlink;
                 exit = true;
             }
             else if (action == Lobby::Action::Skip)

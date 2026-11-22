@@ -65,6 +65,8 @@ namespace StreamProto
     R_PASSWORD_WRONG = 11,
     R_PASSWORD_LOCKED = 12,  // too many wrong passwords from this IP: wait kPwLockMs
     R_TICKET_INVALID = 13,   // the ticket's signature / host / slot / nonce / time did not match
+    R_NETLINK_SLOT = 14,     // 11/23 netlink: a video client at a NETLINK slot (it plays from the player's own ROM)
+    R_STREAM_SLOT = 15,      // 11/23 netlink: a netlink client (Hello.codecs = 0) at a video (STREAM) slot
 
     // Client side only (never sent): what RunStreamClient reports to the lobby
     R_PASSWORD_REQUIRED = 100 // the host needs a password and none was typed
@@ -190,6 +192,9 @@ namespace StreamProto
   using MediaHelloValidator = std::function<bool(const char *buf, int len, const sockaddr_in &from)>;
   void SetMediaHelloValidator(MediaHelloValidator validator);
   bool IsValidMediaHello(const char *buf, int len, const sockaddr_in &from);
+  // 11/23 netlink: a SessionServer runs here (its validator is installed). The netlink link data (TCP) then needs a
+  // MEDIA_HELLO with the session key from the connected client's IP, like the video and audio.
+  bool HasMediaHelloValidator();
 }
 
 #endif // INCLUDED_STREAM_PROTOCOL_H

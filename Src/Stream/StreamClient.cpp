@@ -101,6 +101,8 @@ namespace
     case R_TICKET_INVALID:    return "Refused: the host did not accept the entry ticket (wrong host address?). Please try again.";
     case R_LOGIN_INVALID:     return "Refused: your Discord login has expired. Please log out and log in again.";
     case R_ALREADY_CONNECTED: return "Refused: your Discord account is already connected to another slot of this host.";
+    case R_NETLINK_SLOT:      return "That slot plays from your own ROM (NETLINK). Choose it in the lobby with the game's ROM.";
+    case R_STREAM_SLOT:       return "That slot is a video (STREAM) slot.";
     case R_PASSWORD_REQUIRED: return "This host needs a password.";
     case R_PASSWORD_WRONG:    return "Wrong password.";
     case R_PASSWORD_LOCKED:   return "Too many wrong passwords. Please wait 5 minutes and try again.";

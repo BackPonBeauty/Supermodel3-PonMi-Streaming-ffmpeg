@@ -68,5 +68,17 @@ void NetlinkHostBroken();
 
 bool NetlinkClientStart(const std::string &host, int port);
 void NetlinkClientStop();
+
+// Phase 3 (11/23): a client started from the lobby first joins the room on UDP like the video client - HELLO with
+// codecs = 0 (netlink) -> entry ticket (Discord) / room password -> WELCOME (session key), heartbeat, INPUT to base + 0,
+// BYE - and then asks for the link data with "key=<session key>" in its hello; the host gives it only to its session's
+// client (same IP, same key). Without a room session the host serves only this PC / the home network (a test).
+// Call before NetlinkClientWaitSettings. slot 0 = no session (home test).
+void NetlinkClientSetSession(int slot, const std::string &name, const std::string &password);
+// The client was playing and is not any more (the host's BYE / kick / idle kick / no answer / link data stopped):
+// why, for the lobby. Main.cpp checks it every frame and goes back to the lobby.
+bool NetlinkClientEnded(std::string &why);
+// Host, Main.cpp: the room session of our client ended (BYE, kick, idle kick, timeout): stop its link data too.
+void NetlinkHostDropClient();
 bool NetlinkClientOn();
 void NetlinkClientSendInput(const NetlinkInputMsg &m);

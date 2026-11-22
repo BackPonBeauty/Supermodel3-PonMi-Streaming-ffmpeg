@@ -54,6 +54,9 @@ public:
 
   // SV-18 (11/16): room password, "" = public. Set before Start().
   void SetPassword(const std::string &password) { m_password = password; }
+  // 11/23 netlink: this slot sends link data (Network/Netlink.h), not video: only netlink clients (Hello.codecs = 0).
+  // Set before Start().
+  void SetNetlink(bool on) { m_netlink = on; }
 
   bool IsConnected() const { return m_connected.load(); }
   std::string GetPlayerName();
@@ -83,6 +86,7 @@ private:
   static bool IsLocalOrPrivate(const sockaddr_in &addr);
 
   int m_slot = 0;
+  bool m_netlink = false;
   int m_width = 0, m_height = 0;
   uint8_t m_codecBit = StreamProto::CODEC_H264;
   Callbacks m_cb;

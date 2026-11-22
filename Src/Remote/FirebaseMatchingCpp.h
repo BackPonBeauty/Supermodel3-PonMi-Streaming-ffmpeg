@@ -62,6 +62,7 @@ struct LobbyHostCpp
         bool available = false;  // nobody connected
         std::string player;
         bool locked = false;     // SV-18: the host has a room password
+        bool netlink = false;    // 11/23: "mode":"netlink" - played from the player's own ROM (link data, no video)
     } slots[9];                  // 1..8
     bool locked = false;         // any slot locked
     std::string sess;            // 11/17: games in the link, "stage,area,players;..." (GAME A first)
@@ -92,6 +93,9 @@ public:
     // Key is automatically determined by SanitizeKeyFromIp(externalIp)
     // SV-18 (11/16): the slot is written with "locked":true (the lobby draws a lock). Set before RegisterHost.
     void SetLocked(bool locked) { m_locked = locked; }
+    // 11/23 netlink: the slot is written with "mode":"netlink" (the lobby starts the player's own ROM for it). Only
+    // written when set, so video slots work with older database rules. Set before RegisterHost.
+    void SetNetlink(bool netlink) { m_netlink = netlink; }
 
     bool RegisterHost(const std::string &externalIp,
                       const bool availableSlots[9],   // index 1..8
@@ -173,6 +177,7 @@ private:
     std::string m_uid;           // 11/16: anonymous user id = "owner" of this server's slots (database rules)
     std::string m_currentHostId;
     bool m_locked = false;
+    bool m_netlink = false;   // 11/23
     std::string m_sessionFile;   // 11/16: "" = do not keep the session (the lobby)
 
     // Heartbeat thread

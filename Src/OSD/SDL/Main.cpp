@@ -129,6 +129,7 @@
 // -------------------------------------------------------
 #ifdef SUPERMODEL_WIN32
 #include "Remote/RemoteSlotManager.h"
+#include "Remote/UPnPHelper.h"
 static RemoteSlotManager s_remoteSlotMgr;
 #endif
 
@@ -848,6 +849,42 @@ static unsigned s_saveSlot = 0;          // save state slot #
 #include "Network/Netlink.h"
 #include "Network/SimNetBoard.h"
 #include "Stream/Satellite.h"
+// 11/23 netlink phase 3: a NETLINK slot chosen in the lobby runs the ROM here as that slot's clone; when the game ends
+// (left, kicked, the host gone) this process starts itself again with the lobby and why (-netlink-lobby=<why>).
+static bool s_netlinkFromLobby = false;
+static std::string s_netlinkLeave;              // why we left (empty: the player closed the game)
+static std::string s_netlinkLobbyMessage;       // -netlink-lobby=: open the lobby with this at start-up
+static std::vector<std::string> s_netlinkPassArgs;   // our own options to give the new process (-ini=...)
+#ifdef _WIN32
+static HANDLE s_clientMutex = nullptr;          // "one client per PC" (released just before starting the lobby again)
+#endif
+
+static void NetlinkReturnToLobby(const std::string &why)
+{
+#ifdef _WIN32
+  if (s_clientMutex)
+  {
+    CloseHandle(s_clientMutex);
+    s_clientMutex = nullptr;
+  }
+  char exe[MAX_PATH] = {};
+  GetModuleFileNameA(nullptr, exe, MAX_PATH);
+  std::string msg = why.empty() ? std::string("You left the game.") : why;
+  for (char &c : msg)
+    if (c == '"') c = '\'';
+  std::string cmd = std::string("\"") + exe + "\" \"-netlink-lobby=" + msg + "\"";
+  for (const auto &a : s_netlinkPassArgs)
+    cmd += " \"" + a + "\"";
+  STARTUPINFOA si = {};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi = {};
+  if (CreateProcessA(nullptr, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
+  {
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+  }
+#endif
+}
 // 11/23 main6: save / load on the same frame on every linked node (Network/SimNetBoard.cpp)
 extern bool g_netStateSyncOn;
 extern int g_netStateReq, g_netStateReqSlot;
@@ -1429,8 +1466,11 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   // Initialize audio system
   bool streamingEnabled = s_runtime_config["Streaming"].ValueAsDefault<bool>(false);
+  // 11/23 netlink phase 3: a NETLINK slot (launcher: Streaming = 1 + NetlinkServe = 1) has the room's session
+  // (tickets, password, idle kick, Firebase, UPnP) but sends link data instead of video and sound: no encoders
+  const bool netlinkHost = streamingEnabled && s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) != 0;
   SetAudioType(game.audio);
-  if (Result::OKAY != OpenAudio(s_runtime_config, streamingEnabled))
+  if (Result::OKAY != OpenAudio(s_runtime_config, streamingEnabled && !netlinkHost))
     return 1;
 
   // Hide mouse if fullscreen, enable crosshairs for gun games
@@ -1480,7 +1520,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     videoEncoder = s_runtime_config["VideoEncoder"].ValueAs<std::string>();
 
   SuperAA *superAA = new SuperAA(aaValue, CRTcolors, m_scanLine, scanlineStrength, totalXRes, totalYRes, BarrelStrength, game.title.c_str(), m_wideScreen, m_Overlay, s_configFilePath.c_str());
-  superAA->Init(totalXRes, totalYRes, videoPort, streamingEnabled, decoderCodec, videoEncoder); // pass actual frame sizes here
+  superAA->Init(totalXRes, totalYRes, videoPort, streamingEnabled && !netlinkHost, decoderCodec, videoEncoder); // pass actual frame sizes here
 
   // Re-initialize ImGui for gameplay overlay
   if (!ImGui::GetCurrentContext())
@@ -1488,7 +1528,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   ImGui_ImplSDL2_InitForOpenGL(s_window, SDL_GL_GetCurrentContext());
   ImGui_ImplOpenGL3_Init("#version 150");
 
-  s_debugEncoder = streamingEnabled ? &superAA->GetEncoder() : nullptr;
+  s_debugEncoder = (streamingEnabled && superAA->IsStreamingEnabled()) ? &superAA->GetEncoder() : nullptr;
 
   // P1 (11/16): the remote meta keys (Alt+D, bitrate up/down) came in through the ViGEm/XInput receiver,
   // which was removed. They come back through the new SessionServer in P4 (design SV-15, D-6).
@@ -1561,33 +1601,40 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   int sessionPort = s_runtime_config["HandshakePort"].ValueAs<int>();
   int inputPort   = s_runtime_config["XinputPort"].ValueAsDefault<int>(sessionPort - 1);
 
-  streamingEnabled = superAA->IsStreamingEnabled();
-  printf("[Streaming] %s (codec: %s)\n", streamingEnabled ? "true" : "false", decoderCodec.c_str());
+  streamingEnabled = superAA->IsStreamingEnabled() || netlinkHost;
+  printf("[Streaming] %s (%s)\n", streamingEnabled ? "true" : "false", netlinkHost ? "netlink: link data, no video" : decoderCodec.c_str());
   // P4 (2026-11-16): one SessionServer per server = one slot (design 4.2). Replaces the old HandshakeServer
   // (text protocol, spectators, LinkPlay=0 two-slot mode, 1-min idle kick).
   if (streamingEnabled)
   {
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
     SessionServer::Callbacks cb;
-    cb.onConnected = [superAA, linkplay](const std::string &name, const std::string &ip) {
-      superAA->GetEncoder().RequestKeyframe();   // the new client starts with a keyframe
+    cb.onConnected = [superAA, linkplay, netlinkHost](const std::string &name, const std::string &ip) {
+      if (!netlinkHost)
+        superAA->GetEncoder().RequestKeyframe();   // the new client starts with a keyframe
 #ifdef SUPERMODEL_WIN32
       s_remoteSlotMgr.SetSlotClientCount(linkplay, 1);
       s_remoteSlotMgr.SetSlotPlayer(linkplay, name);
       s_remoteSlotMgr.SetSlotOccupied();
 #endif
     };
-    cb.onDisconnected = [superAA, linkplay](const char *why) {
-      superAA->GetEncoder().SetDestEndpoints({});
-      SetAudioDestEndpoints({});
+    cb.onDisconnected = [superAA, linkplay, netlinkHost](const char *why) {
+      if (!netlinkHost)
+      {
+        superAA->GetEncoder().SetDestEndpoints({});
+        SetAudioDestEndpoints({});
+      }
+      else
+        NetlinkHostDropClient();   // the link data stops with the session
 #ifdef SUPERMODEL_WIN32
       s_remoteSlotMgr.SetSlotClientCount(linkplay, 0);
       s_remoteSlotMgr.SetSlotPlayer(linkplay, "");
       s_remoteSlotMgr.SetSlotAvailable();
 #endif
     };
-    cb.onKeyframeRequest = [superAA]() {
-      superAA->GetEncoder().RequestKeyframe();
+    cb.onKeyframeRequest = [superAA, netlinkHost]() {
+      if (!netlinkHost)
+        superAA->GetEncoder().RequestKeyframe();
     };
     cb.onMetaKeys = [](uint8_t risen) {
       // Bitrate ceiling up/down from the client's arrow keys (SV-15, same as the old XInput meta keys)
@@ -1623,8 +1670,9 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         printf("[Session] Room password is set (players must enter it)\n");
       s_session.SetPassword(pw);
     }
-    if (!s_session.Start(linkplay, sessionPort, inputPort, superAA->GetEncoder().GetWidth(), superAA->GetEncoder().GetHeight(),
-                         decoderCodec, cb))
+    s_session.SetNetlink(netlinkHost);
+    if (!s_session.Start(linkplay, sessionPort, inputPort, netlinkHost ? 0 : superAA->GetEncoder().GetWidth(),
+                         netlinkHost ? 0 : superAA->GetEncoder().GetHeight(), decoderCodec, cb))
       printf("[Session] Failed to start the session server (ports %d / %d)\n", sessionPort, inputPort);
   }
 
@@ -1673,9 +1721,21 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 #endif
   while (!quit)
   {
+    // 11/23 netlink phase 3: our room session / the host's link data is over (BYE, kick, idle kick, host gone):
+    // leave the game (Main goes back to the lobby with why)
+    {
+      std::string why;
+      if (NetlinkClientEnded(why))
+      {
+        printf("[Netlink] Client: leaving the game: %s\n", why.c_str());
+        s_netlinkLeave = why;
+        quit = true;
+        break;
+      }
+    }
     static uint32_t lastBitrateUpdate = 0;
     uint32_t now = GetTickCount();
-    if (streamingEnabled && (now - lastBitrateUpdate > 1500))
+    if (streamingEnabled && !netlinkHost && (now - lastBitrateUpdate > 1500))   // 11/23: no video on a netlink slot
     {
         lastBitrateUpdate = now;
 
@@ -3369,11 +3429,51 @@ int main(int argc, char **argv)
     }
   }
 
+  // 11/23 netlink: "-netlink-lobby=<why>" (we came back from a NETLINK game) is ours; the parser does not see it.
+  // Test aid only (not the user entry, that is the lobby): "-netlink-test-join=HOST:SLOT[:NAME[:PASSWORD]]" with a ROM
+  // joins that NETLINK slot through the room's session as the lobby would (tickets, password), without the GUI.
+  std::vector<char *> argvParse;
+  std::string netlinkTestJoin;
+  for (int i = 0; i < argc; i++)
+  {
+    const char *opt = "-netlink-lobby=";
+    if (i > 0 && strncmp(argv[i], opt, strlen(opt)) == 0)
+    {
+      s_netlinkLobbyMessage = argv[i] + strlen(opt);
+      continue;
+    }
+    const char *optJoin = "-netlink-test-join=";
+    if (i > 0 && strncmp(argv[i], optJoin, strlen(optJoin)) == 0)
+    {
+      netlinkTestJoin = argv[i] + strlen(optJoin);
+      continue;
+    }
+    if (i > 0 && strncmp(argv[i], "-ini=", 5) == 0)
+      s_netlinkPassArgs.emplace_back(argv[i]);
+    argvParse.push_back(argv[i]);
+  }
+
   // Load config and parse command line
-  auto cmd_line = ParseCommandLine(argc, argv);
+  auto cmd_line = ParseCommandLine((int) argvParse.size(), argvParse.data());
   if (cmd_line.error)
   {
     return 1;
+  }
+  if (!netlinkTestJoin.empty())
+  {
+    std::vector<std::string> f = Util::Format(netlinkTestJoin).Split(':');
+    int slot = f.size() > 1 ? atoi(f[1].c_str()) : 1;
+    if (slot < 1 || slot > 8)
+      slot = 1;
+    cmd_line.config.Set("Network", std::string("1"));
+    cmd_line.config.Set("SimulateNet", std::string("1"));
+    cmd_line.config.Set("SatelliteClone", std::string("1"));
+    cmd_line.config.Set("SatelliteNode", std::string("0"));
+    cmd_line.config.Set("NetlinkConnect", f[0] + ":" + std::to_string(StreamProto::SlotBasePort(slot) + StreamProto::PORT_VIDEO));
+    cmd_line.config.Set("Streaming", std::string("0"));
+    cmd_line.config.Set("AIPlayer", std::string("0"));
+    NetlinkClientSetSession(slot, f.size() > 2 ? f[2] : std::string("tester"), f.size() > 3 ? f[3] : std::string());
+    printf("[Netlink] Test join: %s slot %d\n", f[0].c_str(), slot);
   }
 
   if (!cmd_line.ini_file.empty())
@@ -3438,9 +3538,13 @@ int main(int argc, char **argv)
         CloseHandle(clientMutex);
         return 0;
       }
-      // the handle stays open while this process runs (Windows closes it on exit)
+      // the handle stays open while this process runs (Windows closes it on exit; 11/23 netlink: or just before
+      // this process starts the lobby again)
+      s_clientMutex = clientMutex;
     }
 #endif
+    if (!s_netlinkLobbyMessage.empty())
+      Lobby::Open(s_netlinkLobbyMessage);   // 11/23 netlink: back from a NETLINK game, with why
 
     // Streaming (P5): GUI -> (spikeofe) lobby -> stream client -> back to the lobby, until a ROM is
     // launched (normal play, or "skip" in the lobby) or the GUI is closed.
@@ -3452,6 +3556,26 @@ int main(int argc, char **argv)
         break;
       StreamConnectRequest req = request;
       request.requested = false;
+      // 11/23 netlink: a NETLINK slot - the GUI returned the game's ROM; run it as that slot's clone
+      if (req.netlink)
+      {
+        if (cmd_line.rom_files.empty())
+        {
+          Lobby::Open("A NETLINK slot plays from your own ROM: the game's ROM was not found.");
+          continue;
+        }
+        int port = StreamProto::SlotBasePort(req.slot) + StreamProto::PORT_VIDEO;
+        cmd_line.config.Set("Network", std::string("1"));
+        cmd_line.config.Set("SimulateNet", std::string("1"));
+        cmd_line.config.Set("SatelliteClone", std::string("1"));
+        cmd_line.config.Set("SatelliteNode", std::string("0"));
+        cmd_line.config.Set("NetlinkConnect", req.host + ":" + std::to_string(port));
+        cmd_line.config.Set("Streaming", std::string("0"));
+        cmd_line.config.Set("AIPlayer", std::string("0"));
+        NetlinkClientSetSession(req.slot, req.name, req.password);   // the password stays in memory (not in the config / log)
+        s_netlinkFromLobby = true;
+        break;
+      }
       std::string message;
       uint8_t rejectReason = 0;
       if (RunStreamClient(req, message, &rejectReason) == StreamClientExit::QuitApp)
@@ -3632,10 +3756,15 @@ int main(int argc, char **argv)
       printf("[Netlink] Client: waiting for the host's settings (%s)\n", nl.c_str());
       std::vector<std::pair<std::string, std::string>> kv;
       std::string why;
-      if (!NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), 120000, kv, why))
+      if (!NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), s_netlinkFromLobby ? 30000 : 120000, kv, why))
       {
         ErrorLog("Netlink: cannot join the host %s: %s", nl.c_str(), why.c_str());
         NetlinkClientStop();
+        if (s_netlinkFromLobby)
+        {
+          NetlinkReturnToLobby(why);   // 11/23 phase 3: back to the lobby, with why
+          return 0;
+        }
         return 1;
       }
       for (const auto &p : kv)
@@ -3687,6 +3816,10 @@ int main(int argc, char **argv)
     {
         // P1 (11/16): the ViGEm virtual pad and the XInput listener were removed (remote input: P3/P4).
         // Only the UPnP port opening of the old StartListening() is kept.
+        // 11/23 netlink: a NETLINK slot also opens TCP base + 2 and says "mode":"netlink" in Firebase
+        const bool nlSlot = s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) != 0;
+        UPnPHelper::netlinkTcp = nlSlot;
+        s_remoteSlotMgr.SetNetlink(nlSlot);
         s_remoteSlotMgr.StartStreaming(linkplay);
 
         // メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
@@ -3845,6 +3978,13 @@ Exit:
     InfoLog("Program terminated due to an error.");
   else
     InfoLog("Program terminated normally.");
+
+  // 11/23 netlink phase 3: a game joined from the lobby goes back to the lobby (a new process, with why)
+  if (s_netlinkFromLobby)
+  {
+    NetlinkClientStop();                  // (the net board has said BYE already; harmless twice)
+    NetlinkReturnToLobby(s_netlinkLeave);
+  }
 
   return exitCode;
 }

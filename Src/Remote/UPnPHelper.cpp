@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <string>
 
+bool UPnPHelper::netlinkTcp = false;
+
 bool UPnPHelper::OpenPort(int port, const std::string& description)
 {
     int error = 0;
@@ -141,6 +143,14 @@ void UPnPHelper::OpenStreamingPorts(int linkplay)
         }
     }
 
+    if (netlinkTcp)
+    {
+        std::string portStr = std::to_string(base + 2);
+        int r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype, portStr.c_str(), portStr.c_str(), localIP,
+                                    "Supermodel Netlink", "TCP", nullptr, "0");
+        printf("[UPnP] TCP port %d %s (Supermodel Netlink)\n", base + 2, r == UPNPCOMMAND_SUCCESS ? "opened" : "failed");
+    }
+
     FreeUPNPUrls(&urls);
 }
 
@@ -172,6 +182,13 @@ void UPnPHelper::CloseStreamingPorts(int linkplay)
             "UDP",
             nullptr);
         printf("[UPnP] Port %d closed\n", port);
+    }
+
+    if (netlinkTcp)
+    {
+        std::string portStr = std::to_string(base + 2);
+        UPNP_DeletePortMapping(urls.controlURL, data.first.servicetype, portStr.c_str(), "TCP", nullptr);
+        printf("[UPnP] TCP port %d closed\n", base + 2);
     }
 
     FreeUPNPUrls(&urls);

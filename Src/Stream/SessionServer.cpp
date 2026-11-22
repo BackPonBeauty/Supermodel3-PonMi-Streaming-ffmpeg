@@ -44,6 +44,12 @@ namespace StreamProto
     }
     return v ? v(buf, len, from) : false;
   }
+
+  bool HasMediaHelloValidator()
+  {
+    std::lock_guard<std::mutex> lock(s_validatorLock);
+    return (bool) s_validator;
+  }
 }
 
 using namespace StreamProto;
@@ -476,7 +482,19 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
   if (name.empty())
     name = "guest";
 
-  if (!(hello.codecs & m_codecBit))
+  // 11/23 netlink: a NETLINK slot takes netlink clients only (they say codecs = 0: no video), a video slot video
+  // clients only
+  if (m_netlink && hello.codecs != 0)
+  {
+    reject(R_NETLINK_SLOT, "a video client at a netlink slot");
+    return;
+  }
+  if (!m_netlink && hello.codecs == 0)
+  {
+    reject(R_STREAM_SLOT, "a netlink client at a video slot");
+    return;
+  }
+  if (!m_netlink && !(hello.codecs & m_codecBit))
   {
     reject(R_CODEC, "client cannot decode our codec");
     return;

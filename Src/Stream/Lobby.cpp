@@ -456,8 +456,17 @@ namespace Lobby
             }
             else if (sl.available)
             {
-              ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.55f, 0.25f, 1.0f));
-              ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.35f, 1.0f));
+              // 11/23 netlink: a NETLINK slot (played from your own ROM) is blue, a video slot green
+              if (sl.netlink)
+              {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.35f, 0.70f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.50f, 0.90f, 1.0f));
+              }
+              else
+              {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.55f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.75f, 0.35f, 1.0f));
+              }
               ImGui::BeginDisabled(updateRequired);
               bool clicked = ImGui::Button(label, ImVec2(28.0f * scale, 0));
               ImGui::EndDisabled();
@@ -472,6 +481,7 @@ namespace Lobby
                 req.slot = s;
                 req.name = RequestName();
                 req.serverName = shownName;
+                req.netlink = sl.netlink;
                 if (h.locked)
                   AskPassword(req, false);   // SV-18: the password box first
                 else
@@ -483,7 +493,13 @@ namespace Lobby
               }
               ImGui::PopStyleColor(2);
               if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(h.locked ? "Slot %d: free - click to join (password required)" : "Slot %d: free - click to join", s);
+              {
+                if (sl.netlink)
+                  ImGui::SetTooltip(h.locked ? "Slot %d: free NETLINK slot - plays from your own ROM (password required)"
+                                             : "Slot %d: free NETLINK slot - plays from your own ROM", s);
+                else
+                  ImGui::SetTooltip(h.locked ? "Slot %d: free - click to join (password required)" : "Slot %d: free - click to join", s);
+              }
             }
             else
             {
@@ -530,6 +546,14 @@ namespace Lobby
     ImGui::SetNextItemWidth(260.0f * scale);
     ImGui::InputText("##name", s_name, sizeof(s_name));
 
+    // 11/23 netlink: the slot is a NETLINK slot (the game runs here from your ROM)
+    static bool s_directNetlink = false;
+    ImGui::Text("NETLINK");
+    ImGui::SameLine(labelW);
+    ImGui::Checkbox("##direct_netlink", &s_directNetlink);
+    ImGui::SameLine();
+    ImGui::TextDisabled("the slot sends link data: your own ROM plays the game");
+
     ImGui::Spacing();
     ImGui::Spacing();
     float btnW = 220.0f * scale, btnH = 44.0f * scale;
@@ -544,6 +568,7 @@ namespace Lobby
       s_request.slot = s_slot;
       s_request.name = RequestName();
       s_request.serverName = s_hostBuf;
+      s_request.netlink = s_directNetlink;
       Save();
       result = Action::Connect;   // a host with a password answers "password required" -> the box opens
     }

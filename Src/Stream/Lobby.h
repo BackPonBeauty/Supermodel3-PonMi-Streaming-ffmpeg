@@ -26,6 +26,7 @@ struct StreamConnectRequest
   std::string name;
   std::string password;   // SV-18: room password typed in the lobby (kept in memory only, never saved)
   std::string serverName; // for the password box title
+  bool netlink = false;   // 11/23: a NETLINK slot - the GUI launches the game's ROM and Main joins as the slot's clone
 };
 
 namespace Lobby
