@@ -150,6 +150,12 @@ protected:
 
 public:
 	/*
+	 * 11/22 (owner): the SDL scancode of a Supermodel key name ("A", "LEFTSHIFT", "UP" ... as in KEY_A), or
+	 * SDL_SCANCODE_UNKNOWN. Used by the streaming client to map the keys of its own ini.
+	 */
+	static SDL_Scancode ScancodeForKeyName(const char *keyName);
+
+	/*
 	 * Constructs an SDL input system.
 	 */
 	CSDLInputSystem(const Util::Config::Node& config, bool useGameController);

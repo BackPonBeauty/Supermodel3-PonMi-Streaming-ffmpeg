@@ -470,6 +470,16 @@ bool CSDLInputSystem::InitializeSystem()
   return true;
 }
 
+SDL_Scancode CSDLInputSystem::ScancodeForKeyName(const char *keyName)
+{
+  for (size_t i = 0; i < NUM_SDL_KEYS; i++)
+  {
+    if (stricmp(keyName, s_keyMap[i].keyName) == 0)
+      return s_keyMap[i].sdlKey;
+  }
+  return SDL_SCANCODE_UNKNOWN;
+}
+
 int CSDLInputSystem::GetKeyIndex(const char *keyName)
 {
   for (size_t i = 0; i < NUM_SDL_KEYS; i++)

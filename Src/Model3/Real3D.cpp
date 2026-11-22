@@ -521,6 +521,7 @@ static constexpr unsigned decode8x2[16] =
 ******************************************************************************/
 
 bool g_costumeSwap = false;
+bool g_costumeSpikeJr = false;                        // 11/23 SpikeJr=1: every Jr (Spike) in the 1P colour - no new colours for Spike
 static uint32_t s_csHdr[8][10];                       // slot 0-7 piece headers (11/14 col8: was 4-7)
 static const uint8_t *s_csRam = nullptr;              // PPC RAM: the colour bytes fa_player +0xA0 + slot (11/14 col8)
 static const uint16_t *s_csOrig[4][4] = {};           // [character][colour] ROM costume data, texture-FIFO order
@@ -721,6 +722,7 @@ static const uint16_t *CostumeSwapData(uint32_t header, const uint16_t *texData)
       for (int c = 0; c < 4; c++)
         for (int k = 0; k < 4; k++)
         {
+          if (c == 0 && g_costumeSpikeJr) continue;                            // 11/23: Spike = Jr stays in the ROM colour (1P)
           const uint16_t *o = s_csOrig[c][k];
           if (!o || s_csNew[c][k][i].empty() || memcmp(texData, o + (size_t) i * CS_PIECE, CS_PIECE * sizeof(uint16_t)) != 0) continue;   // 11/14: the whole piece - the first 64 texels are the same in several colours on some pieces (a grey Spike got a pink waist)
           if ((s_csHits++ & 63) == 0) InfoLog("CostumeSwap: slot %d piece %d = character %d colour %d (byte %u) -> new colour %d (%u swaps)", s, i, c, k, col, k + 4, s_csHits);

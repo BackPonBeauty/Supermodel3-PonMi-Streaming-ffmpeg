@@ -14,6 +14,12 @@
 #include "RoomPassword.h"
 #include "Ticket.h"
 #include "OSD/SDL/SDLIncludes.h"
+#include "OSD/SDL/SDLInputSystem.h"   // 11/22: key names of our own ini (ClientMap)
+#include "OSD/FileSystemPath.h"
+#include "Util/ConfigBuilders.h"
+#include "Util/NewConfig.h"
+#include "Util/Format.h"
+#include "Supermodel.h"               // InfoLog
 #include <GL/glew.h>
 #include "Pkgs/imgui/imgui.h"
 #include "Pkgs/imgui/imgui_impl_sdl2.h"
@@ -614,6 +620,301 @@ namespace
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// 11/22 (owner): the client maps its pad / keyboard with its OWN Config/Supermodel.ini (InputStart1, InputShift ...)
+// and sends the result in the layout the host's STREAM node reads (PonLuncher RemoteControls: Start JOY1_BUTTON8,
+// Coin BUTTON7, Shift BUTTON1, Beat BUTTON3, Charge BUTTON4, Jump BUTTON6, the lever as POV1). The host and the
+// protocol stay as they were. Mapping syntax as Supermodel's: "," any of, "+" all of, "!" not, KEY_x, JOYn_BUTTONk,
+// JOYn_POV1_UP.., JOYn_XAXIS_POS.. (any n = the pad chosen in the lobby). A control whose line is missing, NONE or
+// unreadable sends that pad button / direction as before (raw).
+// ---------------------------------------------------------------------------------------------------------
+namespace ClientMap
+{
+  struct Term
+  {
+    enum Type { Key, Button, Hat, Axis } type = Key;
+    bool neg = false;
+    int idx = 0;        // scancode / button / axis
+    int dir = 0;        // Hat: bit (1 up, 2 right, 4 down, 8 left); Axis: +1 / -1
+  };
+  using All = std::vector<Term>;   // "+": all of them
+  using Any = std::vector<All>;    // ",": any of them
+
+  struct Control
+  {
+    const char *iniKey;
+    int button;          // the host's button (SDL index), -1 = lever
+    uint8_t hat;         // lever: the hat bit
+    int rawAxis, rawSign;// lever fallback: axis 0 X / 1 Y and its sign
+    uint16_t rawKey;     // lever fallback: the W/A/S/D bit
+    Any map;
+    bool mapped = false;
+  };
+
+  static Control s_ctl[] = {
+    { "InputStart1",   7, 0, 0, 0, 0 },
+    { "InputCoin1",    6, 0, 0, 0, 0 },
+    { "InputShift",    0, 0, 0, 0, 0 },
+    { "InputBeat",     2, 0, 0, 0, 0 },
+    { "InputCharge",   3, 0, 0, 0, 0 },
+    { "InputJump",     5, 0, 0, 0, 0 },
+    { "InputJoyUp",   -1, 1, 1, -1, 0x0001 },
+    { "InputJoyDown", -1, 4, 1, +1, 0x0004 },
+    { "InputJoyLeft", -1, 8, 0, -1, 0x0002 },
+    { "InputJoyRight",-1, 2, 0, +1, 0x0008 },
+  };
+  static bool s_active = false;      // at least one control comes from the ini
+  static bool s_arrowsUsed = false;  // KEY_UP / KEY_DOWN are game controls: no bitrate keys then
+  // Supermodel's axis switch: on past 2/3 of the way from the dead zone (3 %) to saturation (100 %)
+  static const int kAxisOn = 983 + (32767 - 983) * 2 / 3;
+
+  static std::string Trim(const std::string &s)
+  {
+    size_t a = 0, b = s.size();
+    while (a < b && (isspace((unsigned char) s[a]) || s[a] == '"')) a++;
+    while (b > a && (isspace((unsigned char) s[b - 1]) || s[b - 1] == '"')) b--;
+    return s.substr(a, b - a);
+  }
+
+  static std::vector<std::string> Split(const std::string &s, char d)
+  {
+    std::vector<std::string> out;
+    size_t st = 0;
+    for (;;)
+    {
+      size_t e = s.find(d, st);
+      out.push_back(Trim(s.substr(st, e == std::string::npos ? std::string::npos : e - st)));
+      if (e == std::string::npos)
+        break;
+      st = e + 1;
+    }
+    return out;
+  }
+
+  // one source ("KEY_A", "!JOY1_BUTTON3" ...); false = not usable here (mouse, unknown name, other hats ...)
+  static bool ParseTerm(std::string s, Term &t)
+  {
+    for (auto &c : s)
+      c = (char) toupper((unsigned char) c);
+    if (!s.empty() && s[0] == '!')
+    {
+      t.neg = true;
+      s = Trim(s.substr(1));
+    }
+    size_t us = s.find('_');
+    if (us == std::string::npos)
+      return false;
+    std::string dev = s.substr(0, us), part = s.substr(us + 1);
+    auto devIs = [&](const char *name) {
+      size_t n = strlen(name);
+      if (dev.compare(0, n, name) != 0)
+        return false;
+      for (size_t i = n; i < dev.size(); i++)
+        if (!isdigit((unsigned char) dev[i]))
+          return false;
+      return true;
+    };
+    if (devIs("KEY"))
+    {
+      SDL_Scancode sc = CSDLInputSystem::ScancodeForKeyName(part.c_str());
+      if (sc == SDL_SCANCODE_UNKNOWN)
+        return false;
+      t.type = Term::Key;
+      t.idx = (int) sc;
+      return true;
+    }
+    if (!devIs("JOY"))
+      return false;
+    if (part.compare(0, 6, "BUTTON") == 0)
+    {
+      int b = atoi(part.c_str() + 6);
+      if (b < 1 || b > 32)
+        return false;
+      t.type = Term::Button;
+      t.idx = b - 1;
+      return true;
+    }
+    if (part.compare(0, 5, "POV1_") == 0)
+    {
+      std::string d = part.substr(5);
+      t.type = Term::Hat;
+      t.dir = d == "UP" ? 1 : d == "RIGHT" ? 2 : d == "DOWN" ? 4 : d == "LEFT" ? 8 : 0;
+      return t.dir != 0;
+    }
+    // directions of the first stick ("JOY1_UP" = YAXIS_NEG ...)
+    if (part == "UP" || part == "DOWN" || part == "LEFT" || part == "RIGHT")
+    {
+      t.type = Term::Axis;
+      t.idx = (part == "UP" || part == "DOWN") ? 1 : 0;
+      t.dir = (part == "DOWN" || part == "RIGHT") ? +1 : -1;
+      return true;
+    }
+    // XAXIS_POS, RZAXIS_NEG, AXIS3_POS, SLIDER1_NEG ...
+    size_t sfx = part.rfind('_');
+    if (sfx == std::string::npos)
+      return false;
+    std::string axis = part.substr(0, sfx), sign = part.substr(sfx + 1);
+    if (sign != "POS" && sign != "NEG")
+      return false;
+    static const char *names[] = { "XAXIS", "YAXIS", "ZAXIS", "RXAXIS", "RYAXIS", "RZAXIS", "SLIDER1", "SLIDER2" };
+    int a = -1;
+    for (int i = 0; i < 8; i++)
+      if (axis == names[i])
+        a = i;
+    if (a < 0 && axis.compare(0, 4, "AXIS") == 0)
+    {
+      int n = atoi(axis.c_str() + 4);
+      if (n >= 1 && n <= 8)
+        a = n - 1;
+    }
+    if (a < 0)
+      return false;
+    t.type = Term::Axis;
+    t.idx = a;
+    t.dir = sign == "POS" ? +1 : -1;
+    return true;
+  }
+
+  static Any ParseMapping(const std::string &str)
+  {
+    Any any;
+    std::string s = Trim(str);
+    if (s.empty())
+      return any;
+    std::string up = s;
+    for (auto &c : up)
+      c = (char) toupper((unsigned char) c);
+    if (up == "NONE")
+      return any;
+    for (auto &alt : Split(s, ','))
+    {
+      All all;
+      bool ok = !alt.empty();
+      for (auto &one : Split(alt, '+'))
+      {
+        Term t;
+        if (one.empty() || !ParseTerm(one, t))
+        {
+          ok = false;   // as Supermodel: a combination with a bad part is dropped
+          break;
+        }
+        all.push_back(t);
+      }
+      if (ok && !all.empty())
+        any.push_back(all);
+    }
+    return any;
+  }
+
+  // Read the [ Global ] lines of our own ini (the settings GUI writes them there). Called once per connection.
+  static void Load()
+  {
+    s_active = false;
+    s_arrowsUsed = false;
+    Util::Config::Node cfg("Global");
+    std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Config) << "Supermodel.ini";
+    Util::Config::FromINIFile(&cfg, path);
+    std::string used;
+    for (auto &c : s_ctl)
+    {
+      c.map.clear();
+      c.mapped = false;
+      const Util::Config::Node *n = cfg.TryGet(c.iniKey);
+      if (n && n->IsLeaf() && n->Exists())
+        c.map = ParseMapping(n->ValueAs<std::string>());
+      c.mapped = !c.map.empty();
+      if (c.mapped)
+      {
+        s_active = true;
+        used += std::string(used.empty() ? "" : " ") + (c.iniKey + 5);
+        for (auto &all : c.map)
+          for (auto &t : all)
+            if (t.type == Term::Key && (t.idx == SDL_SCANCODE_UP || t.idx == SDL_SCANCODE_DOWN))
+              s_arrowsUsed = true;
+      }
+    }
+    InfoLog("Stream client: controls from %s: %s%s", path.c_str(), s_active ? used.c_str() : "none (raw pad)",
+            s_arrowsUsed ? " (Up/Down are game keys: bitrate keys off)" : "");
+  }
+
+  static bool TermOn(const Term &t, SDL_Joystick *joy, const Uint8 *ks)
+  {
+    bool v = false;
+    switch (t.type)
+    {
+    case Term::Key:    v = ks && ks[t.idx]; break;
+    case Term::Button: v = joy && t.idx < SDL_JoystickNumButtons(joy) && SDL_JoystickGetButton(joy, t.idx); break;
+    case Term::Hat:    v = joy && SDL_JoystickNumHats(joy) > 0 && (SDL_JoystickGetHat(joy, 0) & t.dir) != 0; break;
+    case Term::Axis:
+      if (joy && t.idx < SDL_JoystickNumAxes(joy))
+      {
+        int a = SDL_JoystickGetAxis(joy, t.idx);
+        v = t.dir > 0 ? a >= kAxisOn : a <= -kAxisOn;
+      }
+      break;
+    }
+    return t.neg ? !v : v;
+  }
+
+  // ks: the keyboard (nullptr while the window has no focus)
+  static void Fill(StreamProto::Input &in, SDL_Joystick *joy, const Uint8 *ks)
+  {
+    in.keys = 0;
+    in.buttons = 0;
+    in.hat = 0;
+    memset(in.axes, 0, sizeof(in.axes));
+    in.padConnected = 1;   // the host reads buttons / hat only with a pad (also for keyboard-only players)
+    uint8_t rawHat = joy && SDL_JoystickNumHats(joy) > 0 ? SDL_JoystickGetHat(joy, 0) : 0;
+    for (auto &c : s_ctl)
+    {
+      bool on = false;
+      if (c.mapped)
+      {
+        for (auto &all : c.map)
+        {
+          bool allOn = true;
+          for (auto &t : all)
+            if (!TermOn(t, joy, ks))
+            {
+              allOn = false;
+              break;
+            }
+          if (allOn)
+          {
+            on = true;
+            break;
+          }
+        }
+      }
+      else if (c.button >= 0)
+        on = joy && c.button < SDL_JoystickNumButtons(joy) && SDL_JoystickGetButton(joy, c.button);
+      else
+      {
+        // as before: the hat, the stick, or W/A/S/D
+        on = (rawHat & c.hat) != 0;
+        if (!on && joy && c.rawAxis < SDL_JoystickNumAxes(joy))
+        {
+          int a = SDL_JoystickGetAxis(joy, c.rawAxis);
+          on = c.rawSign > 0 ? a >= kAxisOn : a <= -kAxisOn;
+        }
+        if (!on && ks)
+        {
+          static const SDL_Scancode wasd[4] = { SDL_SCANCODE_W, SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_D };
+          for (int k = 0; k < 4; k++)
+            if ((c.rawKey >> k) & 1)
+              on = ks[wasd[k]] != 0;
+        }
+      }
+      if (!on)
+        continue;
+      if (c.button >= 0)
+        in.buttons |= 1u << c.button;
+      else
+        in.hat |= c.hat;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------------------------------------
 
@@ -707,6 +1008,7 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
     return i >= 0 ? SDL_JoystickOpen(i) : nullptr;
   };
   SDL_Joystick *joy = openPad();
+  ClientMap::Load();   // 11/22: the controls of our own ini
 
   GLuint tex = 0;
   int texW = 0, texH = 0;
@@ -781,14 +1083,23 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
     if (focused)
     {
       const Uint8 *ks = SDL_GetKeyboardState(nullptr);
-      if (ks[SDL_SCANCODE_W]) in.keys |= 0x0001;
-      if (ks[SDL_SCANCODE_A]) in.keys |= 0x0002;
-      if (ks[SDL_SCANCODE_S]) in.keys |= 0x0004;
-      if (ks[SDL_SCANCODE_D]) in.keys |= 0x0008;
-      if (ks[SDL_SCANCODE_UP])   in.meta |= META_BITRATE_UP;
-      if (ks[SDL_SCANCODE_DOWN]) in.meta |= META_BITRATE_DOWN;
+      if (!ClientMap::s_active)
+      {
+        if (ks[SDL_SCANCODE_W]) in.keys |= 0x0001;
+        if (ks[SDL_SCANCODE_A]) in.keys |= 0x0002;
+        if (ks[SDL_SCANCODE_S]) in.keys |= 0x0004;
+        if (ks[SDL_SCANCODE_D]) in.keys |= 0x0008;
+      }
+      if (!ClientMap::s_arrowsUsed)
+      {
+        if (ks[SDL_SCANCODE_UP])   in.meta |= META_BITRATE_UP;
+        if (ks[SDL_SCANCODE_DOWN]) in.meta |= META_BITRATE_DOWN;
+      }
     }
-    if (joy)
+    // 11/22 (owner): our own ini's controls, sent in the host's layout
+    if (ClientMap::s_active)
+      ClientMap::Fill(in, joy, focused ? SDL_GetKeyboardState(nullptr) : nullptr);
+    else if (joy)
     {
       in.padConnected = 1;
       int nb = SDL_JoystickNumButtons(joy);

@@ -277,6 +277,7 @@ static bool g_spikeoutIdleLog = false;   // 11/13 IdleSkipLog=1 -> idlelog.txt
 // player input, so no ROM change and no desync. Robs: 0x1A0000+slot*0x4000, pos floats at +0x380
 // (x) / +0x388 (z), active = flags(+0x00) bit0; players are slots 0-7, enemies 8+.
 static bool g_spikeoutP1Invincible = false; // P1Invincible=1: keep player 1 invincible, to record waypoints (must be set on every cabinet)
+static bool g_spikeoutSpikeJr = false;      // 11/23 SpikeJr=1: players who picked Spike play Spike Jr (character 4; must be set on every cabinet)
 static bool g_spikeoutTimerStop = false;    // 11/17 TimerStop=1: hold the countdown timers at 99 with 4 or fewer players too (5+ always hold; must be set on every cabinet)
 static bool g_spikeoutAI = false;
 #include <atomic>
@@ -2393,8 +2394,12 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 	}
 	if (played)                                   // was in play
 	{
-		if (energy > 0) { deadSince = 0; return false; }   // still has HP: an area-move cutscene / gate transition / brief invuln, NOT a death - just wait, don't mash continue
-		if (!deadSince) deadSince = g_ppcTraceFrame;        // real death (HP gone)
+		// 11/22 (user; ai.txt 03 17:45): TIME OVER - our own timer ran out with HP left (460): the own link state went back
+		// to 1 (title) while the Rob still shows us alive, and we waited for ever. Own link state 1 after playing = our game
+		// is over: continue (rejoin) as after a death, our own stale Rob not counted as "anyone".
+		const bool timeOver = ram[0x140104 ^ 3] == 1;
+		if (energy > 0 && !timeOver) { deadSince = 0; return false; }   // still has HP: an area-move cutscene / gate transition / brief invuln, NOT a death - just wait, don't mash continue
+		if (!deadSince) deadSince = g_ppcTraceFrame;        // real death (HP gone) or time over
 		// Continue while anyone (01-08) is still in the game session (11/09): a player alive in a stage. With
 		// nobody left, the old 30s window from our death.
 		bool anyone = false;
@@ -2403,6 +2408,7 @@ static bool SpikeoutAIWantsStart(const UINT8 *ram)
 			unsigned pcnt = ram[0x10065A ^ 3]; if (pcnt > 8) pcnt = 8;
 			for (unsigned i = 0; i < pcnt && !anyone; i++)
 			{
+				if (timeOver && i == node - 1) continue;   // 11/22: our own Rob is stale after a time over
 				UINT32 r = 0x1A0000 + i * 0x4000;
 				if ((*(const UINT32 *) &ram[r] & 1) && (short) *(const UINT16 *) &ram[(r + 0x3F02) ^ 2] > 0) anyone = true;
 			}
@@ -2520,7 +2526,8 @@ static bool g_lureOk[256] = {}; static float g_lureX[256], g_lureZ[256];
 //   mode. A small fry gets combo 22 (Shift + C held closing in, b-b b-b-b, C let go; a75 = 195).
 // - Before there is a boss handler, everyone plays the usual logic (a boss going for a bot: wait mode as usual).
 // Worked out from the shared game state only, so all cabinets agree. No live boss: off. The area changed: afresh.
-static bool SpikeoutScnArea(unsigned a) { (void) a; return true; }   // 10th: every area (was a == 87)
+// 11/23 (owner): never in area 75 (no boss handlers there at all, also after its gate; its own bosses-only rule stays).
+static bool SpikeoutScnArea(unsigned a) { return a != 75; }   // 10th: every area (was a == 87); 11/23: not area 75
 static int g_scnPhase = 0;         // this frame: 0 none, 1 the boss-fight roles run (a live boss)
 static bool g_scnMob = false;      // 11/22: this frame, we are a small-fry handler (and alive)
 static int g_scnPick = -1;         // 11/22: the small-fry handler's target this frame (-1 none)
@@ -5115,7 +5122,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					}
 					g_aiCrowd4 = nNear >= 3;   // 11/21 (user): 3+ (was 4+, then 2+) - the B+C -> B+C+J here and at the dash attack
 					// 11/22 (user): the B+C -> B+C+J only when we are at 150 HP or below too (the dash attack's J: 3+ around, as before)
-					crowdSpecial = g_aiCrowd4 && hpNow <= 150 && !g_aiHolding && (buttons & (BEAT | CHG)) == (BEAT | CHG) && !(buttons & JUMP);   // 11/18: the throw stays a throw
+					// 11/22 (user, 2nd): and 4+ around (was 3+)
+					crowdSpecial = nNear >= 4 && hpNow <= 150 && !g_aiHolding && (buttons & (BEAT | CHG)) == (BEAT | CHG) && !(buttons & JUMP);   // 11/18: the throw stays a throw
 					// 11/18 (user, 2nd): HP under 150 with 2+ live enemies around (within 3, same level): the special B+C+J
 					// straight away (not only in place of a B+C). Every 3 s at most, as all specials.
 					if (hpNow < 150 && nNear >= 2) crowdSpecial = true;
@@ -8774,6 +8782,19 @@ void CModel3::RunMainBoardFrame(void)
 	}
 	if (g_spikeoutP1Invincible && !SpikeoutAttract(ram) && (*(const UINT32 *) &ram[0x1A0000] & 1))
 		*(UINT16 *) &ram[(0x1A0000 + 0x3F22) ^ 2] = 0xD8;   // the game's own spawn invincibility (0x1E85C), ticks down at 0x1E384
+	// 11/23 (owner): SpikeJr=1 - a player who picked Spike becomes Spike Jr. Same as the owner's cheat (Rob +0x3F00
+	// word 0x000001C2 Spike -> 0x040001C2 Jr), but only the character byte is changed, not the HP. Every live player
+	// slot 0-7 (Rob 0x1A0000 + slot x 0x4000) with character 0 gets 4, once a frame, outside the demo. Every cabinet
+	// sets all 8 slots in its own RAM, so it MUST be on on all cabinets (Jr moves differently: inputs would desync).
+	if (g_spikeoutSpikeJr && !SpikeoutAttract(ram))
+	{
+		for (unsigned s = 0; s < 8; s++)
+		{
+			const UINT32 r = 0x1A0000 + s * 0x4000;
+			if ((*(const UINT32 *) &ram[r] & 1) && ram[(r + 0x3F00) ^ 3] == 0)
+				ram[(r + 0x3F00) ^ 3] = 4;
+		}
+	}
 	// Per-player timers (time-out = game over): 0x1062B0 (4 players) / 0x106E00 with the 8-player patch (T8 in
 	// phase2.py), ticked once a frame at 0x5B604, shown as value>>6 seconds, 0x18FF = 99 (0x5CB64), link-synced.
 	// The FixTimer ini switch was removed on 11/16. 11/16 later (owner): with 5 or more players in the game the timers
@@ -10125,6 +10146,9 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_ppcStateTrace = (game.name == "spikeofe" && m_config["StateTrace"].ValueAsDefault<bool>(false));
   g_spikeoutP1Invincible = (game.name == "spikeofe" && m_config["P1Invincible"].ValueAsDefault<bool>(false));
   g_spikeoutTimerStop = (game.name == "spikeofe" && m_config["TimerStop"].ValueAsDefault<bool>(false));
+  g_spikeoutSpikeJr = (game.name == "spikeofe" && m_config["SpikeJr"].ValueAsDefault<bool>(false));
+  { extern bool g_costumeSpikeJr; g_costumeSpikeJr = g_spikeoutSpikeJr; }   // 11/23: Real3D CostumeSwap leaves Spike (Jr) in colour 0
+  if (g_spikeoutSpikeJr) InfoLog("SpikeJr: players who pick Spike play Spike Jr (character 4).");
   if (g_spikeoutTimerStop) InfoLog("TimerStop: countdown timers held at 99 with 1-4 players too (5+ always).");
   g_spikeoutAI = (game.name == "spikeofe" && m_config["AIPlayer"].ValueAsDefault<bool>(false));
   g_spikeoutInputLog = (game.name == "spikeofe" && !g_spikeoutAI && m_config["InputLog"].ValueAsDefault<bool>(false));
@@ -10427,8 +10451,39 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
     // f13,f1) a cave multiplies v by X (a float kept at 0x3EF0) when the victim is an enemy (slot +0x72 >= player
     // count 0x10065A; players 5-8 sit at 0x1B0000 in 8-link, so the slot is compared, not the address). f0 is free
     // there (between two calls). Players are hit as before. MUST be the same on all 8 cabinets.
+    // 11/23 (owner): EnemyKnockMulY / EnemyKnockMulXZ split it: Y = up (Vy), XZ = sideways (Vxz). Each defaults to
+    // EnemyKnockMul. v is multiplied by XZ (the cave below), and Vy is multiplied again by Y / XZ right at its store
+    // (0x266F4 stfs f5,0x88(r15) -> cave 0x3E90; r3 / r0 / f0 are free there: r3 is set at 0x266F8, r0 at 0x26710).
     float knockMul = m_config["EnemyKnockMul"].ValueAsDefault<float>(1.0f);
-    if (linkApplied && knockMul > 0.0f && knockMul <= 100.0f && knockMul != 1.0f)
+    if (!(knockMul > 0.0f && knockMul <= 100.0f)) knockMul = 1.0f;
+    float knockMulY = m_config["EnemyKnockMulY"].ValueAsDefault<float>(knockMul);
+    float knockMulXZ = m_config["EnemyKnockMulXZ"].ValueAsDefault<float>(knockMul);
+    if (!(knockMulY > 0.0f && knockMulY <= 100.0f)) knockMulY = knockMul;
+    if (!(knockMulXZ > 0.0f && knockMulXZ <= 100.0f)) knockMulXZ = knockMul;
+    if (linkApplied && knockMulY != knockMulXZ)
+    {
+      float ratio = knockMulY / knockMulXZ;
+      UINT32 ratioBits; memcpy(&ratioBits, &ratio, 4);
+      const Spikeout8LinkPatch knockYPatches[] =
+      {
+        { 0x266F4, 0xD0AF0088, 0x4BFDD79C },  // stfs f5,0x88(r15) -> b 0x3E90
+        { 0x03E90, 0x00000000, 0x3C600010 },  // lis   r3,0x10
+        { 0x03E94, 0x00000000, 0x8863065A },  // lbz   r3,0x65A(r3)      player count
+        { 0x03E98, 0x00000000, 0x880F0072 },  // lbz   r0,0x72(r15)      victim slot
+        { 0x03E9C, 0x00000000, 0x7C001800 },  // cmpw  r0,r3
+        { 0x03EA0, 0x00000000, 0x4180000C },  // blt   0x3EAC            a player: as is
+        { 0x03EA4, 0x00000000, 0xC0003EB8 },  // lfs   f0,0x3EB8(0)      Y / XZ
+        { 0x03EA8, 0x00000000, 0xECA50032 },  // fmuls f5,f5,f0          an enemy: Vy x Y / XZ
+        { 0x03EAC, 0x00000000, 0xD0AF0088 },  // stfs  f5,0x88(r15)      (the replaced instruction)
+        { 0x03EB0, 0x00000000, 0x48022848 },  // b     0x266F8
+        { 0x03EB8, 0x00000000, ratioBits },   // .float Y / XZ
+      };
+      applyPatches("SpikeoutEnemyKnockMulY", knockYPatches, sizeof(knockYPatches) / sizeof(knockYPatches[0]));
+    }
+    if (linkApplied && knockMulY != 1.0f && knockMulXZ == 1.0f)
+      InfoLog("SpikeoutEnemyKnockMul: enemies knocked up x%.2f, sideways x1.00.", knockMulY);
+    knockMul = knockMulXZ;
+    if (linkApplied && knockMul != 1.0f)
     {
       UINT32 knockBits; memcpy(&knockBits, &knockMul, 4);
       const Spikeout8LinkPatch knockPatches[] =
@@ -10446,7 +10501,104 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
         { 0x03EF0, 0x00000000, knockBits },   // .float X
       };
       if (applyPatches("SpikeoutEnemyKnockMul", knockPatches, sizeof(knockPatches) / sizeof(knockPatches[0])))
-        InfoLog("SpikeoutEnemyKnockMul: enemies knocked back x%.2f.", knockMul);
+        InfoLog("SpikeoutEnemyKnockMul: enemies knocked up x%.2f, sideways x%.2f.", knockMulY, knockMulXZ);
+    }
+    // 11/23 (owner): InfiniteSpecial=1 - the special attack does not use up the lightning (SP, Rob +0x3F25). The only
+    // place that takes one away is 0x21FBC..0x21FC8 in the motion-command loop (SP - 1, unless SDA -0x4000 & 0x3000
+    // or SP is 0); its store is made a nop. SP is kept per Rob on each cabinet, so it MUST be the same on all cabinets.
+    if (m_config["InfiniteSpecial"].ValueAsDefault<bool>(false))
+    {
+      const Spikeout8LinkPatch infSpPatches[] =
+      {
+        { 0x21FC8, 0x988E3F25, 0x60000000 },  // stb r4,0x3f25(r14) (SP - 1) -> nop
+      };
+      if (applyPatches("SpikeoutInfiniteSpecial", infSpPatches, sizeof(infSpPatches) / sizeof(infSpPatches[0])))
+        InfoLog("SpikeoutInfiniteSpecial: the special attack does not use up SP.");
+    }
+    // 11/23 (owner): SpikeJr=1 crashed at the stage start ("CMODEL3 : Unknown R16 (PC=0x5F2A8)", the map was the
+    // wrong stage). The stage-start script commands index tables of 4 characters (Spike, White, Linda, Tenshin) with
+    // Rob +0x3F00: 0x5E6F0 (start positions, the table at script arg +4 = r17; 0x5E83C / 0x5E878) and 0x5E8F4 (map
+    // icon 0xA / 3 + character, 0x5E90C). Jr (4) read past them. These three loads now read the character & 3
+    // (4 -> 0 = Spike, 0-3 as is) through tiny caves (bl: both functions keep LR on the stack; cr0 is not used after).
+    if (g_spikeoutSpikeJr)
+    {
+      // (11/23: the costume table 0xFFF6C878 has entries for characters 0-3 only; [4] = 0. Jr has no costume of his own.)
+      const Spikeout8LinkPatch jrPatches[] =
+      {
+        { 0x5E83C, 0x88A53F00, 0x4BFA560D },  // lbz r5,0x3f00(r5) -> bl 0x3E48
+        { 0x5E878, 0x88A53F00, 0x4BFA55D1 },  // lbz r5,0x3f00(r5) -> bl 0x3E48
+        { 0x5E90C, 0x88833F00, 0x4BFA55D9 },  // lbz r4,0x3f00(r3) -> bl 0x3EE4
+        { 0x03E48, 0x00000000, 0x88A53F00 },  // lbz   r5,0x3f00(r5)
+        { 0x03E4C, 0x00000000, 0x70A50003 },  // andi. r5,r5,3
+        { 0x03E50, 0x00000000, 0x4E800020 },  // blr
+        { 0x03EE4, 0x00000000, 0x88833F00 },  // lbz   r4,0x3f00(r3)
+        { 0x03EE8, 0x00000000, 0x70840003 },  // andi. r4,r4,3
+        { 0x03EEC, 0x00000000, 0x4E800020 },  // blr
+        // 11/23 (owner): every Jr in the 1P colour. The costume loader 0x733DC gets the colour from 0x7347C (r3,
+        // 0-7 by pick order, kept at fa_player +0xA0 + slot) and loads table[character][colour] (bl 0x3C44). Right
+        // after it, the colour is made 0 when the link character (+0x25 of the node record r18) is Spike (0):
+        // r3 &= (char == 0 ? 0 : -1). fa_player +0xA0 is left alone, so the name colours stay different.
+        { 0x73430, 0x88920025, 0x4BF902F1 },  // lbz r4,0x25(r18) -> bl 0x3720
+        { 0x03720, 0x00000000, 0x88920025 },  // lbz   r4,0x25(r18)    (the replaced instruction)
+        { 0x03724, 0x00000000, 0x7C0400D0 },  // neg   r0,r4
+        { 0x03728, 0x00000000, 0x7C00FE70 },  // srawi r0,r0,31         Spike: 0, others: -1
+        { 0x0372C, 0x00000000, 0x7C630038 },  // and   r3,r3,r0
+        { 0x03730, 0x00000000, 0x4E800020 },  // blr
+        // The same for the one-player costume load at a (re)spawn (0x5B3E0 bl 0x7347C, character r24).
+        { 0x5B3E4, 0x38980000, 0x4BFA8351 },  // addi r4,r24,0 -> bl 0x3734
+        { 0x03734, 0x00000000, 0x38980000 },  // addi  r4,r24,0         (the replaced instruction)
+        { 0x03738, 0x00000000, 0x7C0400D0 },  // neg   r0,r4
+        { 0x0373C, 0x00000000, 0x7C00FE70 },  // srawi r0,r0,31
+        { 0x03740, 0x00000000, 0x7C630038 },  // and   r3,r3,r0
+        { 0x03744, 0x00000000, 0x4E800020 },  // blr
+        // 11/23 (owner, 8 links): right after a join everyone was Spike (the model is made when the Rob is set up;
+        // the once-a-frame 0 -> 4 came too late) until a gate scene made the models again. The two places that set
+        // a player's character from the link (+0x25) now give 4 for Spike:
+        // game start / join 0x7338C (stb r4,0x3f00(r5)), and a (re)spawn 0x5B3AC (the set-up record +0x14; r24
+        // itself stays 0, it picks the costume and is compared with the old character just after).
+        { 0x7338C, 0x98853F00, 0x4BF903BC },  // stb r4,0x3f00(r5) -> b 0x3748
+        { 0x03748, 0x00000000, 0x2C040000 },  // cmpwi r4,0
+        { 0x0374C, 0x00000000, 0x40820008 },  // bne   +8
+        { 0x03750, 0x00000000, 0x38800004 },  // li    r4,4               Spike -> Jr
+        { 0x03754, 0x00000000, 0x98853F00 },  // stb   r4,0x3f00(r5)      (the replaced instruction)
+        { 0x03758, 0x00000000, 0x4806FBEC },  // b     0x73344            (the original next instruction)
+        { 0x5B3AC, 0x9B030014, 0x4BFA826C },  // stb r24,0x14(r3) -> b 0x3618
+        { 0x03618, 0x00000000, 0x2C180000 },  // cmpwi r24,0
+        { 0x0361C, 0x00000000, 0x38000004 },  // li    r0,4
+        { 0x03620, 0x00000000, 0x41820008 },  // beq   +8
+        { 0x03624, 0x00000000, 0x7F00C378 },  // mr    r0,r24
+        { 0x03628, 0x00000000, 0x98030014 },  // stb   r0,0x14(r3)
+        { 0x0362C, 0x00000000, 0x48057D84 },  // b     0x5B3B0
+        // 11/23 (8 links): players who joined later were still Spike. The join set-up record (0x73670, r18 = the
+        // record, +0x14 = character from the link) is the third place: Spike -> 4 here too.
+        { 0x73718, 0x98920014, 0x4BF8FB24 },  // stb r4,0x14(r18) -> b 0x323C
+        { 0x0323C, 0x00000000, 0x2C040000 },  // cmpwi r4,0
+        { 0x03240, 0x00000000, 0x40820008 },  // bne   +8
+        { 0x03244, 0x00000000, 0x38800004 },  // li    r4,4
+        { 0x03248, 0x00000000, 0x98920014 },  // stb   r4,0x14(r18)     (the replaced instruction)
+        { 0x0324C, 0x00000000, 0x480704D0 },  // b     0x7371C
+        // 11/23 (owner, 8 links): only 01's Jr looked right. Jr has one texture of his own (one colour) at slot 0's
+        // place; a player model is drawn with a per-slot texture offset (the 8-slot table 0x3608 by Rob +4 = slot,
+        // 0x34EF4 / 0x36130, and slots 6-7 on page 0 in caves A / B 0x3964 / 0x3994), so slots 1-7 read other
+        // costume texels. For a Jr (Rob +0x3F00 = 4) both now take slot 0: offset (0,0), page 1.
+        { 0x34EF4, 0x886E0004, 0x4BFCECC9 },  // lbz r3,4(r14) -> bl 0x3BBC
+        { 0x36130, 0x886E0004, 0x4BFCDA8D },  // lbz r3,4(r14) -> bl 0x3BBC
+        { 0x03964, 0x880E0004, 0x48000271 },  // cave A: lbz r0,4(r14) -> bl 0x3BD4
+        { 0x03994, 0x880E0004, 0x48000241 },  // cave B: lbz r0,4(r14) -> bl 0x3BD4
+        { 0x03BBC, 0x00000000, 0x886E0004 },  // lbz   r3,4(r14)         slot
+        { 0x03BC0, 0x00000000, 0x880E3F00 },  // lbz   r0,0x3f00(r14)    character
+        { 0x03BC4, 0x00000000, 0x2C000004 },  // cmpwi r0,4
+        { 0x03BC8, 0x00000000, 0x4C820020 },  // bnelr
+        { 0x03BCC, 0x00000000, 0x38600000 },  // li    r3,0              Jr: slot 0's offset
+        { 0x03BD0, 0x00000000, 0x4E800020 },  // blr
+        { 0x03BD4, 0x00000000, 0x880E0004 },  // lbz   r0,4(r14)         slot
+        { 0x03BD8, 0x00000000, 0x88AE3F00 },  // lbz   r5,0x3f00(r14)    character (r5 is free here)
+        { 0x03BDC, 0x00000000, 0x2C050004 },  // cmpwi r5,4
+        { 0x03BE0, 0x00000000, 0x4C820020 },  // bnelr
+        { 0x03BE4, 0x00000000, 0x38000000 },  // li    r0,0              Jr: page 1 as slot 0
+        { 0x03BE8, 0x00000000, 0x4E800020 },  // blr
+      };
+      applyPatches("SpikeoutSpikeJr", jrPatches, sizeof(jrPatches) / sizeof(jrPatches[0]));
     }
     // StartStage=S / StartArea=A (both 1..255, default 0 = off): when the prologue (stage 7 SPKHOME) ends, go to
     // stage S, area A instead of Diesel Town. The stage-change script command (group 1 op 0x17, 0x5CEC8: arg byte 3

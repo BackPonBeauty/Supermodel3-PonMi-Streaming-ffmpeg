@@ -107,7 +107,7 @@ a { color: var(--accent) }
     <thead><tr><th>もの</th><th>目安</th></tr></thead>
     <tbody>
       <tr><td>PC</td><td>Windows 10 / 11（64bit）。映像は CPU で再生するので、GPU はどれでも大丈夫です</td></tr>
-      <tr><td>パッド</td><td>Xbox 系（XInput）のパッドがおすすめ。キーボードはレバー（W / A / S / D）だけで、ボタンは押せません</td></tr>
+      <tr><td>パッド</td><td>パッド（Xbox 系、DirectInput のスティックなど）かキーボード。ボタンの割り当ては、自分の <code>Config\Supermodel.ini</code> で決められます（→ <a href="#pad">5</a>）</td></tr>
       <tr><td>Discord</td><td>指定の Discord サーバーのメンバーであること（<a href="https://discord.com/invite/zpKBFDA52f">招待リンク</a>）。インターネット越しにつなぐときに必要です</td></tr>
       <tr><td>ROM</td><td>自分で持っている Spikeout Final Edition の ROM。ロビーは、このゲームを選んだときに開きます</td></tr>
     </tbody>
@@ -143,21 +143,39 @@ a { color: var(--accent) }
 </section>
 
 <section id="pad">
-  <h2><span class="no">5</span>パッドを選ぶ</h2>
+  <h2><span class="no">5</span>パッドとボタンの割り当て</h2>
   <p><span class="ctl">Pad</span> の欄で、使うパッドを選びます。選んだものはすぐ保存され、次からも使います。</p>
-  <p>ボタンの割り当てはホストが決めていて、Xbox 系のパッドではこうなります。</p>
+  <h3>ボタンの割り当ては、自分の ini で決める</h3>
+  <p>ボタンの割り当ては、クライアントの <code>PonMi\00\Config\Supermodel.ini</code> の次の行で決まります。つないだときに読み込んで、その割り当てで変換してからホストに送ります。ホストの設定は関係ありません。</p>
   <div class="tbl"><table>
-    <thead><tr><th>パッド</th><th>ゲーム</th></tr></thead>
+    <thead><tr><th>ini の行</th><th>ゲーム</th><th>はじめの値（Xbox 系のパッド）</th></tr></thead>
     <tbody>
-      <tr><td>左スティック／十字キー</td><td>レバー</td></tr>
-      <tr><td>A</td><td>Shift</td></tr>
-      <tr><td>X</td><td>Beat</td></tr>
-      <tr><td>Y</td><td>Charge</td></tr>
-      <tr><td>RB</td><td>Jump</td></tr>
-      <tr><td>START</td><td>スタート（キャラ選択・途中参加・コンティニュー）</td></tr>
+      <tr><td><code>InputJoyUp</code> / <code>Down</code> / <code>Left</code> / <code>Right</code></td><td>レバー</td><td>左スティック・十字キー</td></tr>
+      <tr><td><code>InputShift</code></td><td>Shift</td><td><code>JOY1_BUTTON1</code>（A）</td></tr>
+      <tr><td><code>InputBeat</code></td><td>Beat</td><td><code>JOY1_BUTTON3</code>（X）</td></tr>
+      <tr><td><code>InputCharge</code></td><td>Charge</td><td><code>JOY1_BUTTON4</code>（Y）</td></tr>
+      <tr><td><code>InputJump</code></td><td>Jump</td><td><code>JOY1_BUTTON6</code>（RB）</td></tr>
+      <tr><td><code>InputStart1</code></td><td>スタート（キャラ選択・途中参加・コンティニュー）</td><td><code>JOY1_BUTTON8</code>（START）</td></tr>
+      <tr><td><code>InputCoin1</code></td><td>コイン（フリープレイなので、ふつうは使いません）</td><td><code>JOY1_BUTTON7</code>（BACK）</td></tr>
     </tbody>
   </table></div>
-  <div class="note"><p>アーケードスティックなどの DirectInput のパッドは、ボタンの番号の並びがちがうので、思ったボタンにならないことがあります。Xbox 系のパッドを使うのが確実です。</p></div>
+  <ul>
+    <li>書き方は Supermodel と同じです。<code>,</code> で「どれか」、<code>+</code> で「同時押し」、頭に <code>!</code> で「押していない」。</li>
+    <li>使える名前：<code>JOY1_BUTTON3</code>（ボタン）、<code>JOY1_POV1_UP</code>（十字キー）、<code>JOY1_XAXIS_NEG</code> など（スティック）、<code>KEY_Z</code> など（キーボード）。</li>
+    <li><code>JOY1</code> や <code>JOY2</code> の番号は気にしなくて大丈夫です。どの番号でも、ロビーの <span class="ctl">Pad</span> で選んだパッドのことになります。</li>
+    <li>ini の割り当てを変えたら、次につないだときから使われます（つないでいる間に変えても、そのときは変わりません）。</li>
+  </ul>
+  <h3>例</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>使いたいもの</th><th>ini の例</th></tr></thead>
+    <tbody>
+      <tr><td>DirectInput のスティック</td><td><code>InputStart1 = JOY1_BUTTON12</code>、<code>InputShift = JOY1_BUTTON3</code>、<code>InputBeat = JOY1_BUTTON1</code>、<code>InputCharge = JOY1_BUTTON2</code>（ボタンの番号はスティックによってちがいます）</td></tr>
+      <tr><td>キーボードだけ</td><td><code>InputStart1 = KEY_1</code>、<code>InputBeat = KEY_Z</code>、<code>InputJoyUp = KEY_W</code> …</td></tr>
+      <tr><td>パッドとキーボードの両方</td><td><code>InputBeat = JOY1_BUTTON3,KEY_Z</code></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p>行が無いとき、<code>NONE</code> のとき、使えない書き方（マウスなど）のときは、そのボタンは Xbox 系パッドのはじめの値のまま送ります（レバーは W / A / S / D でも動きます）。キーボードの入力は、クライアントのウィンドウが前に出ているときだけ届きます。</p></div>
+  <div class="note"><p>レバーに <code>KEY_UP</code> や <code>KEY_DOWN</code>（矢印キー）を使うと、ビットレートを変える <span class="k">↑</span> <span class="k">↓</span> は効かなくなります。</p></div>
 </section>
 
 <section id="join">
@@ -176,7 +194,7 @@ a { color: var(--accent) }
     <tbody>
       <tr><td><span class="k">F11</span></td><td>全画面にする／戻す</td></tr>
       <tr><td><span class="k">F3</span></td><td>遅延などの情報を、左上に出す／消す</td></tr>
-      <tr><td><span class="k">↑</span> / <span class="k">↓</span></td><td>映像のビットレートを上げる／下げる（カクつくときは下げる）</td></tr>
+      <tr><td><span class="k">↑</span> / <span class="k">↓</span></td><td>映像のビットレートを上げる／下げる（カクつくときは下げる）。レバーに矢印キーを割り当てたときは効きません</td></tr>
       <tr><td><span class="k">ESC</span></td><td>全画面 → ウィンドウ → 切断してロビーへ</td></tr>
     </tbody>
   </table></div>
@@ -213,7 +231,7 @@ a { color: var(--accent) }
       <tr><td>entry-ticket server could not check</td><td>入場券のサーバーが一時的に使えません。少し待ってから、もう一度</td></tr>
       <tr><td>Hosts が空</td><td>いま立っているホストがありません。<span class="ctl">REFRESH</span> を押すか、Discord のチャンネルで様子を見てください</td></tr>
       <tr><td>つながらない（何も出ない）</td><td>ホスト側のルーターやファイアウォールの設定かもしれません。ホストの人に伝えてください</td></tr>
-      <tr><td>ボタンが効かない・ちがう</td><td>ロビーの <span class="ctl">Pad</span> で正しいパッドを選んでいるか。Xbox 系のパッドか（<a href="#pad">5</a>）。ウィンドウが前に出ているか（キーボードは前に出ているときだけ）</td></tr>
+      <tr><td>ボタンが効かない・ちがう</td><td>ロビーの <span class="ctl">Pad</span> で正しいパッドを選んでいるか。<code>Config\Supermodel.ini</code> の割り当て（<a href="#pad">5</a>）。割り当てを変えたら、つなぎ直す。キーボードは、ウィンドウが前に出ているときだけ</td></tr>
       <tr><td>映像がカクカクする</td><td><span class="k">↓</span> でビットレートを下げる。<span class="k">F3</span> で遅延を見る</td></tr>
     </tbody>
   </table></div>

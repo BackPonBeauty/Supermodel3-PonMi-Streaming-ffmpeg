@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261122 / PonLuncher 2.0.0
+> Build 20261122b / PonLuncher 2.0.0
 
 ---
 
@@ -46,6 +46,13 @@
   - When a juggled enemy is not hit in the air for a while, the bot dashes at it and finishes with a big jump kick
   - Specials: B+C+J mashed for one second; a special when the bot is low on health while holding or held by an enemy; a lever turn when held by a boss
   - A bot near a boss that turns invincible dashes away
+- **Bots (20261122b):**
+  - Boss fights in every area: two boss handlers per boss (the bots the boss goes for, lowest slot first) go for the boss only and do not back off; the other bots take on the small fry, those going for a boss handler first
+  - Before the boss handlers are picked, a bot goes for the nearest small fry instead of the boss
+  - The small-fry handlers use a Shift + Charge combo (five Beats, then Charge let go)
+  - A long dash is reset twice the way a player does it (Shift + Charge, the lever back, a new dash), Charge held throughout
+  - After an ally hold: the thank-you gesture, then the bot steps away from that ally
+  - With 4 or more enemies around and 150 HP or less, B+C becomes the special (B+C+J)
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
 
 ---

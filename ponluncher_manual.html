@@ -1,0 +1,428 @@
+<title>PonLuncher 説明書</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: a manual beside the launcher it explains - a window diagram with numbered callouts, then one section per panel. */
+:root {
+  --bg: #eef3f6; --panel: #ffffff; --fg: #142029; --muted: #566676; --line: #cfd9e0; --soft: #e3ebf0;
+  --accent: #0a8fa0; --accent-ink: #ffffff; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #1d8a4a; --warn: #a86a00; --bad: #c0392b;
+  --ui: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr) } nav.toc { position: static !important } }
+header.top { grid-column: 1 / -1; display: grid; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 18px }
+h1 { font-family: var(--mono); font-size: clamp(22px, 4vw, 30px); margin: 0; letter-spacing: .02em; text-wrap: balance }
+h1 .slash { color: var(--accent) }
+.lead { margin: 0; color: var(--muted); max-width: 70ch }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted) }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; font-size: 13.5px }
+nav.toc p { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--muted) }
+nav.toc ol { margin: 0; padding-left: 1.4em; display: grid; gap: 2px }
+nav.toc a { color: var(--fg); text-decoration: none }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); text-decoration: underline }
+main { min-width: 0; display: grid; gap: 40px }
+section { min-width: 0; scroll-margin-top: 16px }
+h2 { font-size: 21px; margin: 0 0 12px; display: flex; gap: 10px; align-items: baseline; text-wrap: balance }
+h2 .no { font-family: var(--mono); font-size: 13px; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 1px 7px; flex: none }
+h3 { font-size: 16.5px; margin: 22px 0 8px }
+p, li { max-width: 72ch }
+ul, ol { padding-left: 1.4em; margin: 8px 0 }
+li + li { margin-top: 4px }
+code, .k { font-family: var(--mono); font-size: .88em; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap }
+.ctl { font-family: var(--mono); font-weight: 600; font-size: .9em; letter-spacing: .02em; color: var(--accent); white-space: nowrap }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin: 10px 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line) }
+tr:last-child td { border-bottom: 0 }
+th { font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 600; background: var(--soft) }
+td:first-child { white-space: nowrap }
+.note { border-left: 3px solid var(--warn); background: var(--panel); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0 }
+.note.info { border-left-color: var(--accent) }
+.note p { margin: 0 }
+.ok { color: var(--ok) } .warn { color: var(--warn) } .bad { color: var(--bad) }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px }
+.steps > li { counter-increment: s; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; max-width: none }
+.steps > li::before { content: counter(s); font-family: var(--mono); font-weight: 700; color: var(--accent-ink); background: var(--accent); border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; font-size: 13px; margin-top: 2px }
+
+/* the launcher window, redrawn */
+.shot { overflow-x: auto; border-radius: 10px; border: 1px solid var(--line) }
+.win { min-width: 640px; background: var(--win); color: var(--win-fg); font-family: var(--mono); font-size: 12px; padding: 14px 16px 18px; display: grid; gap: 10px }
+.win .ttl { color: var(--win-cyan); font-weight: 700; font-size: 14px; letter-spacing: .03em }
+.wp { border: 1px solid rgba(0, 238, 255, .55); border-radius: 3px; padding: 14px 12px 10px; position: relative }
+.wp > .pt { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); background: var(--win); color: var(--win-cyan); padding: 0 8px; font-size: 11px; font-weight: 700 }
+.row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
+.dim { color: var(--win-dim) }
+.fld { border: 1px solid #2b3b4c; background: #0a1423; padding: 1px 6px; min-width: 60px; display: inline-block }
+.chk::before { content: "☐ "; color: var(--win-dim) } .chk.on::before { content: "☑ "; color: #4f9dff }
+.btn { border: 1px solid var(--win-cyan); color: var(--win-cyan); padding: 2px 10px; display: inline-block }
+.btn.go { border-color: #50e678; color: #50e678 } .btn.stop { border-color: #7a3030; color: #7a3030 } .btn.kick { border-color: #4a2a2a; color: #6a3b3b }
+.g { color: #50e678 }
+.mk { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #ffbe3c; color: #1a1200; font-size: 10.5px; font-weight: 700; margin-right: 4px; vertical-align: 1px }
+.slots { display: grid; grid-template-columns: 56px 100px 100px 90px 1fr 60px; gap: 6px 8px; align-items: center }
+.legend { font-size: 13px; color: var(--muted); margin: 8px 0 0 }
+a { color: var(--accent) }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>PONLUNCHER <span class="slash">//</span> 説明書</h1>
+    <p class="lead">PonLuncher は、Spikeout Final Edition を 2〜8 台つないで遊ぶためのホスト用ランチャーです。台ごとの設定（ini）を書き、Supermodel を順番に起動し、止めるときもまとめて閉じます。遠くの人はストリーミングで、この PC の人はパッドで、空いている台はボットで遊べます。</p>
+    <p class="meta"><span>PonLuncher 2.0.0</span><span>Supermodel3-PonMi（PonMi フォルダ構成）</span><span>2026-11-22 時点のコードから作成</span></p>
+  </header>
+
+  <nav class="toc" aria-label="目次">
+    <p>CONTENTS</p>
+    <ol>
+      <li><a href="#prepare">準備</a></li>
+      <li><a href="#window">画面の見取り図</a></li>
+      <li><a href="#discord">DISCORD</a></li>
+      <li><a href="#host">HOST</a></li>
+      <li><a href="#options">ゲームとボットの設定</a></li>
+      <li><a href="#slots">SLOTS</a></li>
+      <li><a href="#develop">DEVELOP</a></li>
+      <li><a href="#start">START と STOP</a></li>
+      <li><a href="#status">いちばん下の表示</a></li>
+      <li><a href="#files">設定ファイルとポート</a></li>
+      <li><a href="#trouble">困ったとき</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="prepare">
+      <h2><span class="no">1</span>準備</h2>
+      <h3>フォルダ</h3>
+      <p>PonLuncher.exe と同じフォルダに、台ごとのフォルダ <code>01</code>〜<code>08</code> を置きます（PonMi 構成）。<code>01\supermodel.exe</code> と <code>01\Config\Supermodel.ini</code> があれば、この構成として動きます。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>場所</th><th>中身</th></tr></thead>
+        <tbody>
+          <tr><td><code>PonLuncher.exe</code></td><td>このランチャー</td></tr>
+          <tr><td><code>Config\PonLuncher.ini</code></td><td>ランチャーの設定（自動で保存）</td></tr>
+          <tr><td><code>Config\DiscordLogin.ini</code></td><td>Discord のログイン情報（自動で保存）</td></tr>
+          <tr><td><code>Roms\spikeofe.zip</code></td><td>ゲームの ROM。<b>ご自身で用意してください（同梱していません）</b></td></tr>
+          <tr><td><code>01</code>〜<code>08</code></td><td>台ごとの Supermodel（<code>supermodel.exe</code>、<code>Config\Supermodel.ini</code>、<code>NVRAM</code> など）</td></tr>
+          <tr><td><code>09</code></td><td>サテライト（観戦台）。あるときだけ <span class="ctl">SATELLITE (09)</span> が使えます</td></tr>
+          <tr><td><code>00</code></td><td>1人用。PonLuncher は使いません</td></tr>
+        </tbody>
+      </table></div>
+      <h3>はじめる前に</h3>
+      <ul>
+        <li><b>Discord：</b>指定の Discord サーバーのメンバーでないと、ホストは始められません（<a href="#discord">3章</a>）。</li>
+        <li><b>パッド：</b>LOCAL の台で使うパッドは、<b>START を押す前につないで</b>おきます。Supermodel は、起動したあとにつないだパッドを見つけられません。</li>
+        <li><b>ファイアウォール：</b>ストリーミングで外から人を入れるときは、Windows のファイアウォールで Supermodel の通信を許可します。</li>
+      </ul>
+    </section>
+
+    <section id="window">
+      <h2><span class="no">2</span>画面の見取り図</h2>
+      <p>黄色の番号は、この説明書の章です。</p>
+      <div class="shot" role="img" aria-label="PonLuncher のウィンドウの見取り図">
+        <div class="win">
+          <div class="ttl">PONLUNCHER // SPIKEOUT FE 2-8 LINK STREAMING HOST</div>
+          <div class="wp"><span class="pt">[ DISCORD ]</span>
+            <div class="row" style="justify-content:space-between"><span><span class="mk">3</span><span class="g">Logged in as (Discord の名前) (server member)</span></span><span class="btn">LOGOUT</span></div>
+          </div>
+          <div class="wp"><span class="pt">[ HOST ]</span>
+            <div style="display:grid;gap:8px">
+              <div class="row"><span class="mk">4</span><span class="dim">HOST NAME</span><span class="fld" style="min-width:180px">(ホスト名)</span><span class="dim">GAME</span><span class="fld">spikeofe</span><span class="dim">LINKS</span><span class="fld" style="min-width:30px">4</span></div>
+              <div class="row"><span class="dim">CODEC</span><span class="fld">H264</span><span class="dim">ENCODER</span><span class="fld">AUTO</span><span class="chk">SHOW CONSOLE</span><span class="g">PADS: 1</span></div>
+              <div class="row"><span class="mk">5</span><span class="chk">RANDOM CHARACTER ON CONTINUE (BOT: ORIGINAL)</span><span class="chk on">SATELLITE (09)</span></div>
+              <div class="row"><span class="chk on">BOSS HP x1</span><span class="chk">01 INVINCIBLE</span><span class="chk on">TIMER STOP</span><span class="chk">TARGET MARKER</span></div>
+              <div class="row"><span class="dim">ROUTE</span><span class="fld">BACK MALL</span><span class="dim">ROUTE2</span><span class="fld">PARKING</span><span class="dim">ROUTE3</span><span class="fld">DIRECT</span></div>
+              <div class="row"><span class="chk on dim">BOT CAN OPEN GATE (ALL BOT: ALWAYS ON)</span></div>
+            </div>
+          </div>
+          <div class="wp"><span class="pt">[ SLOTS ]</span>
+            <div class="slots">
+              <span class="dim">SLOT</span><span class="dim">MODE</span><span class="dim">PAD/CHAR</span><span class="dim">STATE</span><span class="dim">PLAYER</span><span></span>
+              <span style="color:var(--win-cyan)"><span class="mk">6</span>1</span><span class="fld">BOT</span><span class="fld">SPIKE</span><span>-</span><span></span><span class="btn kick">KICK</span>
+              <span style="color:var(--win-cyan)">2</span><span class="fld dim">BOT</span><span class="fld">SPIKE</span><span>-</span><span></span><span class="btn kick">KICK</span>
+              <span class="dim">5</span><span class="fld dim">BOT</span><span class="fld dim">SPIKE</span><span class="dim">(off)</span><span></span><span class="btn kick">KICK</span>
+            </div>
+          </div>
+          <div class="wp"><span class="pt">[ DEVELOP ]</span>
+            <div class="row"><span class="mk">7</span><span class="chk on">AI LOG</span><span class="chk">SCENARIO LOG</span><span class="chk">WAYPOINT (01)</span><span class="chk">GATE LOG</span><span class="dim">…</span></div>
+          </div>
+          <div class="row" style="gap:12px"><span class="mk">8</span><span class="btn go" style="flex:1;text-align:center">START</span><span class="btn stop" style="flex:1;text-align:center">STOP</span></div>
+          <div class="dim"><span class="mk">9</span>（ここに今の状態や注意が出ます）</div>
+        </div>
+      </div>
+      <p class="legend">スロットの行は 1・2・5 だけ描いています。実際は SLOT 1〜8 の 8 行です。</p>
+    </section>
+
+    <section id="discord">
+      <h2><span class="no">3</span>DISCORD</h2>
+      <p>ホストを始められるのは、指定の Discord サーバーのメンバーだけです。起動すると自動で確かめ、結果に合わせてボタンの文字が変わります。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>表示</th><th>ボタン</th><th>意味とすること</th></tr></thead>
+        <tbody>
+          <tr><td class="ok">Logged in as 名前 (server member)</td><td><span class="ctl">LOGOUT</span></td><td>メンバーとして確認できました。START が押せます。HOST NAME が空なら、Discord の名前が入ります。</td></tr>
+          <tr><td class="warn">Please log in with Discord to start a host.</td><td><span class="ctl">LOGIN</span></td><td>まだログインしていません。LOGIN を押すとブラウザが開くので、Discord にログインして「認証（Authorize）」を押します。待っているあいだはボタンが <span class="ctl">CANCEL</span> になります。</td></tr>
+          <tr><td class="bad">名前: not a member of the Discord server</td><td><span class="ctl">LOGOUT</span></td><td>ログインはできましたが、サーバーのメンバーではありません。招待リンクを開くか聞かれます。参加してから、もう一度確かめてください（LOGOUT → LOGIN）。</td></tr>
+          <tr><td class="warn">Could not reach Discord. Press RETRY.</td><td><span class="ctl">RETRY</span></td><td>Discord につながりませんでした。ネットを確かめて RETRY を押します。</td></tr>
+          <tr><td class="bad">Login failed: …</td><td><span class="ctl">LOGIN</span></td><td>ログインが途中で失敗しました。もう一度 LOGIN を押します。</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>ゲームを動かしているあいだは、LOGOUT はできません。</li>
+        <li>ログイン情報は <code>Config\DiscordLogin.ini</code> に保存され、次からは起動するだけで確認されます。</li>
+      </ul>
+    </section>
+
+    <section id="host">
+      <h2><span class="no">4</span>HOST</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>項目</th><th>選べるもの</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ctl">HOST NAME</span></td><td>32 文字まで</td><td>ロビーと Discord に出るホストの名前。空のままでは START できません。</td></tr>
+          <tr><td><span class="ctl">GAME</span></td><td>spikeofe</td><td>Spikeout Final Edition に固定です（変えられません）。</td></tr>
+          <tr><td><span class="ctl">LINKS</span></td><td>2〜8</td><td>つなぐ台の数。SLOTS のうち、この数までの行が使われます。残りは <code>(off)</code> になります。</td></tr>
+          <tr><td><span class="ctl">CODEC</span></td><td>H264 / H265</td><td>ストリーミングの映像の形式。H265 のほうが同じ画質で軽くなりますが、受ける側の PC の対応が要ります。</td></tr>
+          <tr><td><span class="ctl">ENCODER</span></td><td>AUTO / NVENC / FFMPEG</td><td>映像を作る方法。AUTO は、NVIDIA のドライバがあれば NVENC（GPU）、なければ FFMPEG（x264 / x265、CPU）。CUDA Toolkit は要りません。</td></tr>
+          <tr><td><span class="ctl">SHOW CONSOLE</span></td><td>オン / オフ</td><td>オンにすると、各台の Supermodel をコンソール（黒い窓）付きで起動します。調べもの用です。</td></tr>
+          <tr><td><span class="ctl">PADS</span></td><td>（表示だけ）</td><td>今つながっているパッドの数。止まっているあいだ、1 秒ごとに数え直します。1 台以上なら緑。</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note info"><p>CODEC と ENCODER は、MODE が STREAM の台にだけ関係します。LOCAL と BOT だけで遊ぶなら、そのままで構いません。</p></div>
+    </section>
+
+    <section id="options">
+      <h2><span class="no">5</span>ゲームとボットの設定</h2>
+      <p>ここの設定は、START のときに<b>全部の台（01〜08 と 09）に同じ値で</b>書かれます。つないだ台どうしでゲームの状態をそろえるためです。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>項目</th><th>ini のキー</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ctl">RANDOM CHARACTER ON CONTINUE (BOT: ORIGINAL)</span></td><td><code>AIrandSel</code></td><td>ボットがコンティニューするとき、キャラをランダムに選び直します。キャラが <b>ORIGINAL</b> のボットだけに効きます（キャラを決めたボットは変わりません）。</td></tr>
+          <tr><td><span class="ctl">SATELLITE (09)</span></td><td><code>SatelliteClone</code></td><td>観戦用の台 09 も起動します。09 は自分では遊ばず、つないだ台の映像を順番に映します。<code>09</code> フォルダがないと選べません。</td></tr>
+          <tr><td><span class="ctl">BOSS HP x1</span></td><td><code>BossHPx1</code></td><td>ボスの体力を人数で増やしません。あわせて、プレイヤーが受けるダメージも人数で増やしません（どちらも ×1）。</td></tr>
+          <tr><td><span class="ctl">01 INVINCIBLE</span></td><td><code>P1Invincible</code></td><td>SLOT 1 のプレイヤーを、いつも無敵にします。</td></tr>
+          <tr><td><span class="ctl">TIMER STOP</span></td><td><code>TimerStop</code></td><td>残り時間を 99 のまま止めます。5 人以上のときは、これに関係なくいつも止まります。</td></tr>
+          <tr><td><span class="ctl">TARGET MARKER</span></td><td><code>AITargetMarker</code></td><td>ボットが狙っている敵の上に印を出します。表示だけで、動きは変わりません。</td></tr>
+          <tr><td><span class="ctl">BOT CAN OPEN GATE</span></td><td><code>BotCanOpenGate</code></td><td>オンなら、ボットが自分でゲート（壊すシャッター）を開けに行きます。オフなら、敵がいないときはゲートの手前で人を待ちます。<b>全部の台が BOT のときは、いつもオン</b>（変えられません）。</td></tr>
+        </tbody>
+      </table></div>
+      <h3>ボットの道（ROUTE）</h3>
+      <p>分かれ道で、ボットがどちらへ進むかを決めます。人がいるときは、人のほうに合わせて選んでおくと迷いにくくなります。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>項目</th><th>選べるもの</th><th>場所</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ctl">ROUTE</span></td><td>FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP</td><td>ディーゼルタウンの分かれ道（表モール・裏モール・表シップ・裏シップ）。<code>AIRoute</code> 0〜3</td></tr>
+          <tr><td><span class="ctl">ROUTE2</span></td><td>TOY SHOP / PARKING</td><td>モールの中（エリア 39）。TOY SHOP は Shutter#8、PARKING は Shutter#12。<code>AIRoute2</code> 0 / 1</td></tr>
+          <tr><td><span class="ctl">ROUTE3</span></td><td>COURTYARD / DIRECT</td><td>エリア 30。COURTYARD は Door#1、DIRECT は Door#42。<code>AIRoute3</code> 0 / 1</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="slots">
+      <h2><span class="no">6</span>SLOTS</h2>
+      <p>台（スロット）1〜8 の、それぞれの遊び方を決めます。LINKS より後ろの行は使われず、<code>(off)</code> と出ます。</p>
+      <h3>MODE</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>MODE</th><th>だれが遊ぶか</th><th>START で書く主な設定</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ctl">STREAM</span></td><td>遠くの人。ロビーから入って、映像を受けて遊ぶ</td><td><code>Streaming = 1</code>、<code>InputSystem = NONE</code>、この PC の音は消す（<code>StreamMuteLocal = 1</code>）。操作は下の「STREAM の操作」に固定</td></tr>
+          <tr><td><span class="ctl">LOCAL</span></td><td>この PC の人。パッドで遊ぶ</td><td><code>Streaming = 0</code>、<code>InputSystem = sdl</code>。SLOT n はパッド n を使う</td></tr>
+          <tr><td><span class="ctl">BOT</span></td><td>ボット（AI）</td><td><code>AIPlayer = 1</code>。操作のキーはすべて NONE、スタートだけキーボードの <code>1</code></td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><p><b>BOT は後ろにまとめる決まりがあります。</b>どこかの行を BOT にすると、それより後ろの行はすべて BOT になり、変えられなくなります。人の台（STREAM・LOCAL）は、前の番号から並べてください。</p></div>
+      <h3>PAD/CHAR</h3>
+      <p>MODE によって中身が変わります。STREAM では何も出ません。</p>
+      <ul>
+        <li><b>LOCAL のとき（PAD）：</b>パッドの種類。
+          <ul>
+            <li><span class="ctl">DEFAULT</span>：その台の ini のボタン設定をそのまま使います。パッドの番号（JOY1 など）だけ、スロットの番号に直します。NONE になっているボタンは、XINPUT と同じ割り当てにします。</li>
+            <li><span class="ctl">XINPUT</span>：Xbox 系のパッドの割り当てを書きます。</li>
+            <li><span class="ctl">DINPUT</span>：DirectInput のスティックの割り当てを書きます。</li>
+          </ul>
+        </li>
+        <li><b>BOT のとき（CHAR）：</b>ボットのキャラ。<span class="ctl">ORIGINAL</span>（キャラ選択のカーソルの位置のまま）、<span class="ctl">SPIKE</span>、<span class="ctl">LINDA</span>、<span class="ctl">TENSHIN</span>、<span class="ctl">WHITE</span>。</li>
+      </ul>
+      <div class="tbl"><table>
+        <thead><tr><th>ボタン</th><th>XINPUT（SLOT n）</th><th>DINPUT（SLOT n）</th><th>STREAM（受ける側）</th></tr></thead>
+        <tbody>
+          <tr><td>スタート</td><td><code>JOYn_BUTTON8</code>（START）</td><td><code>JOYn_BUTTON12</code></td><td>START ／ キーボード <code>1</code></td></tr>
+          <tr><td>Shift</td><td><code>JOYn_BUTTON1</code>（A）</td><td><code>JOYn_BUTTON3</code></td><td>A</td></tr>
+          <tr><td>Beat</td><td><code>JOYn_BUTTON3</code>（X）</td><td><code>JOYn_BUTTON1</code></td><td>X</td></tr>
+          <tr><td>Charge</td><td><code>JOYn_BUTTON4</code>（Y）</td><td><code>JOYn_BUTTON2</code></td><td>Y</td></tr>
+          <tr><td>Jump</td><td><code>JOYn_BUTTON6</code>（RB）</td><td><code>JOYn_BUTTON6</code></td><td>RB</td></tr>
+          <tr><td>レバー</td><td>左スティック・十字キー</td><td>スティック・ハット</td><td>左スティック・十字キー ／ キーボード W A S D</td></tr>
+          <tr><td>コイン</td><td>—</td><td>—</td><td>BACK</td></tr>
+        </tbody>
+      </table></div>
+      <h3>PAD を DEFAULT にしたとき</h3>
+      <p>DEFAULT は「その台の ini のボタン設定を生かす」選び方です。START のとき、次の <b>10 個のキー</b>だけを、ひとつずつ見て書き直します。</p>
+      <p><code>InputStart1</code>、<code>InputCoin1</code>、<code>InputJoyUp</code>、<code>InputJoyDown</code>、<code>InputJoyLeft</code>、<code>InputJoyRight</code>、<code>InputShift</code>、<code>InputBeat</code>、<code>InputCharge</code>、<code>InputJump</code></p>
+      <div class="tbl"><table>
+        <thead><tr><th>ini に今入っている値</th><th>書く値（n はスロットの番号）</th></tr></thead>
+        <tbody>
+          <tr><td>空か <code>NONE</code></td><td>XINPUT の割り当て（上の表）を入れます。<code>InputStart1</code> なら <code>JOYn_BUTTON8</code>。<code>InputCoin1</code> は XINPUT の表に無いので <code>NONE</code> のまま（フリープレイなので使いません）。</td></tr>
+          <tr><td>それ以外</td><td>中身はそのままで、<code>JOY</code> のあとの番号だけをスロットの番号に直します（番号の無い <code>JOY_</code> も）。キーボードの割り当て（<code>KEY_W</code> など）は、そのまま残ります。</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>例（SLOT 3）：<code>JOY1_XAXIS_NEG,JOY1_POV1_LEFT</code> → <code>JOY3_XAXIS_NEG,JOY3_POV1_LEFT</code></li>
+        <li>例（SLOT 3）：<code>JOY1_BUTTON3,JOY2_BUTTON5</code> → <code>JOY3_BUTTON3,JOY3_BUTTON5</code>（どちらも 3 になります）</li>
+        <li>この 10 個以外（<code>InputStart2</code>、<code>InputCoin2</code>、サービス・テストのボタン、<code>InputUISaveState</code> などの UI の割り当て）は、ini のままです。</li>
+      </ul>
+      <div class="note">
+        <p><b>前に BOT で動かした台を DEFAULT の LOCAL にすると、パッドの START が効きません。</b>BOT で START すると、操作はすべて <code>NONE</code>、<code>InputStart1</code> は <code>KEY_1</code> に書き換わります。DEFAULT にすると、レバーとボタンは <code>NONE</code> なので XINPUT の割り当てに戻りますが、<code>InputStart1</code> は <code>KEY_1</code>（NONE ではない）なので JOY が無いまま残ります。スタートはキーボードの <code>1</code> だけになります。この台は、一度 XINPUT か DINPUT で START すると直ります。</p>
+      </div>
+      <ul>
+        <li><b>パッドはスロットの番号に固定です。</b>SLOT 3 なら 3 台目のパッド（JOY3）を使うので、パッドが 3 台以上つながっていないと動きません（START の前に注意が出ます）。ini で <code>JOY2</code> などを指定していても、スロットの番号のパッドに置き換わるので、「この台だけ別のパッド」はできません。</li>
+        <li>書き直した値は ini に保存されます。次の START では、それが「今入っている値」になります。</li>
+      </ul>
+
+      <h3>STATE と PLAYER</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>欄</th><th>表示</th><th>意味</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="5"><span class="ctl">STATE</span></td><td>-</td><td>使う行。まだ起動していない</td></tr>
+          <tr><td>(off)</td><td>LINKS の外の行</td></tr>
+          <tr><td class="ok">RUNNING</td><td>起動した</td></tr>
+          <tr><td class="bad">FAILED</td><td>起動できなかった（いちばん下に理由）</td></tr>
+          <tr><td class="bad">EXITED</td><td>起動したあとに終わった</td></tr>
+          <tr><td rowspan="5"><span class="ctl">PLAYER</span></td><td class="ok">名前</td><td>STREAM の台に入っている人（ロビーの記録から 5 秒ごと）</td></tr>
+          <tr><td>(free)</td><td>STREAM の台が空いている</td></tr>
+          <tr><td>(not in lobby yet)</td><td>STREAM の台が、まだロビーに出ていない</td></tr>
+          <tr><td>(local) / (bot)</td><td>LOCAL / BOT の台</td></tr>
+          <tr><td>(in use)</td><td>だれかが入っているが、名前がまだ届いていない</td></tr>
+        </tbody>
+      </table></div>
+      <h3>KICK</h3>
+      <p>STREAM の台に人が入っているときだけ押せます。押すと確かめる窓が出て、「はい」でその人をその台から外します。外れた台は空き（free）に戻り、次の人が入れます。</p>
+    </section>
+
+    <section id="develop">
+      <h2><span class="no">7</span>DEVELOP</h2>
+      <p>調べもの用のログのスイッチです。ふだんは全部オフで構いません。オンにしたログは、START のときに 01〜08 の台に書かれ、ファイルは各台のフォルダにできます。サテライト 09 には、いつも全部オフで書きます。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>項目</th><th>ini のキー</th><th>出るもの</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ctl">AI LOG</span></td><td><code>AIPlayerLog</code></td><td>ボットの判断（<code>ai.txt</code>、<code>steer.txt</code>、<code>enemyact.txt</code> など）</td></tr>
+          <tr><td><span class="ctl">SCENARIO LOG</span></td><td><code>ScenarioLog</code></td><td>エリアのスクリプトの動き</td></tr>
+          <tr><td><span class="ctl">WAYPOINT (01)</span></td><td><code>WaypointRecord</code></td><td>01 の位置の記録（ボットの道を作るため）。01 だけに書きます</td></tr>
+          <tr><td><span class="ctl">GATE LOG</span></td><td><code>GateLog</code></td><td>ゲート・扉・エリアのフラグ（<code>gatelog.txt</code>）</td></tr>
+          <tr><td><span class="ctl">ITEM LOG</span></td><td><code>ItemLog</code></td><td>落ちているアイテム</td></tr>
+          <tr><td><span class="ctl">INPUT LOG</span></td><td><code>InputLog</code></td><td>人の台の入力（1 フレームずつ、<code>inputlog.txt</code>）</td></tr>
+          <tr><td><span class="ctl">SDL INPUT LOG</span></td><td><code>SDLInputLog</code></td><td>パッドから届いた生の入力</td></tr>
+          <tr><td><span class="ctl">ENEMY CREATE</span></td><td><code>TraceEnemyCreate</code></td><td>敵が作られたとき</td></tr>
+          <tr><td><span class="ctl">TASK ARRAY LOG</span></td><td><code>TaskArrayLog</code></td><td>ゲームのタスクの表</td></tr>
+          <tr><td><span class="ctl">STATE TRACE</span></td><td><code>StateTrace</code></td><td>ゲームの状態の変わり目</td></tr>
+          <tr><td><span class="ctl">TEST MODE</span></td><td><code>StageTestMenu</code></td><td>Test ボタンで開発用の STAGE TEST の画面に入れるようにします（ストリーミングの台には効きません）</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><p>ログは長く遊ぶと大きくなります（AI LOG は 1 台で 1 時間に数十 MB）。調べ終わったらオフに戻してください。</p></div>
+    </section>
+
+    <section id="start">
+      <h2><span class="no">8</span>START と STOP</h2>
+      <h3>START が押せる条件</h3>
+      <ul>
+        <li>Discord のメンバーとして確認できている（<a href="#discord">3章</a>）。</li>
+        <li>PonLuncher と supermodel.exe が新しい版である。起動したときにネットで最新の版を確かめ、古ければ START が押せなくなり、ダウンロードのページを開くか聞かれます。</li>
+      </ul>
+      <h3>START を押すと</h3>
+      <ol class="steps">
+        <li><div><b>確かめる：</b>HOST NAME が入っているか、各台の <code>supermodel.exe</code> と <code>Config\Supermodel.ini</code> があるか、<code>Roms\spikeofe.zip</code> があるか、このフォルダの Supermodel がもう動いていないか。サテライトを使うなら <code>09</code> の中身も。足りないものがあれば一覧が出て、何も始めません。</div></li>
+        <li><div><b>パッドの数：</b>LOCAL の台がパッド n を使うのに、つながっているパッドが n 台より少なければ、注意が出ます（「はい」でそのまま始めます）。</div></li>
+        <li><div><b>保存して書く：</b>ランチャーの設定を保存し、各台の ini に、ポート、ホスト名、MODE ごとの設定、ゲームとボットの設定、ログのスイッチを書きます。</div></li>
+        <li><div><b>起動する：</b>サテライト 09 を先に起動し、そのあと SLOT 1 から順に 0.2 秒おきに起動します。</div></li>
+        <li><div><b>表示：</b>いちばん下に <code>Running 4 links + satellite as "名前" (public).</code> のように出ます。</div></li>
+      </ol>
+      <h3>動いているあいだ</h3>
+      <ul>
+        <li>HOST・SLOTS・DEVELOP の設定は変えられません（STOP すると戻ります）。</li>
+        <li>全部の台が終わったら、自動で STOP の状態に戻ります（<span class="warn">All slots have exited.</span>）。</li>
+      </ul>
+      <h3>STOP</h3>
+      <ol class="steps">
+        <li><div>このランチャーが起動した台だけに「閉じる」を送ります。Supermodel は設定を保存して、ロビーからも抜けます。</div></li>
+        <li><div>8 秒たっても終わらない台は、強制的に終わらせます。</div></li>
+        <li><div>サテライト 09 は、つないだ輪を支えているので、最後に閉じます。</div></li>
+      </ol>
+      <div class="note info"><p>動いているあいだにランチャーのウィンドウを閉じようとすると、「全部止めて終わるか」を聞かれます。「はい」で STOP してから閉じます。</p></div>
+    </section>
+
+    <section id="status">
+      <h2><span class="no">9</span>いちばん下の表示</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>表示</th><th>意味</th></tr></thead>
+        <tbody>
+          <tr><td class="warn">supermodel.exe not found next to PonLuncher.exe …</td><td>フォルダの置き方が違います（<a href="#prepare">1章</a>）。</td></tr>
+          <tr><td class="warn">No NVIDIA driver (NVENC): streaming uses FFMPEG …</td><td>NVIDIA のドライバがないので、ストリーミングは CPU（x264 / x265）で作ります。</td></tr>
+          <tr><td class="warn">This build has no keys …</td><td>ロビーと Discord の確認が入っていない版です。</td></tr>
+          <tr><td class="bad">Update required: …</td><td>PonLuncher か supermodel.exe が古いので、START できません。新しい版に入れ替えてください。</td></tr>
+          <tr><td>Writing settings… / Starting slot 2 of 4…</td><td>START の途中です。</td></tr>
+          <tr><td class="ok">Running 4 links (public).</td><td>全部起動しました。</td></tr>
+          <tr><td class="bad">Slot 3: …</td><td>その台が起動できませんでした（STATE が FAILED）。</td></tr>
+          <tr><td>Stopped.</td><td>STOP が終わりました。</td></tr>
+          <tr><td class="warn">Kicked slot 2.</td><td>KICK を送りました。</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="files">
+      <h2><span class="no">10</span>設定ファイルとポート</h2>
+      <h3>Config\PonLuncher.ini</h3>
+      <p>画面の設定は、START を押したときと、ランチャーを閉じたときに保存され、次に開いたときに戻ります。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>キー</th><th>画面の項目</th></tr></thead>
+        <tbody>
+          <tr><td><code>ServerName</code></td><td>HOST NAME</td></tr>
+          <tr><td><code>Links</code> / <code>Codec</code> / <code>VideoEncoder</code> / <code>ShowConsole</code></td><td>LINKS / CODEC / ENCODER / SHOW CONSOLE</td></tr>
+          <tr><td><code>Mode1</code>〜<code>8</code> / <code>Pad1</code>〜<code>8</code> / <code>BotChar1</code>〜<code>8</code></td><td>各スロットの MODE / PAD / CHAR</td></tr>
+          <tr><td><code>BotRandomContinue</code> / <code>Satellite</code></td><td>RANDOM CHARACTER ON CONTINUE / SATELLITE (09)</td></tr>
+          <tr><td><code>BossHPx1</code> / <code>P1Invincible</code> / <code>TimerStop</code> / <code>AITargetMarker</code> / <code>BotCanOpenGate</code></td><td>ゲームとボットの設定</td></tr>
+          <tr><td><code>AIRoute</code> / <code>AIRoute2</code> / <code>AIRoute3</code></td><td>ROUTE / ROUTE2 / ROUTE3</td></tr>
+          <tr><td><code>Dev_AIPlayerLog</code> など</td><td>DEVELOP の各スイッチ</td></tr>
+        </tbody>
+      </table></div>
+      <h3>台どうしのつなぎ方（この PC の中）</h3>
+      <p>台は輪になってつながります。SLOT n は <code>1970 + n − 1</code> で受けて、次の台へ送ります。最後の台は SLOT 1（1970）へ戻します。サテライトを使うときは、最後の台が 09（<code>1970 + LINKS</code>）へ送り、09 が SLOT 1 へ戻します。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>例：LINKS 4 + サテライト</th><th>受ける</th><th>送る先</th></tr></thead>
+        <tbody>
+          <tr><td>SLOT 1</td><td>1970</td><td>1971</td></tr>
+          <tr><td>SLOT 2</td><td>1971</td><td>1972</td></tr>
+          <tr><td>SLOT 3</td><td>1972</td><td>1973</td></tr>
+          <tr><td>SLOT 4</td><td>1973</td><td>1974（09）</td></tr>
+          <tr><td>09</td><td>1974</td><td>1970（SLOT 1）</td></tr>
+        </tbody>
+      </table></div>
+      <p>このほか、START のたびに各台へ <code>Network = 1</code>、<code>AddressOut = 127.0.0.1</code>、<code>LinkPlay</code>（台の番号）、<code>VSync = 0</code> を書きます。Discord への空き状況の投稿（<code>DiscordPost</code>）は、いちばん前の STREAM の台だけがします。</p>
+    </section>
+
+    <section id="trouble">
+      <h2><span class="no">11</span>困ったとき</h2>
+      <div class="tbl"><table>
+        <thead><tr><th>こんなとき</th><th>見るところ</th></tr></thead>
+        <tbody>
+          <tr><td>START が押せない</td><td>DISCORD の欄が緑（server member）か。いちばん下に <span class="bad">Update required</span> が出ていないか。</td></tr>
+          <tr><td>「Supermodel is already running」と出る</td><td>このフォルダの Supermodel がまだ動いています。前のものを閉じてから START してください。</td></tr>
+          <tr><td>LOCAL の台でパッドが効かない</td><td>START の前にパッドをつないだか（PADS の数）。SLOT n はパッド n を使います。PAD の種類（XINPUT / DINPUT）がパッドに合っているか。</td></tr>
+          <tr><td>BOT にした行より後ろが変えられない</td><td>決まりです（<a href="#slots">6章</a>）。人の台を前に並べてください。</td></tr>
+          <tr><td>SATELLITE (09) が選べない</td><td><code>09\supermodel.exe</code> と <code>09\Config\Supermodel.ini</code> があるか。</td></tr>
+          <tr><td>ボットがゲートの前で止まっている</td><td>BOT CAN OPEN GATE がオフになっていないか（人がいるときだけ変えられます）。</td></tr>
+          <tr><td>ボットが人と違う道へ行く</td><td>ROUTE / ROUTE2 / ROUTE3 を、人の進む道に合わせます。</td></tr>
+          <tr><td>台が勝手に終わる（EXITED）</td><td>SHOW CONSOLE をオンにして起動し直し、その台の黒い窓に出る内容を見ます。</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note info"><p>部屋のパスワードの機能は、今はオフです。ロビーのホストは、だれでも入れる（public）状態で出ます。</p></div>
+    </section>
+  </main>
+</div>
