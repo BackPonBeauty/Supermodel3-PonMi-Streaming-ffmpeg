@@ -8443,6 +8443,8 @@ void CModel3::SaveState(CBlockFile *SaveState)
   DriveBoard->SaveState(SaveState);
   m_cryptoDevice.SaveState(SaveState);
   m_jtag.SaveState(SaveState);
+  // 11/23 main6: the link (comm RAM, counter, bank) - own block, SimNetBoard.cpp
+  if (NetBoard) NetBoard->SaveState(SaveState);
 
   // 11/14 Spikeout 8 players: data the emulator keeps outside RAM (the task arrays' slots 4-7). Own block, so
   // states without it still load.
@@ -8492,6 +8494,8 @@ void CModel3::LoadState(CBlockFile *SaveState)
   DriveBoard->LoadState(SaveState);
   m_cryptoDevice.LoadState(SaveState);
   m_jtag.LoadState(SaveState);
+  // 11/23 main6: the link (only when the save is of the same link as now; SimNetBoard.cpp)
+  if (NetBoard) NetBoard->LoadState(SaveState);
 
   // 11/14 Spikeout 8 players: the task arrays' slots 4-7 (kept outside RAM) - cleared when the state has none.
   if (g_spikeofe8task)

@@ -845,6 +845,10 @@ static void TestPolygonHeaderBits(IEmulator *Emu)
 static const int STATE_FILE_VERSION = 6; // save state file version
 static const int NVRAM_FILE_VERSION = 0; // NVRAM file version
 static unsigned s_saveSlot = 0;          // save state slot #
+// 11/23 main6: save / load on the same frame on every linked node (Network/SimNetBoard.cpp)
+extern bool g_netStateSyncOn;
+extern int g_netStateReq, g_netStateReqSlot;
+extern int g_netStateDo, g_netStateDoSlot;
 
 static void SaveState(IEmulator *Model3)
 {
@@ -1786,6 +1790,22 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       Model3->RunFrame();
     }
 
+    // 11/23 main6: the link frame of a synced save / load has just ended (set by the net board in RunFrame)
+    if (g_netStateDo)
+    {
+      int action = g_netStateDo;
+      g_netStateDo = 0;
+      s_saveSlot = (unsigned)g_netStateDoSlot % 10;
+      Model3->PauseThreads();
+      SetAudioEnabled(false);
+      if (action == 1)
+        SaveState(Model3);
+      else
+        LoadState(Model3);
+      Model3->ResumeThreads();
+      SetAudioEnabled(true);
+    }
+
 #ifdef SUPERMODEL_DEBUGGER
     bool processUI = true;
     if (Debugger != NULL)
@@ -1943,6 +1963,12 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
         Inputs->GetInputSystem()->SetMouseVisibility(!s_runtime_config["FullScreen"].ValueAs<bool>());
       }
+      else if (Inputs->uiSaveState->Pressed() && g_netStateSyncOn && !paused)
+      {
+        // 11/23 main6: in a link, every node saves on the same frame (SimNetBoard.cpp NetState)
+        g_netStateReq = 1;
+        g_netStateReqSlot = (int)s_saveSlot;
+      }
       else if (Inputs->uiSaveState->Pressed())
       {
         if (!paused)
@@ -1966,6 +1992,12 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         ++s_saveSlot;
         s_saveSlot %= 10; // clamp to [0,9]
         printf("Save slot: %d\n", s_saveSlot);
+      }
+      else if (currentLoadStatePressed && !lastLoadStatePressed && g_netStateSyncOn && !paused)
+      {
+        // 11/23 main6: in a link, every node loads on the same frame (SimNetBoard.cpp NetState)
+        g_netStateReq = 2;
+        g_netStateReqSlot = (int)s_saveSlot;
       }
       else if (currentLoadStatePressed && !lastLoadStatePressed)
       {

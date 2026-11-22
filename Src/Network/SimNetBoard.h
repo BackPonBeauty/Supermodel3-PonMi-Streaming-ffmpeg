@@ -24,6 +24,7 @@
 #define INCLUDED_SIMNETBOARD_H
 
 #include <cstdint>
+#include <cstdio>
 #include "TCPSend.h"
 #include "TCPReceive.h"
 #include "INetBoard.h"
@@ -129,6 +130,33 @@ private:
 	bool CloneReady(void);
 	void CloneChoose(const std::vector<std::vector<char>>& segs, const std::vector<std::vector<char>>* next, int n);
 	void PutInputRecord(void);
+
+	// 11/23 main6 (netlink): ini SatelliteSegDump = 1 -> segdump.bin, every frame the clone takes, to measure how
+	// small the link data gets (raw / delta / compressed) before sending it over the internet. Per frame:
+	// u32 frame, u8 n, then n x (u16 len, len bytes) in the order 08 sent them (segs[i] = node N - i), comm RAM byte order.
+	FILE* m_segDump = nullptr;
+	uint32_t m_segDumpFrame = 0;
+	void SegDump(const SatLinkEvent& e);
+
+	// 11/23 main6: save / load on the same frame on every linked node (spikeofe). A node whose save / load key
+	// was pressed puts "do it at frame T" in its own segment (PPC bytes 0x8F0.., the free tail before the bot
+	// mark 0x8FC); every node sees it in the same ring loop and acts at the end of frame T.
+	bool m_nsReqOn = false;		// our own request, sent every frame until T
+	int m_nsReqAction = 0, m_nsReqSlot = 0;
+	uint16_t m_nsReqTarget = 0;
+	uint8_t m_nsSeq = 0;
+	bool m_nsPlanOn = false;	// what every node will do (the earliest request seen)
+	int m_nsPlanAction = 0, m_nsPlanSlot = 0;
+	uint16_t m_nsPlanTarget = 0;
+	void NetStateBegin(void);
+	void NetStateRead(const std::vector<char>& seg);
+	void NetStateEnd(void);
+	void NetStateOffer(int action, int slot, uint16_t target);
 };
+
+// 11/23 main6 (Main.cpp <-> SimNetBoard, both on the main thread)
+extern bool g_netStateSyncOn;			// the net board is in a running link that syncs save / load
+extern int g_netStateReq, g_netStateReqSlot;	// Main: 1 save / 2 load asked on this node
+extern int g_netStateDo, g_netStateDoSlot;	// net board: do it now, after this frame
 
 #endif

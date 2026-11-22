@@ -46,19 +46,112 @@ CSimNetBoard::~CSimNetBoard(void)
 	m_quit = true;
 	if (m_clone)
 		SatelliteTapStop();
+	if (m_segDump)
+	{
+		fclose(m_segDump);
+		m_segDump = nullptr;
+	}
 
 	if (m_connectThread.joinable())
 		m_connectThread.join();
 }
 
+// 11/23 main6: the link in the save state. Before, nothing of the net board was saved: after a load the game RAM
+// was from the save, but the comm RAM (what the other nodes sent last frame, both banks), the frame counter in it
+// and which bank is which were from before the load - half the time the game read the other bank. Own block, so
+// states without it still load and older exes skip it.
+// On load the link itself is kept as it is (state, number of machines, our index, status1, running): the ring is
+// live and cannot go back to the link test. Only when the save is of the same link (ready, same number of
+// machines, same segment size) do the comm RAM, the counter and the bank come back.
+namespace
+{
+	const char* kNetStateBlock = "SimNetBoard";
+	const uint32_t kNetStateVer = 1;
+}
+
 void CSimNetBoard::SaveState(CBlockFile* SaveState)
 {
-	
+	if (!m_attached)
+		return;
+	SaveState->NewBlock(kNetStateBlock, __FILE__);
+	uint32_t ver = kNetStateVer;
+	uint8_t state = (uint8_t)m_state, running = m_running ? 1 : 0, bank = m_commbank ? 1 : 0;
+	SaveState->Write(&ver, sizeof(ver));
+	SaveState->Write(&state, sizeof(state));
+	SaveState->Write(&running, sizeof(running));
+	SaveState->Write(&m_numMachines, sizeof(m_numMachines));
+	SaveState->Write(&bank, sizeof(bank));
+	SaveState->Write(&m_segmentSize, sizeof(m_segmentSize));
+	SaveState->Write(&m_counter, sizeof(m_counter));
+	SaveState->Write(&m_IRQ2ack, sizeof(m_IRQ2ack));
+	SaveState->Write(&m_status0, sizeof(m_status0));
+	SaveState->Write(&m_status1, sizeof(m_status1));
+	SaveState->Write(RAM, 0x10000);
+	SaveState->Write(Buffer, 0x20000);
 }
 
 void CSimNetBoard::LoadState(CBlockFile* SaveState)
 {
+	if (!m_attached)
+		return;
+	// a synced save / load still to come is dropped (every node loads on the same frame, so all drop it)
+	m_nsReqOn = m_nsPlanOn = false;
+	g_netStateDo = 0;
+	if (Result::OKAY != SaveState->FindBlock(kNetStateBlock))
+	{
+		InfoLog("NetState: this save state has no link data (older exe): the link is left as it is.");
+		return;
+	}
+	uint32_t ver = 0;
+	SaveState->Read(&ver, sizeof(ver));
+	if (ver != kNetStateVer)
+	{
+		InfoLog("NetState: link data version %u, this exe reads %u: the link is left as it is.", ver, kNetStateVer);
+		return;
+	}
+	uint8_t state = 0, running = 0, numMachines = 0, bank = 0;
+	uint16_t segmentSize = 0, counter = 0, irq2ack = 0, status0 = 0, status1 = 0;
+	SaveState->Read(&state, sizeof(state));
+	SaveState->Read(&running, sizeof(running));
+	SaveState->Read(&numMachines, sizeof(numMachines));
+	SaveState->Read(&bank, sizeof(bank));
+	SaveState->Read(&segmentSize, sizeof(segmentSize));
+	SaveState->Read(&counter, sizeof(counter));
+	SaveState->Read(&irq2ack, sizeof(irq2ack));
+	SaveState->Read(&status0, sizeof(status0));
+	SaveState->Read(&status1, sizeof(status1));
 
+	if (m_clone)
+	{
+		InfoLog("NetState: satellite clone: the link comes from the relay, not from the save.");
+		return;
+	}
+	if (m_state != State::ready || (State)state != State::ready || numMachines != m_numMachines || segmentSize != m_segmentSize)
+	{
+		InfoLog("NetState: save: state %u, %u machines, segment 0x%X / now: state %u, %u machines, segment 0x%X - not the same link, left as it is.",
+			state, numMachines, segmentSize, (unsigned)m_state, m_numMachines, m_segmentSize);
+		return;
+	}
+
+	// the comm RAM header (+0x0 master / slave, +0x2 machines, +0x4 our index, +0x8.. buffer offsets) stays ours,
+	// in case the state file came from another node's folder; +0x6 is the frame counter and comes from the save
+	uint8_t head[2][0x10];
+	memcpy(head[0], Buffer, 0x10);
+	memcpy(head[1], Buffer + 0x10000, 0x10);
+	SaveState->Read(RAM, 0x10000);
+	SaveState->Read(Buffer, 0x20000);
+	for (int b = 0; b < 2; b++)
+	{
+		memcpy(Buffer + b * 0x10000, head[b], 6);
+		memcpy(Buffer + b * 0x10000 + 8, head[b] + 8, 8);
+	}
+	m_counter = counter;
+	m_IRQ2ack = irq2ack;
+	m_status0 = status0;
+	m_commbank = bank != 0;
+	CommRAM = m_commbank ? Buffer + 0x10000 : Buffer;
+	externalCommRAM = m_commbank ? Buffer : Buffer + 0x10000;
+	InfoLog("NetState: link restored: %u machines, counter %u, bank %u.", m_numMachines, m_counter, bank);
 }
 
 Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
@@ -115,6 +208,15 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 		g_satCamLook = m_config["SatelliteCamLook"].ValueAsDefault<float>(0.6f);
 		g_satCamAxis = m_config["SatelliteCamAxis"].ValueAsDefault<int>(1);
 		g_satClone.mirror = m_config["SatelliteMirror"].ValueAsDefault<int>(0);
+		if (m_config["SatelliteSegDump"].ValueAsDefault<int>(0))
+		{
+			m_segDump = fopen("segdump.bin", "wb");
+			if (m_segDump)
+			{
+				setvbuf(m_segDump, nullptr, _IOFBF, 1 << 20);
+				printf("[Satellite] SegDump: segdump.bin\n");
+			}
+		}
 		SatelliteTapStart(port_in, addr_out, port_out);
 		printf("[Satellite] Clone: following %s\n", m_cloneFixed ? "a fixed node" : "the games in the link");
 		return Result::OKAY;
@@ -128,6 +230,7 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 
 void CSimNetBoard::RunFrame(void)
 {
+	g_netStateSyncOn = false;
 	if (!IsRunning())
 		return;
 
@@ -501,7 +604,10 @@ void CSimNetBoard::RunFrame(void)
 		// we only send what we need to; helps cut down on bandwidth
 		// each machine has to receive back its own data (TODO: copy this data manually?)
 		if (m_spikeofe && !m_clone)
+		{
 			PutInputRecord();
+			NetStateBegin();
+		}
 		if (m_clone)
 			CloneReady();
 		else
@@ -519,7 +625,11 @@ void CSimNetBoard::RunFrame(void)
 				break;
 			}
 			memcpy(CommRAM + 0x100 + (i + 1) * m_segmentSize, recv_data.data(), recv_data.size());
+			if (m_spikeofe)
+				NetStateRead(recv_data);
 		}
+		if (m_spikeofe && !m_clone && m_state == State::ready)
+			NetStateEnd();
 
 		// swap CommRAM banks
 		if (m_commbank)
@@ -554,6 +664,8 @@ void CSimNetBoard::Reset(void)
 
 	m_running = false;
 	m_state = State::start;
+	m_nsReqOn = m_nsPlanOn = false;
+	g_netStateSyncOn = false;
 }
 
 bool CSimNetBoard::IsAttached(void)
@@ -880,6 +992,8 @@ bool CSimNetBoard::CloneReady(void)
 		m_status1 = 0x40;
 		return false;
 	}
+	if (m_segDump)
+		SegDump(cur);
 	if (!CloneWait(m_cloneNext))
 		return false;
 	m_cloneHaveNext = true;
@@ -926,6 +1040,130 @@ bool CSimNetBoard::CloneReady(void)
 		}
 	}
 	return true;
+}
+
+// 11/23 main6 (netlink): one frame of link data as the clone got it (see SimNetBoard.h).
+void CSimNetBoard::SegDump(const SatLinkEvent& e)
+{
+	uint32_t f = m_segDumpFrame++;
+	uint8_t n = (uint8_t)e.segs.size();
+	fwrite(&f, 4, 1, m_segDump);
+	fwrite(&n, 1, 1, m_segDump);
+	for (const auto& s : e.segs)
+	{
+		uint16_t len = (uint16_t)s.size();
+		fwrite(&len, 2, 1, m_segDump);
+		if (len)
+			fwrite(s.data(), 1, len, m_segDump);
+	}
+	if ((f % 600) == 0)
+		fflush(m_segDump);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// 11/23 main6: save / load on the same frame on every linked node
+// ---------------------------------------------------------------------------------------------------------
+// Before, each node saved / loaded when its own process saw the key (all nodes on one XInput button), so the
+// states could be a frame apart (seen 11/23: node 1 at link frame 5350, nodes 2-8 at 5351) and the ring went on
+// with one node a frame out of step.
+// Record in our own segment, PPC bytes 0x8F0-0x8F7 (free: the input record is 0x8E0-0x8EF, the bot mark 0x8FC):
+// +0 magic 0x5A, +1 action (1 save, 2 load), +2 slot, +3 request number, +4 target frame, +6 our frame (u16, big).
+// All nodes see all records in the same ring loop; the earliest target wins (then save before load).
+
+bool g_netStateSyncOn = false;
+int g_netStateReq = 0, g_netStateReqSlot = 0;
+int g_netStateDo = 0, g_netStateDoSlot = 0;
+
+namespace
+{
+	const unsigned kNsOffset = 0x8F0;
+	const uint8_t kNsMagic = 0x5A;
+	const int kNsLead = 6;		// frames from the key to the save / load (~0.1 s)
+}
+
+void CSimNetBoard::NetStateOffer(int action, int slot, uint16_t target)
+{
+	if ((int16_t)(target - m_counter) < 0)
+		return;		// already gone by
+	if (!m_nsPlanOn || (int16_t)(target - m_nsPlanTarget) < 0 || (target == m_nsPlanTarget && action < m_nsPlanAction))
+	{
+		bool changed = !m_nsPlanOn || target != m_nsPlanTarget || action != m_nsPlanAction || slot != m_nsPlanSlot;
+		m_nsPlanOn = true;
+		m_nsPlanAction = action;
+		m_nsPlanSlot = slot;
+		m_nsPlanTarget = target;
+		if (changed)
+			InfoLog("NetState: %s slot %d at link frame %u (now %u).", action == 1 ? "save" : "load", slot, target, m_counter);
+	}
+}
+
+void CSimNetBoard::NetStateBegin(void)
+{
+	g_netStateSyncOn = true;
+	if (g_netStateReq)
+	{
+		if (!m_nsPlanOn && !m_nsReqOn)
+		{
+			m_nsReqOn = true;
+			m_nsReqAction = g_netStateReq;
+			m_nsReqSlot = g_netStateReqSlot;
+			m_nsReqTarget = (uint16_t)(m_counter + kNsLead);
+			m_nsSeq++;
+		}
+		else
+			InfoLog("NetState: key ignored, a %s is already coming.", m_nsPlanAction == 1 ? "save" : "load");
+		g_netStateReq = 0;
+	}
+	uint8_t* seg = CommRAM + 0x100;
+	auto put = [&](unsigned b, uint8_t v) { seg[(kNsOffset + b) ^ 2] = v; };
+	if (m_nsReqOn)
+	{
+		put(0, kNsMagic);
+		put(1, (uint8_t)m_nsReqAction);
+		put(2, (uint8_t)m_nsReqSlot);
+		put(3, m_nsSeq);
+		put(4, (uint8_t)(m_nsReqTarget >> 8));
+		put(5, (uint8_t)m_nsReqTarget);
+		put(6, (uint8_t)(m_counter >> 8));
+		put(7, (uint8_t)m_counter);
+		NetStateOffer(m_nsReqAction, m_nsReqSlot, m_nsReqTarget);
+	}
+	else
+		for (unsigned b = 0; b < 8; b++)
+			put(b, 0);
+}
+
+void CSimNetBoard::NetStateRead(const std::vector<char>& s)
+{
+	if (s.size() < kNsOffset + 8)
+		return;
+	auto at = [&](unsigned b) { return (uint8_t)s[(kNsOffset + b) ^ 2]; };
+	if (at(0) != kNsMagic)
+		return;
+	int action = at(1);
+	if (action != 1 && action != 2)
+		return;
+	uint16_t target = (uint16_t)((at(4) << 8) | at(5));
+	uint16_t theirs = (uint16_t)((at(6) << 8) | at(7));
+	// their frame numbers -> ours (the same if the link is in step, as it should be)
+	NetStateOffer(action, at(2), (uint16_t)(m_counter + (int16_t)(target - theirs)));
+}
+
+void CSimNetBoard::NetStateEnd(void)
+{
+	if (!m_nsPlanOn)
+		return;
+	int16_t left = (int16_t)(m_nsPlanTarget - m_counter);
+	if (left > 0)
+		return;
+	if (left == 0)
+	{
+		g_netStateDo = m_nsPlanAction;
+		g_netStateDoSlot = m_nsPlanSlot;
+		InfoLog("NetState: %s slot %d now, link frame %u.", m_nsPlanAction == 1 ? "save" : "load", m_nsPlanSlot, m_counter);
+	}
+	m_nsPlanOn = false;
+	m_nsReqOn = false;
 }
 
 // Every linked spikeofe cabinet: what our game read from the inputs this frame, into our own segment.
