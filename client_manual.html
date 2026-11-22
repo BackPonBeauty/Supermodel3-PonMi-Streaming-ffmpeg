@@ -1,0 +1,223 @@
+<title>クライアントの接続</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: a manual beside the launcher it explains - a window diagram with numbered callouts, then one section per panel. */
+:root {
+  --bg: #eef3f6; --panel: #ffffff; --fg: #142029; --muted: #566676; --line: #cfd9e0; --soft: #e3ebf0;
+  --accent: #0a8fa0; --accent-ink: #ffffff; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #1d8a4a; --warn: #a86a00; --bad: #c0392b;
+  --ui: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr) } nav.toc { position: static !important } }
+header.top { grid-column: 1 / -1; display: grid; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 18px }
+h1 { font-family: var(--mono); font-size: clamp(22px, 4vw, 30px); margin: 0; letter-spacing: .02em; text-wrap: balance }
+h1 .slash { color: var(--accent) }
+.lead { margin: 0; color: var(--muted); max-width: 70ch }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted) }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; font-size: 13.5px }
+nav.toc p { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--muted) }
+nav.toc ol { margin: 0; padding-left: 1.4em; display: grid; gap: 2px }
+nav.toc a { color: var(--fg); text-decoration: none }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); text-decoration: underline }
+main { min-width: 0; display: grid; gap: 40px }
+section { min-width: 0; scroll-margin-top: 16px }
+h2 { font-size: 21px; margin: 0 0 12px; display: flex; gap: 10px; align-items: baseline; text-wrap: balance }
+h2 .no { font-family: var(--mono); font-size: 13px; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 1px 7px; flex: none }
+h3 { font-size: 16.5px; margin: 22px 0 8px }
+p, li { max-width: 72ch }
+ul, ol { padding-left: 1.4em; margin: 8px 0 }
+li + li { margin-top: 4px }
+code, .k { font-family: var(--mono); font-size: .88em; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap }
+.ctl { font-family: var(--mono); font-weight: 600; font-size: .9em; letter-spacing: .02em; color: var(--accent); white-space: nowrap }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin: 10px 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line) }
+tr:last-child td { border-bottom: 0 }
+th { font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 600; background: var(--soft) }
+td:first-child { white-space: nowrap }
+.note { border-left: 3px solid var(--warn); background: var(--panel); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0 }
+.note.info { border-left-color: var(--accent) }
+.note p { margin: 0 }
+.ok { color: var(--ok) } .warn { color: var(--warn) } .bad { color: var(--bad) }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px }
+.steps > li { counter-increment: s; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; max-width: none }
+.steps > li::before { content: counter(s); font-family: var(--mono); font-weight: 700; color: var(--accent-ink); background: var(--accent); border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; font-size: 13px; margin-top: 2px }
+
+/* the launcher window, redrawn */
+.shot { overflow-x: auto; border-radius: 10px; border: 1px solid var(--line) }
+.win { min-width: 640px; background: var(--win); color: var(--win-fg); font-family: var(--mono); font-size: 12px; padding: 14px 16px 18px; display: grid; gap: 10px }
+.win .ttl { color: var(--win-cyan); font-weight: 700; font-size: 14px; letter-spacing: .03em }
+.wp { border: 1px solid rgba(0, 238, 255, .55); border-radius: 3px; padding: 14px 12px 10px; position: relative }
+.wp > .pt { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); background: var(--win); color: var(--win-cyan); padding: 0 8px; font-size: 11px; font-weight: 700 }
+.row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
+.dim { color: var(--win-dim) }
+.fld { border: 1px solid #2b3b4c; background: #0a1423; padding: 1px 6px; min-width: 60px; display: inline-block }
+.chk::before { content: "☐ "; color: var(--win-dim) } .chk.on::before { content: "☑ "; color: #4f9dff }
+.btn { border: 1px solid var(--win-cyan); color: var(--win-cyan); padding: 2px 10px; display: inline-block }
+.btn.go { border-color: #50e678; color: #50e678 } .btn.stop { border-color: #7a3030; color: #7a3030 } .btn.kick { border-color: #4a2a2a; color: #6a3b3b }
+.g { color: #50e678 }
+.mk { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #ffbe3c; color: #1a1200; font-size: 10.5px; font-weight: 700; margin-right: 4px; vertical-align: 1px }
+.slots { display: grid; grid-template-columns: 56px 100px 100px 90px 1fr 60px; gap: 6px 8px; align-items: center }
+.legend { font-size: 13px; color: var(--muted); margin: 8px 0 0 }
+a { color: var(--accent) }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+</style>
+<div class="wrap">
+<header class="top">
+  <h1>CLIENT <span class="slash">//</span> クライアントの接続のしかた</h1>
+  <p class="lead">ほかの人が立てたホストに入って、Spikeout Final Edition のリンク対戦に参加する手順です。ゲームはホストの PC で動いていて、あなたの PC には画面と音が届き、あなたのパッドの入力がホストに送られます。</p>
+  <div class="meta"><span>build 20261122</span><span>Windows 10 / 11 64bit</span></div>
+</header>
+
+<nav class="toc" aria-label="目次">
+  <p>CONTENTS</p>
+  <ol>
+    <li><a href="#need">用意するもの</a></li>
+    <li><a href="#files">ファイルを置く</a></li>
+    <li><a href="#lobby">ロビーを開く</a></li>
+    <li><a href="#login">Discord にログイン</a></li>
+    <li><a href="#pad">パッドを選ぶ</a></li>
+    <li><a href="#join">ホストに入る</a></li>
+    <li><a href="#play">遊んでいる間</a></li>
+    <li><a href="#direct">直接つなぐ（同じ家の中）</a></li>
+    <li><a href="#trouble">困ったとき</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="need">
+  <h2><span class="no">1</span>用意するもの</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>もの</th><th>目安</th></tr></thead>
+    <tbody>
+      <tr><td>PC</td><td>Windows 10 / 11（64bit）。映像は CPU で再生するので、GPU はどれでも大丈夫です</td></tr>
+      <tr><td>パッド</td><td>Xbox 系（XInput）のパッドがおすすめ。キーボードはレバー（W / A / S / D）だけで、ボタンは押せません</td></tr>
+      <tr><td>Discord</td><td>指定の Discord サーバーのメンバーであること（<a href="https://discord.com/invite/zpKBFDA52f">招待リンク</a>）。インターネット越しにつなぐときに必要です</td></tr>
+      <tr><td>ROM</td><td>自分で持っている Spikeout Final Edition の ROM。ロビーは、このゲームを選んだときに開きます</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="files">
+  <h2><span class="no">2</span>ファイルを置く</h2>
+  <ol class="steps">
+    <li><div>リリースの zip（<a href="https://github.com/BackPonBeauty/Supermodel3-PonMi-Streaming-ffmpeg/releases">GitHub の Releases</a>）を展開します。クライアントに要るのは <code>PonMi\00\</code> と <code>PonMi\Roms\</code> だけです。</div></li>
+    <li><div>ROM のファイル（<code>spikeofe.zip</code> など）を <code>PonMi\Roms\</code> に入れます。</div></li>
+    <li><div>パッドを PC につないでおきます。</div></li>
+  </ol>
+  <div class="note info"><p>ホストと同じ版（build）でないとつながりません。古いと、ロビーの上に赤い文字で知らせが出ます。<span class="ctl">DOWNLOAD PAGE</span> から新しい版を入れてください。</p></div>
+</section>
+
+<section id="lobby">
+  <h2><span class="no">3</span>ロビーを開く</h2>
+  <ol class="steps">
+    <li><div><code>PonMi\00\supermodel.exe</code> を起動します。SmartScreen の警告が出たら「詳細情報 → 実行」を押してください。</div></li>
+    <li><div>設定の画面で <b>Spikeout Final Edition</b> を選び、<span class="ctl">LAUNCH</span> を押します。</div></li>
+    <li><div>「SPIKEOUT FINAL EDITION - STREAMING LOBBY」の画面が開きます。</div></li>
+  </ol>
+</section>
+
+<section id="login">
+  <h2><span class="no">4</span>Discord にログイン</h2>
+  <ol class="steps">
+    <li><div>ロビーの上の <span class="ctl">Discord</span> の行で <span class="ctl">LOGIN</span> を押します。ブラウザで Discord のログイン画面が開くので、許可します。</div></li>
+    <li><div>ロビーに戻ると、名前が緑色で出ます。次からはログインしたままです（やめるときは <span class="ctl">LOGOUT</span>）。</div></li>
+  </ol>
+  <div class="note info"><p>Discord のトークンはホストには送られません。小さなサーバーがメンバーかどうかを確かめて、そのホストとスロットだけに使える、1 回きりの「入場券」を渡します。</p></div>
+</section>
+
+<section id="pad">
+  <h2><span class="no">5</span>パッドを選ぶ</h2>
+  <p><span class="ctl">Pad</span> の欄で、使うパッドを選びます。選んだものはすぐ保存され、次からも使います。</p>
+  <p>ボタンの割り当てはホストが決めていて、Xbox 系のパッドではこうなります。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>パッド</th><th>ゲーム</th></tr></thead>
+    <tbody>
+      <tr><td>左スティック／十字キー</td><td>レバー</td></tr>
+      <tr><td>A</td><td>Shift</td></tr>
+      <tr><td>X</td><td>Beat</td></tr>
+      <tr><td>Y</td><td>Charge</td></tr>
+      <tr><td>RB</td><td>Jump</td></tr>
+      <tr><td>START</td><td>スタート（キャラ選択・途中参加・コンティニュー）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p>アーケードスティックなどの DirectInput のパッドは、ボタンの番号の並びがちがうので、思ったボタンにならないことがあります。Xbox 系のパッドを使うのが確実です。</p></div>
+</section>
+
+<section id="join">
+  <h2><span class="no">6</span>ホストに入る</h2>
+  <ol class="steps">
+    <li><div><span class="ctl">Hosts</span> に、いま立っているホストが並びます（出てこないときは <span class="ctl">REFRESH</span>）。ゲームが進んでいるホストには「GAME A：STAGE・エリア・人数」が出ます。</div></li>
+    <li><div>スロットの欄の <b class="ok">緑のスロット（空き）</b>を押します。使用中のスロットには、マウスを乗せると遊んでいる人の名前が出ます。</div></li>
+    <li><div>つながると、ゲームの画面が出ます。<b>START</b> でゲームに入ります。もうゲームが進んでいるときは、途中参加で <b>GAME A</b> に入ります。</div></li>
+  </ol>
+</section>
+
+<section id="play">
+  <h2><span class="no">7</span>遊んでいる間</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>キー</th><th>はたらき</th></tr></thead>
+    <tbody>
+      <tr><td><span class="k">F11</span></td><td>全画面にする／戻す</td></tr>
+      <tr><td><span class="k">F3</span></td><td>遅延などの情報を、左上に出す／消す</td></tr>
+      <tr><td><span class="k">↑</span> / <span class="k">↓</span></td><td>映像のビットレートを上げる／下げる（カクつくときは下げる）</td></tr>
+      <tr><td><span class="k">ESC</span></td><td>全画面 → ウィンドウ → 切断してロビーへ</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>ウィンドウの大きさは自由に変えられます（画面の縦横の比はそのままです）。</li>
+    <li><b>3 分間入力がないと自動で切断</b>されます（最後の 30 秒は警告が出ます）。</li>
+    <li>切断すると、あなたのキャラはその場で立ち止まります。同じスロットに入り直せば、続きから操作できます（ほかの人が先に入ることもあります）。</li>
+    <li>1 つの Discord アカウントで入れるのは、そのホストのスロット 1 つだけです。クライアントは 1 台の PC で 1 つだけ開けます。</li>
+    <li>ホストに外されたときは、「You were removed from the slot by the host.」と出ます。</li>
+  </ul>
+</section>
+
+<section id="direct">
+  <h2><span class="no">8</span>直接つなぐ（同じ PC・同じ家の中）</h2>
+  <p>ホストが同じ PC か、同じ家のネットワークにあるときは、Discord にログインしなくても、ロビーの下の <span class="ctl">Connect directly</span> でつなげます。</p>
+  <ol class="steps">
+    <li><div><span class="ctl">Host IP</span> にホストの PC の IP アドレス（同じ PC なら <code>127.0.0.1</code>）を入れます。</div></li>
+    <li><div><span class="ctl">Slot</span> でスロットの番号を選び、<span class="ctl">Your name</span> に名前を入れて、<span class="ctl">CONNECT</span> を押します。</div></li>
+  </ol>
+  <p><span class="ctl">SKIP (PLAY LOCALLY)</span> を押すと、つながずにこの PC だけで遊べます。</p>
+</section>
+
+<section id="trouble">
+  <h2><span class="no">9</span>困ったとき</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>出たメッセージ・様子</th><th>どうすればいいか</th></tr></thead>
+    <tbody>
+      <tr><td>This Supermodel is too old / different version</td><td>ホストと版がちがいます。<span class="ctl">DOWNLOAD PAGE</span> から新しい版を入れてください</td></tr>
+      <tr><td>please log in to Discord</td><td>ロビーの上で Discord にログインしてください</td></tr>
+      <tr><td>not a member of the Discord server</td><td>指定の Discord サーバーに参加してから、もう一度</td></tr>
+      <tr><td>Discord login has expired</td><td><span class="ctl">LOGOUT</span> してから <span class="ctl">LOGIN</span> し直してください</td></tr>
+      <tr><td>That slot is in use</td><td>ほかの人が先に入りました。別のスロットを選んでください</td></tr>
+      <tr><td>already connected to another slot</td><td>同じアカウントで、ほかのスロットに入っています。そちらを切断してから</td></tr>
+      <tr><td>entry-ticket server could not check</td><td>入場券のサーバーが一時的に使えません。少し待ってから、もう一度</td></tr>
+      <tr><td>Hosts が空</td><td>いま立っているホストがありません。<span class="ctl">REFRESH</span> を押すか、Discord のチャンネルで様子を見てください</td></tr>
+      <tr><td>つながらない（何も出ない）</td><td>ホスト側のルーターやファイアウォールの設定かもしれません。ホストの人に伝えてください</td></tr>
+      <tr><td>ボタンが効かない・ちがう</td><td>ロビーの <span class="ctl">Pad</span> で正しいパッドを選んでいるか。Xbox 系のパッドか（<a href="#pad">5</a>）。ウィンドウが前に出ているか（キーボードは前に出ているときだけ）</td></tr>
+      <tr><td>映像がカクカクする</td><td><span class="k">↓</span> でビットレートを下げる。<span class="k">F3</span> で遅延を見る</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>

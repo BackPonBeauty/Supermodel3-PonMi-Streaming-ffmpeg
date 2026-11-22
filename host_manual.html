@@ -1,0 +1,240 @@
+<title>ホストの立て方</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: a manual beside the launcher it explains - a window diagram with numbered callouts, then one section per panel. */
+:root {
+  --bg: #eef3f6; --panel: #ffffff; --fg: #142029; --muted: #566676; --line: #cfd9e0; --soft: #e3ebf0;
+  --accent: #0a8fa0; --accent-ink: #ffffff; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #1d8a4a; --warn: #a86a00; --bad: #c0392b;
+  --ui: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0b1218; --panel: #111b23; --fg: #dde8ef; --muted: #8fa1b1; --line: #24323d; --soft: #182530;
+  --accent: #2cc6d6; --accent-ink: #061015; --win: #050a14; --win-fg: #c8dceb; --win-dim: #6e8296; --win-cyan: #00eeff;
+  --ok: #4cc47e; --warn: #e0a640; --bad: #ef6a5c; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr) } nav.toc { position: static !important } }
+header.top { grid-column: 1 / -1; display: grid; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 18px }
+h1 { font-family: var(--mono); font-size: clamp(22px, 4vw, 30px); margin: 0; letter-spacing: .02em; text-wrap: balance }
+h1 .slash { color: var(--accent) }
+.lead { margin: 0; color: var(--muted); max-width: 70ch }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted) }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; font-size: 13.5px }
+nav.toc p { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--muted) }
+nav.toc ol { margin: 0; padding-left: 1.4em; display: grid; gap: 2px }
+nav.toc a { color: var(--fg); text-decoration: none }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); text-decoration: underline }
+main { min-width: 0; display: grid; gap: 40px }
+section { min-width: 0; scroll-margin-top: 16px }
+h2 { font-size: 21px; margin: 0 0 12px; display: flex; gap: 10px; align-items: baseline; text-wrap: balance }
+h2 .no { font-family: var(--mono); font-size: 13px; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 1px 7px; flex: none }
+h3 { font-size: 16.5px; margin: 22px 0 8px }
+p, li { max-width: 72ch }
+ul, ol { padding-left: 1.4em; margin: 8px 0 }
+li + li { margin-top: 4px }
+code, .k { font-family: var(--mono); font-size: .88em; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap }
+.ctl { font-family: var(--mono); font-weight: 600; font-size: .9em; letter-spacing: .02em; color: var(--accent); white-space: nowrap }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin: 10px 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line) }
+tr:last-child td { border-bottom: 0 }
+th { font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 600; background: var(--soft) }
+td:first-child { white-space: nowrap }
+.note { border-left: 3px solid var(--warn); background: var(--panel); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0 }
+.note.info { border-left-color: var(--accent) }
+.note p { margin: 0 }
+.ok { color: var(--ok) } .warn { color: var(--warn) } .bad { color: var(--bad) }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px }
+.steps > li { counter-increment: s; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; max-width: none }
+.steps > li::before { content: counter(s); font-family: var(--mono); font-weight: 700; color: var(--accent-ink); background: var(--accent); border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; font-size: 13px; margin-top: 2px }
+
+/* the launcher window, redrawn */
+.shot { overflow-x: auto; border-radius: 10px; border: 1px solid var(--line) }
+.win { min-width: 640px; background: var(--win); color: var(--win-fg); font-family: var(--mono); font-size: 12px; padding: 14px 16px 18px; display: grid; gap: 10px }
+.win .ttl { color: var(--win-cyan); font-weight: 700; font-size: 14px; letter-spacing: .03em }
+.wp { border: 1px solid rgba(0, 238, 255, .55); border-radius: 3px; padding: 14px 12px 10px; position: relative }
+.wp > .pt { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); background: var(--win); color: var(--win-cyan); padding: 0 8px; font-size: 11px; font-weight: 700 }
+.row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
+.dim { color: var(--win-dim) }
+.fld { border: 1px solid #2b3b4c; background: #0a1423; padding: 1px 6px; min-width: 60px; display: inline-block }
+.chk::before { content: "☐ "; color: var(--win-dim) } .chk.on::before { content: "☑ "; color: #4f9dff }
+.btn { border: 1px solid var(--win-cyan); color: var(--win-cyan); padding: 2px 10px; display: inline-block }
+.btn.go { border-color: #50e678; color: #50e678 } .btn.stop { border-color: #7a3030; color: #7a3030 } .btn.kick { border-color: #4a2a2a; color: #6a3b3b }
+.g { color: #50e678 }
+.mk { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #ffbe3c; color: #1a1200; font-size: 10.5px; font-weight: 700; margin-right: 4px; vertical-align: 1px }
+.slots { display: grid; grid-template-columns: 56px 100px 100px 90px 1fr 60px; gap: 6px 8px; align-items: center }
+.legend { font-size: 13px; color: var(--muted); margin: 8px 0 0 }
+a { color: var(--accent) }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+</style>
+<div class="wrap">
+<header class="top">
+  <h1>HOST <span class="slash">//</span> ホストの立て方</h1>
+  <p class="lead">Supermodel3-PonMi で、Spikeout Final Edition のリンク対戦（2〜8 人）を立てて、インターネットの向こうの人に遊んでもらうまでの手順です。ホストの PC がゲームを動かし、遠くの人には画面と音を配信します。</p>
+  <div class="meta"><span>build 20261122</span><span>PonLuncher 2.0.0</span><span>Windows 10 / 11 64bit</span></div>
+</header>
+
+<nav class="toc" aria-label="目次">
+  <p>CONTENTS</p>
+  <ol>
+    <li><a href="#need">用意するもの</a></li>
+    <li><a href="#files">ファイルを置く</a></li>
+    <li><a href="#net">ネットワークの準備</a></li>
+    <li><a href="#login">Discord にログイン</a></li>
+    <li><a href="#setup">ホストの設定</a></li>
+    <li><a href="#slots">スロットを決める</a></li>
+    <li><a href="#start">START と遊んでいる間</a></li>
+    <li><a href="#stop">終わるとき</a></li>
+    <li><a href="#trouble">困ったとき</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="need">
+  <h2><span class="no">1</span>用意するもの</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>もの</th><th>目安</th></tr></thead>
+    <tbody>
+      <tr><td>PC</td><td>Windows 10 / 11（64bit）。CPU は Core i7 / Ryzen 7 クラス以上（1コアの速さが大事です）</td></tr>
+      <tr><td>GPU</td><td>NVIDIA がおすすめ（NVENC で配信。ドライバーだけで動き、CUDA Toolkit はいりません）。ほかの GPU でも、CPU で配信できます</td></tr>
+      <tr><td>回線</td><td>上り 20 Mbps 以上がおすすめ。遊ぶ人が増えるほど多く使います</td></tr>
+      <tr><td>ルーター</td><td>UPnP が有効なもの（無いときは、ポートを手で開けます → <a href="#net">3</a>）</td></tr>
+      <tr><td>Discord</td><td>指定の Discord サーバーのメンバーであること（<a href="https://discord.com/invite/zpKBFDA52f">招待リンク</a>）</td></tr>
+      <tr><td>ROM</td><td>自分で持っている Spikeout Final Edition の ROM（<code>spikeofe.zip</code> など）。配布物には入っていません</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note info"><p>試した環境：Core i7-13700F / RTX 4070 Super で 8 人。RTX 3060 の PC でも、640×360 で 8 人を配信できました。</p></div>
+</section>
+
+<section id="files">
+  <h2><span class="no">2</span>ファイルを置く</h2>
+  <ol class="steps">
+    <li><div>リリースの zip（<a href="https://github.com/BackPonBeauty/Supermodel3-PonMi-Streaming-ffmpeg/releases">GitHub の Releases</a>）を、好きな場所に展開します。中に <code>PonMi</code> フォルダがあります。</div></li>
+    <li><div>ROM のファイルを <code>PonMi\Roms\</code> に入れます。</div></li>
+    <li><div>中身はこうなっています。台ごとにフォルダが分かれていて、それぞれに <code>supermodel.exe</code> と <code>Config\Supermodel.ini</code> があります。</div></li>
+  </ol>
+<pre style="font-family:var(--mono);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:10px 0">PonMi/
+├── PonLuncher.exe      ← ここから始めます
+├── Config/PonLuncher.ini
+├── Roms/               ← ROM を入れる
+├── 00/                 ← 1人用・クライアント用
+├── 01/ … 08/           ← スロット 1〜8
+└── 09/                 ← サテライト（観戦用の画面）</pre>
+  <div class="note"><p>ini は PonLuncher が START のたびに書き直します。手で書き換えるのは、Supermodel を止めているときだけにしてください。</p></div>
+</section>
+
+<section id="net">
+  <h2><span class="no">3</span>ネットワークの準備</h2>
+  <h3>Windows ファイアウォール</h3>
+  <p>はじめて START したとき、Windows が <code>supermodel.exe</code> の通信を許可するか聞いてきます。<b>プライベートとパブリックの両方</b>にチェックを入れて許可してください。聞かれなかったときは、「Windows Defender ファイアウォール → アプリを許可」で、01〜08 の <code>supermodel.exe</code> を許可します。</p>
+  <h3>ルーターのポート（UDP）</h3>
+  <p>ルーターの UPnP が有効なら、STREAM のスロットが起動したときに、自動でポートを開けます。UPnP が使えないときは、ルーターの設定で次の UDP ポートを、ホストの PC の IP アドレスに転送してください。スロット n は <code>55000 + (n − 1) × 4</code> から 4 つ使います。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>スロット</th><th>入力</th><th>セッション</th><th>映像</th><th>音</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>55000</td><td>55001</td><td>55002</td><td>55003</td></tr>
+      <tr><td>2</td><td>55004</td><td>55005</td><td>55006</td><td>55007</td></tr>
+      <tr><td>3</td><td>55008</td><td>55009</td><td>55010</td><td>55011</td></tr>
+      <tr><td>4</td><td>55012</td><td>55013</td><td>55014</td><td>55015</td></tr>
+      <tr><td>5</td><td>55016</td><td>55017</td><td>55018</td><td>55019</td></tr>
+      <tr><td>6</td><td>55020</td><td>55021</td><td>55022</td><td>55023</td></tr>
+      <tr><td>7</td><td>55024</td><td>55025</td><td>55026</td><td>55027</td></tr>
+      <tr><td>8</td><td>55028</td><td>55029</td><td>55030</td><td>55031</td></tr>
+    </tbody>
+  </table></div>
+  <p>まとめて開けるなら <code>55000-55031</code>（UDP）です。STREAM にしたスロットの分だけ開いていれば足ります。</p>
+</section>
+
+<section id="login">
+  <h2><span class="no">4</span>Discord にログイン</h2>
+  <ol class="steps">
+    <li><div><code>PonMi\PonLuncher.exe</code> を起動します。SmartScreen の警告が出たら「詳細情報 → 実行」を押してください（コード署名がないためです）。</div></li>
+    <li><div><span class="ctl">DISCORD</span> の <span class="ctl">LOGIN</span> を押すと、ブラウザで Discord のログイン画面が開きます。許可すると PonLuncher に戻ります。</div></li>
+    <li><div>「server member」と出れば OK です。メンバーでないときや、PonLuncher・supermodel.exe が古いときは、<span class="ctl">START</span> が押せません（古いときは新しい版をダウンロードしてください）。</div></li>
+  </ol>
+  <div class="note info"><p>PonLuncher は 1 台の PC で 1 つだけ起動できます。2 つ目を開くと、もう開いている方が前に出ます。</p></div>
+</section>
+
+<section id="setup">
+  <h2><span class="no">5</span>ホストの設定（HOST）</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>項目</th><th>意味</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ctl">HOST NAME</span></td><td>ロビーに出るホストの名前</td></tr>
+      <tr><td><span class="ctl">GAME</span></td><td><code>spikeofe</code></td></tr>
+      <tr><td><span class="ctl">LINKS</span></td><td>リンクの台数（2〜8）。下に並ぶスロットの数になります</td></tr>
+      <tr><td><span class="ctl">CODEC</span></td><td>H264（ふつうはこちら。どの PC でも軽い）／ H265（同じ画質で少ないデータ。クライアントの CPU が少し重くなります）</td></tr>
+      <tr><td><span class="ctl">ENCODER</span></td><td>AUTO（NVIDIA なら NVENC、ほかは FFmpeg）／ NVENC ／ FFMPEG（CPU）</td></tr>
+      <tr><td><span class="ctl">BOT CHAR</span> ほか</td><td>ボットのキャラ、ルート、ボスの体力など。くわしくは <a href="https://claude.ai/artifact/8YHMvMmiThNc6SDyanWvyu">PonLuncher 説明書</a></td></tr>
+      <tr><td><span class="ctl">SATELLITE (09)</span></td><td>ホストの PC に、遊んでいる人を順に映す観戦用の画面（09）も出します。配信はしません</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p>8 人ぶんを同時に配信すると、ホストの PC にかなり負担がかかります。台数が多いときは、各台の解像度を 960×540 か 640×360 に下げるのがおすすめです。</p></div>
+</section>
+
+<section id="slots">
+  <h2><span class="no">6</span>スロットを決める（SLOTS）</h2>
+  <p>スロットごとに、だれが操作するかを選びます。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>モード</th><th>だれが遊ぶか</th><th>ポイント</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ctl">STREAM</span></td><td>インターネットの向こうの人</td><td>ロビーに「空き」として出ます。画面と音を配信し、相手のパッドの入力を受けます。ホストの PC のパッドやキーボードでは動きません</td></tr>
+      <tr><td><span class="ctl">LOCAL</span></td><td>ホストの PC でパッドを使う人</td><td>PAD で XINPUT（Xbox 系）／ DINPUT（アーケードスティックなど）／ DEFAULT（ini のまま）を選びます。スロット n は n 番目のパッドを使います</td></tr>
+      <tr><td><span class="ctl">BOT</span></td><td>ボット</td><td>人が足りない台をボットが遊びます。配信はしません</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>全部 BOT なら、スロット 1 が自分でゲームを始めます。LOCAL や STREAM があるときは、人がスタートするまでボットは待ちます。</li>
+    <li>STREAM の人のボタンは、PonLuncher が START のたびに自動で設定します。クライアントのパッドのデータは、この設定に合う形（どの台でも 1 番目のパッド）で届くので、ホストのボタン設定は触らなくて大丈夫です（ini を手で変えても、次の START で元に戻ります）。割り当ては Xbox 系パッドの並びで、A＝Shift、X＝Beat、Y＝Charge、RB＝Jump、START、レバーは左スティックか十字キーです。</li>
+    <li>パッドは START を押す前につないでください。あとからつないだパッドは見つかりません。</li>
+  </ul>
+</section>
+
+<section id="start">
+  <h2><span class="no">7</span>START と遊んでいる間</h2>
+  <ol class="steps">
+    <li><div><span class="ctl">START</span> を押すと、スロットの台（と 09）が全部起動し、ホストがロビーに載ります。Discord のチャンネルにも、空いているスロットが自動で投稿されます。</div></li>
+    <li><div>クライアントがつなぐと、<span class="ctl">PLAYER</span> にその人の名前が出ます。</div></li>
+    <li><div>配信している台のウィンドウは、最小化してもかまいません（配信は止まりません）。</div></li>
+  </ol>
+  <h3>決まりごと（自動で動きます）</h3>
+  <ul>
+    <li>1 つのスロットには 1 人だけ。使用中のスロットには入れません。1 つの Discord アカウントは、このホストのスロット 1 つだけです。</li>
+    <li>3 分間入力がないと、その人は自動で切断されます（最後の 30 秒は警告が出ます）。</li>
+    <li>切断された人のキャラは、その場で立ち止まります（ボットにはなりません）。次にそのスロットに入った人が続きを操作できます。</li>
+    <li>迷惑な人がいたら、そのスロットの <span class="ctl">KICK</span> で外せます。</li>
+  </ul>
+</section>
+
+<section id="stop">
+  <h2><span class="no">8</span>終わるとき</h2>
+  <p><span class="ctl">STOP</span> を押すと、PonLuncher が起動した台だけを止め、ロビーからホストが消えます。ルーターに UPnP で開けたポートも閉じます。</p>
+</section>
+
+<section id="trouble">
+  <h2><span class="no">9</span>困ったとき</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>こんなとき</th><th>見るところ</th></tr></thead>
+    <tbody>
+      <tr><td>START が押せない</td><td>Discord にログインして「server member」と出ているか。PonLuncher と supermodel.exe が最新か</td></tr>
+      <tr><td>ロビーに出ているのに、だれもつなげない</td><td>ファイアウォールで <code>supermodel.exe</code> を許可したか。ルーターの UPnP が有効か、ポートを転送したか（<a href="#net">3</a>）</td></tr>
+      <tr><td>同じ家の PC からはつながるのに、外からだめ</td><td>ルーターのポート（UPnP が効いていない）。回線によっては（CGNAT など）外から入れないことがあります</td></tr>
+      <tr><td>映像がカクカクする</td><td>解像度を下げる、STREAM の数を減らす、ENCODER を NVENC にする（NVIDIA のとき）</td></tr>
+      <tr><td>LOCAL のパッドが効かない</td><td>START の前につないだか。PAD の種類（XINPUT / DINPUT）が合っているか。Xbox 系のパッドは Windows の仕組みで 4 台までです</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
