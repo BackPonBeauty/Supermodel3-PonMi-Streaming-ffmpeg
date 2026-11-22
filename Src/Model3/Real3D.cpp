@@ -93,6 +93,12 @@
 
 extern bool g_texGhost;   // defined below (Spikeout ghost texture pages)
 
+// 11/23: the ghost memory is two 2048x2048 sheets: [0] level 0 (the costumes sit in its mipmap quadrant), [1] the
+// reduced levels (levels 1.. at their usual mipmap places). In one sheet a costume's level-1 data landed on another
+// costume's level 0, and a state load (which sends whole sheets to the renderer) showed the overwritten data far off.
+static const size_t kGhostTexels = 2048 * 2048;
+static const size_t kGhostBytes = 2 * kGhostTexels * sizeof(uint16_t);
+
 void CReal3D::SaveState(CBlockFile *SaveState)
 {
   SaveState->NewBlock("Real3D", __FILE__);
@@ -139,6 +145,8 @@ void CReal3D::SaveState(CBlockFile *SaveState)
   {
     SaveState->NewBlock("Real3D Ghost", __FILE__);
     SaveState->Write(ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+    SaveState->NewBlock("Real3D Ghost Mip", __FILE__);   // 11/23: the reduced levels (own block: older exes skip it)
+    SaveState->Write(ghostRAM + kGhostTexels, 2048 * 2048 * sizeof(uint16_t));
   }
 }
 
@@ -196,7 +204,12 @@ void CReal3D::LoadState(CBlockFile *SaveState)
       SaveState->Read(ghostRAM, 2048 * 2048 * sizeof(uint16_t));
     else
       memset(ghostRAM, 0, 2048 * 2048 * sizeof(uint16_t));
-    if (ghostRAMRO) memcpy(ghostRAMRO, ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+    // 11/23: the reduced levels; a state from before has them mixed into the one sheet - take that (as it was)
+    if (Result::OKAY == SaveState->FindBlock("Real3D Ghost Mip"))
+      SaveState->Read(ghostRAM + kGhostTexels, 2048 * 2048 * sizeof(uint16_t));
+    else
+      memcpy(ghostRAM + kGhostTexels, ghostRAM, 2048 * 2048 * sizeof(uint16_t));
+    if (ghostRAMRO) memcpy(ghostRAMRO, ghostRAM, kGhostBytes);
     ghostDirty = false;
     Render3D->UploadTextures(0, 0, 0, 2048, 2048);
   }
@@ -411,7 +424,7 @@ uint32_t CReal3D::UpdateSnapshots(bool copyWhole)
   uint32_t cullHiCopied  = UpdateSnapshot(copyWhole, (uint8_t*)cullingRAMHi, (uint8_t*)cullingRAMHiRO, 0x100000, cullingRAMHiDirty);
   uint32_t polyCopied    = UpdateSnapshot(copyWhole, (uint8_t*)polyRAM,      (uint8_t*)polyRAMRO,      0x400000, polyRAMDirty);
   uint32_t textureCopied = UpdateSnapshot(copyWhole, (uint8_t*)textureRAM,   (uint8_t*)textureRAMRO,   0x800000, textureRAMDirty);
-  if (ghostRAM && ghostRAMRO && (ghostDirty || copyWhole)) { memcpy(ghostRAMRO, ghostRAM, 0x800000); ghostDirty = false; textureCopied += 0x800000; }
+  if (ghostRAM && ghostRAMRO && (ghostDirty || copyWhole)) { memcpy(ghostRAMRO, ghostRAM, kGhostBytes); ghostDirty = false; textureCopied += kGhostBytes; }   // 11/23: level 0 + reduced levels
   //printf("Read3D copied - cullLo:%4uK, cullHi:%4uK, poly:%4uK, texture:%4uK\n", cullLoCopied / 1024, cullHiCopied / 1024, polyCopied / 1024, textureCopied / 1024);
   return cullLoCopied + cullHiCopied + polyCopied + textureCopied;
 }
@@ -744,7 +757,7 @@ void CReal3D::StoreTexture(unsigned level, unsigned xPos, unsigned yPos, unsigne
   texDataOffset = 0;
 
   // Ghost upload (Spikeout costumes in a mipmap quadrant): write to the ghost pages; the renderer sees them as pages 2-3
-  uint16_t *const dst = m_ghostUpload ? ghostRAM : textureRAM;
+  uint16_t *const dst = m_ghostUpload ? (level > 0 ? ghostRAM + kGhostTexels : ghostRAM) : textureRAM;   // 11/23: levels 1.. in the mip sheet
   const bool markDirty = m_gpuMultiThreaded && !m_ghostUpload;
   if (m_ghostUpload) ghostDirty = true;
 
@@ -1411,8 +1424,8 @@ Result CReal3D::Init(const uint8_t *vromPtr, IBus *BusObjectPtr, CIRQ *IRQObject
   polyRAM = (uint32_t *) &memoryPool[OFFSET_98];
   textureRAM = (uint16_t *) &memoryPool[OFFSET_TEXRAM];
   textureFIFO = (uint32_t *) &memoryPool[OFFSET_TEXFIFO];
-  ghostRAM = new(std::nothrow) uint16_t[2048 * 2048]();
-  if (m_gpuMultiThreaded) ghostRAMRO = new(std::nothrow) uint16_t[2048 * 2048]();
+  ghostRAM = new(std::nothrow) uint16_t[2 * kGhostTexels]();   // 11/23: level 0 sheet + reduced levels sheet
+  if (m_gpuMultiThreaded) ghostRAMRO = new(std::nothrow) uint16_t[2 * kGhostTexels]();
 
   // If multi-threaded, set up pointers for read-only snapshots and dirty page arrays too
   if (m_gpuMultiThreaded)

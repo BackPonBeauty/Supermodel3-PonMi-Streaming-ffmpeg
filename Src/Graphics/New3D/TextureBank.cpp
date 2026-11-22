@@ -1,4 +1,5 @@
 #include "TextureBank.h"
+#include <vector>
 
 New3D::TextureBank::TextureBank()
 {
@@ -60,9 +61,30 @@ void New3D::TextureBank::UploadTextures(int level, int x, int y, int width, int 
 
 	int subX = x - mipXBase[level];
 	int subY = y - mipYBase[level];
+	const UINT16* src = (level > 0 && m_mipRam) ? m_mipRam : m_textureRam;
 
 	for (int i = 0; i < height; i++) {
-		glTexSubImage2D(GL_TEXTURE_2D, level, subX, subY + i, width, 1, GL_RED_INTEGER, GL_UNSIGNED_SHORT, m_textureRam + ((y + i) * 2048) + x);
+		glTexSubImage2D(GL_TEXTURE_2D, level, subX, subY + i, width, 1, GL_RED_INTEGER, GL_UNSIGNED_SHORT, src + ((y + i) * 2048) + x);
+	}
+}
+
+void New3D::TextureBank::UploadMipsFromLevel0()
+{
+	if (!m_textureRam) return;
+	glBindTexture(GL_TEXTURE_2D, m_texID);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+	std::vector<UINT16> buf;
+	for (int level = 1; level < m_numLevels; level++) {
+		int w = 2048 >> level, h = 1024 >> level;
+		if (w < 1) w = 1;
+		if (h < 1) h = 1;
+		buf.resize((size_t)w * h);
+		for (int y = 0; y < h; y++) {
+			const UINT16* row = m_textureRam + (size_t)(y << level) * 2048;
+			for (int x = 0; x < w; x++)
+				buf[(size_t)y * w + x] = row[x << level];
+		}
+		glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_SHORT, buf.data());
 	}
 }
 

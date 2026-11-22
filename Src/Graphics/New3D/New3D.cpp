@@ -138,6 +138,9 @@ void CNew3D::AttachGhostMemory(const UINT16 *ghostRAMPtr)
 	if (!ghostRAMPtr) return;
 	m_textureBank[2].AttachMemory(ghostRAMPtr);
 	m_textureBank[3].AttachMemory(ghostRAMPtr + (2048*1024));
+	// 11/23: the ghost pages' reduced levels live in a second 2048x2048 sheet right after (Real3D ghostRAM)
+	m_textureBank[2].AttachMipMemory(ghostRAMPtr + (2048*2048));
+	m_textureBank[3].AttachMipMemory(ghostRAMPtr + (2048*2048) + (2048*1024));
 }
 
 void CNew3D::SetStepping(int stepping)
@@ -189,10 +192,18 @@ void CNew3D::UploadTextures(unsigned level, unsigned x, unsigned y, unsigned wid
 		static constexpr int mipYBase[] = { 0, 512, 768, 896, 960, 992, 1008, 1016, 1020, 1022, 1023 };
 
 		for (int i = 0; i < m_textureBank[0].GetNumberOfLevels(); i++) {
-			for (auto &bank : m_textureBank) bank.UploadTextures(i, mipXBase[i], mipYBase[i], width, height);
+			for (auto &bank : m_textureBank) {
+				if (i > 0 && bank.HasMipMemory()) continue;	// 11/23 ghost pages: their levels 1.. below
+				bank.UploadTextures(i, mipXBase[i], mipYBase[i], width, height);
+			}
 			width = (width > 1) ? width / 2 : 1;
 			height = (height > 1) ? height / 2 : 1;
 		}
+		// 11/23 Spikeout ghost pages (costumes of slots 4-7): their costumes sit in the mipmap quadrant at level 0, so
+		// the stored reduced levels of one costume overlap another's - made again from level 0 here (a state load);
+		// uploads during play keep the game's own reduced levels
+		for (auto &bank : m_textureBank)
+			if (bank.HasMipMemory()) bank.UploadMipsFromLevel0();
 
 		return;
 	}
