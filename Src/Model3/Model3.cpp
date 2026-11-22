@@ -3051,7 +3051,11 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			bool anyOnMe = false;
 			for (int j = 0; j < ne && !anyOnMe; j++)
 				if ((*(const UINT32 *) &ram[0x1A0000 + (unsigned) elist[j] * 0x4000 + 0x32E4] & 0x7FFFFF) == (rob & 0x7FFFFF)) anyOnMe = true;
-			const bool a87Boss = !anyOnMe && boss >= 0;
+			// 11/22 (user, "A"; log: area 87's generators #8 / #9 kept sending enemies after the bots and the boss stood at
+			// HP 412 for 2 minutes): a boss we can go for comes first even with enemies after us - only one after us within
+			// 1.5 (below) is dealt with first. (A boss after US is still left out: wait mode.)
+			(void) anyOnMe;
+			const bool a87Boss = boss >= 0;
 			if (a87Boss) mine = boss;
 			(void) boss;   // 11/21 (user, 2nd): no more "boss first" (was: odd nodes) - the enemies other than bosses come first:
 			if (!a75BossOnly && !a87Boss && mine >= 0 && ram[(0x1A0000 + (unsigned) mine * 0x4000 + 0x73) ^ 3] >= 4)
@@ -3247,7 +3251,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0) continue;
 						float ox = *(const float *) &ram[er + 0x380] - px, oz = *(const float *) &ram[er + 0x388] - pz;
 						if (ox * ox + oz * oz < 9.0f && fabsf(*(const float *) &ram[er + 0x384] - myYg) < 1.5f) nNearG++;
-						if (ox * ox + oz * oz < 9.0f && ram[(er + 0x73) ^ 3] >= 4) bossNearG = true;
+						if (ox * ox + oz * oz < 4.0f && ram[(er + 0x73) ^ 3] >= 4) bossNearG = true;   // 11/22 (user): within 2 (was 3)
 					}
 				}
 				// 11/21 (user, 3rd): holding an ally OR held by one - first of all, a boss within 3: the special B+C+J.
@@ -3256,8 +3260,18 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// took the buttons back after one frame. While a special runs (its 30 frames: g_aiSpecNext - 180 + 30), keep it.
 				const bool specRunning = g_ppcTraceFrame + 120u < g_aiSpecNext;   // 11/21: its 60 frames (mashed)
 				// 11/21 (owner): the grab specials below run in the attack test too (they had !s_aiAttack0Test and never fired).
+				// 11/22 (user): a BOSS held from the front (our motion 1118) with special stock left (Rob +0x3F25): half the
+				// holds (drawn once, when the hold starts) the special, the other half the usual B, B, C hold handling.
+				static UINT32 gbLastF = 0, gbRng = 0x6C8E9CF5u; static bool gbSpec = false;
+				if (grabbing && g_ppcTraceFrame - gbLastF > 10u) { gbRng = gbRng * 1103515245u + 12345u + node; gbSpec = ((gbRng >> 16) & 1u) != 0; }
+				if (grabbing) gbLastF = g_ppcTraceFrame;
+				const bool gbBossFront = grabbing && !grabAlly && grabIdx >= (int) pcnt && grabIdx < 20 &&
+				                         ram[(0x1A0000 + (unsigned) grabIdx * 0x4000 + 0x73) ^ 3] >= 4 &&
+				                         (short) *(const UINT16 *) &ram[(rob + 0x3C) ^ 2] == 1118 && ram[(rob + 0x3F25) ^ 3] > 0;
 				if (specRunning) grabSpecial = true;
-				else if (specReady && grabAlly && grabHp > 0 && bossNearG) grabSpecial = true;
+				// 11/22 (user): the ally hold with a boss near (within 2) only when we are low on life too (under 150, as the others)
+				else if (specReady && grabAlly && grabHp > 0 && grabHp < 150 && bossNearG) grabSpecial = true;
+				else if (specReady && gbBossFront && gbSpec && grabHp > 0) grabSpecial = true;
 				// 11/21 (user): Linda too - everyone can.
 				else if (specReady && grabbing && !grabAlly && grabHp > 0 && grabHp < 150) grabSpecial = true;   // holding an enemy, low on life
 				// 11/21 (user): held by a boss - no more special: the lever round clockwise twice (grabEsc, inputs at the end).
@@ -5056,10 +5070,12 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					{
 						const unsigned rf = g_ppcTraceFrame - rsF;
 						bits &= ~DIRS;
-						if (rf < 6u) bits |= SHIFT;                    // Shift alone 6 frames
-						else if (rf < 12u) bits |= rsDir;              // the lever the other way 6 frames (6th: was 8)
+						// 11/22 (user): twice - Shift 6, the other way 6, Shift 6, the other way 6 - then the dash at it
+						const unsigned rq = rf % 12u;
+						if (rq < 6u) bits |= SHIFT;                    // Shift alone 6 frames
+						else bits |= rsDir;                            // the lever the other way 6 frames (6th: was 8)
 						g_aiLogA75 = 181;
-						if (rf >= 11u) { rsF = 0; dashF = dashStartF = g_ppcTraceFrame; dashChkF = 0; }   // then the dash at it again
+						if (rf >= 23u) { rsF = 0; dashF = dashStartF = g_ppcTraceFrame; dashChkF = 0; }   // then the dash at it again
 						de = 0; dashEarly = true;
 					}
 					else if (de < 3 || (de >= 6 && de < 9)) bits &= ~DIRS;   // the releases around the tap
@@ -5325,7 +5341,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					// 11/21 (user): within 2 of it: nothing here - the dash away (a75 = 180, at the end) does it (the big jump kick
 					// away within 2.5, tsPh 5, is gone).
 					else if ((tk1 & 0x00000001u) && tcls >= 4 && tOnMe && g_ppcTraceFrame >= tsEvNext) tsPh = td2 < 4.0f ? 0 : 1;
-					else if ((tk1 & 0x00000800u) && td2 < near2) tsPh = 2;   // 11/18 (user): back on (11/17: off in the attack-0 test)
+					else if ((tk1 & 0x00000800u) && td2 < near2) tsPh = 2;   // 11/22 (3rd): bosses too - walk in and grab it   // 11/18 (user): back on (11/17: off in the attack-0 test)
 					else if ((tk1 & 0x00004000u) && ((tk1 & 0x08000000u) || tdy > 0.8f) && td2 < near2) tsPh = 3;   // 11/18 (user): back on (11/17: off in the attack-0 test)
 					if (tsPh) { tsF = g_ppcTraceFrame; tsSlot = tSlot; tsYarF = g_ppcTraceFrame; }
 				}
@@ -5370,9 +5386,19 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				}
 				else if (tsPh == 2)                               // dizzy: charge attack
 				{
+					// 11/22 (user, 3rd): a dizzy enemy - boss or not - is walked into to grab it: no buttons (no Shift), the
+					// lever toward it all the way in (as the grab pattern 4: pushed right up to it). Once we hold it, the hold
+					// handling takes over (tsBusy ends this); it stops being dizzy -> done. At most 120 frames.
 					bits &= ~0x0F;
-					if (te < 150) bits |= CHG;
-					else if (te >= 158) tsPh = 0;                 // released 8 frames: the attack is out
+					if (!(tk1 & 0x00000800u) || te >= 120) tsPh = 0;
+					else
+					{
+						const float fw = tdx * g_stFx + tdz * g_stFz, rg = tdx * (-g_stFz) + tdz * g_stFx, th = 0.1f * sqrtf(td2);
+						UINT8 tw = 0;
+						if (fw > th) tw |= UP; else if (fw < -th) tw |= DOWN;
+						if (rg > th) tw |= RIGHT; else if (rg < -th) tw |= LEFT;
+						bits = (UINT8) ((bits & ~DIRS) | (tw ? tw : UP));
+					}
 					g_aiLogA75 = 102;
 				}
 				else if (tsPh == 3)                               // being hit: juggle
@@ -5770,7 +5796,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// (within 30 degrees - else the usual turning), not grabbing / held. 30 frames between. a75 = 170 Shift+C held,
 				// 171 C held (dizzy), 172 let go.
 				{
-					static UINT32 bcF = 0, bcEnd = 0; static int bcSlot = -1; static bool bcOn = false, bcShift = false;
+					static UINT32 bcF = 0, bcEnd = 0, bcRng = 0x7F4A7C15u, bcHold = 60; static int bcSlot = -1; static bool bcOn = false, bcShift = false;
 					bool want = false, wShift = false;
 					if (!bcOn && found && tSlot >= (int) estart && tSlot < 20 && tSlot != g_aiBossOnMe && !g_lureWait && !grabbing && !grabbed && hpN > 0 &&
 					    bestd < 6.25f && g_ppcTraceFrame - bcEnd >= 30u)
@@ -5787,18 +5813,25 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						               backErr = fabsf((float) (INT16) (UINT16) (bA - uA)) * (6.2831853f / 65536.0f); }
 						if (bBoss && level && myErr < 0.5236f)
 						{
-							if (bk & 0x00000800u) want = true;                                                     // dizzy: C
+							// 11/22 (user, 3rd): a dizzy boss is no longer charged - it is walked into and grabbed (tsPh 2 above)
+							if (bk & 0x00000800u) { }
 							else if (!(bk & 0x00028001u) && *(const UINT16 *) &ram[(br + 0x3F22) ^ 2] == 0 && backErr > 0.5236f) { want = true; wShift = true; }   // behind: Shift + C
 						}
 					}
-					if (want) { bcOn = true; bcF = g_ppcTraceFrame; bcSlot = tSlot; bcShift = wShift; }
+					if (want)
+					{
+						bcOn = true; bcF = g_ppcTraceFrame; bcSlot = tSlot; bcShift = wShift;
+						// 11/22 (user): a dizzy boss - C held 60 or 100 frames (at random); from behind still 60
+						bcRng = bcRng * 1103515245u + 12345u + node;
+						bcHold = wShift ? 60u : (((bcRng >> 16) & 1u) ? 100u : 60u);
+					}
 					if (bcOn && (grabbing || grabbed || hpN <= 0 || tSlot != bcSlot)) { bcOn = false; bcEnd = g_ppcTraceFrame; }
 					if (bcOn)
 					{
 						const unsigned be = g_ppcTraceFrame - bcF;
 						bits &= ~(DIRS | 0x0F); comboPat = -1;
-						const unsigned hold = bcShift ? 60u : 80u;    // 11/21 (user): dizzy 80 frames (behind: 60)
-						if (be < hold) { bits |= CHG | SHIFT; g_aiLogA75 = bcShift ? 170 : 171; }   // 11/21 (user): Shift on the dizzy one too
+						const unsigned hold = bcHold;                 // behind 60; dizzy 60 or 100 (11/22, user; was 80)
+						if (be < hold) { bits |= bcShift ? (CHG | SHIFT) : CHG; g_aiLogA75 = bcShift ? 170 : 171; }   // 11/22 (user): no Shift on the dizzy one
 						// 11/21 (user): from behind - closing in on it while Shift + C is held (lever toward it while further
 						// than 1.0, as at a downed boss). 2nd (user): a dizzy boss too, while C is held.
 						if (be < hold && bestd > 1.0f && bcSlot >= 0)
@@ -5835,7 +5868,16 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (rg3 > th3) { tw |= RIGHT; aw |= LEFT; } else if (rg3 < -th3) { tw |= LEFT; aw |= RIGHT; }
 						if (!tw) { tw = UP; aw = DOWN; }
 						bits &= ~(DIRS | 0x0F); comboPat = -1;
-						if (w2 < 16.0f) { bits |= aw | SHIFT; g_aiLogA75 = 161; }
+						// 11/22 (user): wait for its attack, facing it. Its attack starts (its mot_kind attack 0x00800000) -> Shift +
+						// the lever away from it with C held; back in its stance (kamae 0x00400000, attack off) -> C let go (the
+						// charge attack). a75 = 164 backing off with C, 165 the release frame.
+						static bool wAtkOn = false; static int wAtkSlot = -1;
+						const UINT32 wk = *(const UINT32 *) &ram[wr + 0x44];
+						if (wAtkSlot != ws) { wAtkOn = false; wAtkSlot = ws; }
+						if (!wAtkOn && (wk & 0x00800000u)) wAtkOn = true;
+						if (wAtkOn && !(wk & 0x00800000u) && (wk & 0x00400000u)) { wAtkOn = false; g_aiLogA75 = 165; }   // let go of C
+						else if (wAtkOn) { bits |= aw | SHIFT | CHG; g_aiLogA75 = 164; }
+						else if (w2 < 16.0f) { bits |= aw | SHIFT; g_aiLogA75 = 161; }
 						else if (w2 > 36.0f) { bits |= tw | SHIFT; g_aiLogA75 = 162; }
 						else
 						{
@@ -5938,15 +5980,19 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					}
 				}
 				// 11/21 (user): any live boss within 2 of us turning invincible (mot_kind muteki 0x1 or its timer Rob +0x3F22)
-				// -> a dash straight away from it, 60 frames (lever released 3, tapped 3, released 3, then held - the usual
+				// -> a dash straight away from it, 20 frames (11/22; was 60) (lever released 3, tapped 3, released 3, then held - the usual
 				// dash), whatever else is going on (wait mode too). Not while charging C (Rob +0x224E = frames C held), grabbing
 				// / held, or in a special (its 30 frames). a75 = 180.
 				{
 					static UINT32 idF = 0; static bool idOn = false; static float idDx = 0.0f, idDz = 0.0f;
 					const bool idCharging = *(const UINT16 *) &ram[(rob + 0x224E) ^ 2] != 0;
 					const bool idSpecial = g_ppcTraceFrame + 120u < g_aiSpecNext;   // specials set g_aiSpecNext = start + 180 (60 frames long)
-					const bool idBlock = idCharging || grabbing || grabbed || idSpecial;
-					if (idOn && (idBlock || g_ppcTraceFrame - idF >= 60u)) idOn = false;
+					// 11/22 (user: no throw at the top of the jump after a back grab): the jump of a back hold (own action
+					// 08000970) drops the hold flag, the boss we hold turns invincible, and this dash took the lever and the C
+					// (steer.txt: 75 -> 180 in 29 of 76 back holds). Our own action in group 08 (the whole hold) blocks it too.
+					const bool idHold = (*(const UINT32 *) &ram[rob + 0x38] >> 24) == 0x08u;
+					const bool idBlock = idCharging || grabbing || grabbed || idSpecial || idHold;
+					if (idOn && (idBlock || g_ppcTraceFrame - idF >= 20u)) idOn = false;   // 11/22 (user): 20 frames (was 60)
 					if (!idOn && !idBlock && *(const short *) &ram[(rob + 0x3F02) ^ 2] > 0)
 					{
 						float bd2 = 4.0f;
@@ -5969,7 +6015,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (rg > th) aw |= RIGHT; else if (rg < -th) aw |= LEFT;
 						if (!aw) aw = DOWN;
 						bits &= ~(DIRS | 0x0F); comboPat = -1;
-						if ((de >= 3u && de < 6u) || de >= 9u) bits |= aw;
+						if (de >= 3u && de < 6u) bits |= aw;   // 11/22 (user): released 3, tapped 3, released - not held after it (was held from 9)
 						g_aiLogA75 = 180;
 					}
 				}
@@ -8968,10 +9014,42 @@ static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
 		int hp = r16(r + 0x3F02);
 		if (hp <= 0)
 			continue;
+		const int bi = h.nBoss;
 		SatHudBoss &b = h.boss[h.nBoss++];
 		b.hp = hp;
 		b.hpMax = r16(r + 0x3F04);
 		nameOf(*(const UINT16 *) &ram[(r + 0x15C) ^ 2], b.name);
+		// 11/22 (owner): its move under the bar. A move other than 00 (none) / 01 (let go) is latched with its steps when it
+		// starts (the game puts 01 there as soon as a B move's input is fed); shown until the boss is back in its stance
+		// (mot_kind kamae 0x00400000 with attack 0x00800000 off), then 20 frames more.
+		{
+			struct Mv { int act = -1, n = 0, step = -1; uint8_t seq[16] = {}; bool on = false; UINT32 idleF = 0; };
+			static Mv mv[20];
+			Mv &m = mv[slot];
+			const int act = r16(r + 0x22C2) & 0xFF, step = ram[(r + 0x227A) ^ 3];
+			const UINT32 ek = *(const UINT32 *) &ram[r + 0x44];
+			if (act > 0x01 && (act != m.act || (step != 0xFF && step < m.step) || !m.on))
+			{
+				if (act != m.act || !m.on || step < m.step)
+				{
+					m.act = act; m.n = 0; m.on = true; m.idleF = 0;
+					for (int k = 0; k < 16; k++) { const uint8_t v = ram[(r + 0x227C + k) ^ 3]; if (v == 0xFF) break; m.seq[m.n++] = v; }
+				}
+			}
+			if (m.on)
+			{
+				m.step = (act == m.act && step != 0xFF) ? step : -1;
+				const bool idle = !(ek & 0x00800000u) && (ek & 0x00400000u) && m.step < 0;
+				if (!idle) m.idleF = 0;
+				else if (!m.idleF) m.idleF = g_ppcTraceFrame ? g_ppcTraceFrame : 1;
+				else if (g_ppcTraceFrame - m.idleF >= 20u) { m.on = false; m.act = -1; }
+			}
+			h.bossMvN[bi] = m.on ? m.n : 0;
+			h.bossMvAct[bi] = m.act;
+			h.bossMvStep[bi] = m.step;
+			h.bossMvAtk[bi] = (ek & 0x00800000u) != 0;
+			for (int k = 0; k < 16; k++) h.bossMvSeq[bi][k] = m.seq[k];
+		}
 	}
 	// 11/21 (owner): name colours and bots for the list. A player's name colour number 0-7 (fa_player +0xA0 + slot; same
 	// character colours in pick order) picks the name image 0x9A-0x9D / 0xF6-0xF9 (HudColors); its palette (xBGR555 after

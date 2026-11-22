@@ -96,6 +96,12 @@ struct SatHud
   int self = 0;                             // 11/21: the followed node (1-8)
   bool loading = false;                     // 11/21: a join / an area or stage change is on: LOADING... in the middle
   SatHudBoss boss[4] = {};                  // class (Rob +0x73) >= 4 and Rob +0x3F00 != 0x26, as the game's HUD (0x1B4E0)
+  // 11/22 (owner): each boss's move now (under its life bar): the action number (Rob +0x22C2), its input steps (as copied to
+  // Rob +0x227C, pad bits B 01 C 02 S 04 J 08 down 10 up 20 right 40 left 80), the step it is on (+0x227A; -1 = all fed) and
+  // its attack bit. bossMvN 0 = nothing shown.
+  int bossMvAct[4] = {}, bossMvN[4] = {}, bossMvStep[4] = {};
+  uint8_t bossMvSeq[4][16] = {};
+  bool bossMvAtk[4] = {};
 };
 
 struct SatViewState

@@ -610,7 +610,7 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 			}
 		}
 
-		const int bbw = 144, rowH = 12, top = H - 20 - 2 - 4;   // above the 2x ticker band
+		const int bbw = 144, rowH = 22, top = H - 20 - 2 - 4;   // above the 2x ticker band; 11/22: two lines a boss (was 12)
 		for (int i = 0; i < hud->nBoss && i < 4; i++)
 		{
 			const SatHudBoss &b = hud->boss[i];
@@ -619,6 +619,38 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 			int x = (W - (tw + gap + bbw)) / 2, y = top - rowH * (hud->nBoss - i);
 			text(nm, x, y);
 			bar(x + tw + gap, y + 1, bbw, 6, b.hp, b.hpMax, 0xFF2058F0u);   // orange-red
+			// 11/22 (owner): its move under the bar - the action number, then its steps (^ v < > for the lever, then
+			// +B +C +S +J; "-" = let go), centred. The step it is on in yellow; the rest white, red while its attack is out.
+			const int n = hud->bossMvN[i] < 0 ? 0 : hud->bossMvN[i] > 16 ? 16 : hud->bossMvN[i];
+			if (n > 0)
+			{
+				char an[8]; snprintf(an, sizeof(an), "%02X ", (unsigned) hud->bossMvAct[i] & 0xFF);
+				std::vector<std::string> st;
+				for (int k = 0; k < n; k++)
+				{
+					const uint8_t v = hud->bossMvSeq[i][k];
+					std::string s;
+					if (v & 0x20) s += '^';
+					if (v & 0x10) s += 'v';
+					if (v & 0x80) s += '<';
+					if (v & 0x40) s += '>';
+					const char *bn[4] = { "B", "C", "S", "J" };
+					for (int q = 0; q < 4; q++) if (v & (1 << q)) { if (!s.empty()) s += '+'; s += bn[q]; }
+					st.push_back(s.empty() ? "-" : s);
+				}
+				int len = (int) strlen(an);
+				for (int k = 0; k < n; k++) len += (int) st[k].size() + (k ? 1 : 0);
+				int mx = (W - len * 8) / 2;
+				const int my = y + 10;
+				const uint32_t base = hud->bossMvAtk[i] ? 0xFF3030F0u : 0xFFFFFFFFu;   // red while the attack is out
+				textC(an, mx, my, 1, 0xFFC0C0C0u); mx += (int) strlen(an) * 8;
+				for (int k = 0; k < n; k++)
+				{
+					if (k) { textC(",", mx, my, 1, 0xFFC0C0C0u); mx += 8; }
+					textC(st[k], mx, my, 1, k == hud->bossMvStep[i] ? 0xFF20E0FFu : base);   // yellow = the step now
+					mx += (int) st[k].size() * 8;
+				}
+			}
 		}
 	}
 
