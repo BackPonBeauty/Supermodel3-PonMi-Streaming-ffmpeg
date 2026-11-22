@@ -846,6 +846,8 @@ static const int STATE_FILE_VERSION = 6; // save state file version
 static const int NVRAM_FILE_VERSION = 0; // NVRAM file version
 static unsigned s_saveSlot = 0;          // save state slot #
 #include "Network/Netlink.h"
+#include "Network/SimNetBoard.h"
+#include "Stream/Satellite.h"
 // 11/23 main6: save / load on the same frame on every linked node (Network/SimNetBoard.cpp)
 extern bool g_netStateSyncOn;
 extern int g_netStateReq, g_netStateReqSlot;
@@ -1776,6 +1778,10 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         else
           ErrorLog("Netlink: cannot write '%s'.", path.c_str());
         NetlinkClientStateLoaded();
+        // phase 2: our first frame plays the inputs node k read in it (they come with the host's frame F+1)
+        if (CModel3 *m3 = dynamic_cast<CModel3 *>(Model3))
+          if (CSimNetBoard *nb = dynamic_cast<CSimNetBoard *>(m3->GetNetBoard()))
+            nb->ClonePrime();
       }
     }
 
@@ -2217,7 +2223,13 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     }
 
     // Refresh rate (frame limiting)
-    if (paused || s_runtime_config["Throttle"].ValueAs<bool>())
+    // 11/23 netlink phase 2: a client keeps about 2 frames of the host's data in hand - it runs at the refresh rate
+    // while it has 2 or fewer, without waiting while more have piled up (catching up), and blocks in the net board
+    // when none has come yet. Throttle in the ini does not matter then.
+    bool throttleNow = s_runtime_config["Throttle"].ValueAs<bool>();
+    if (NetlinkClientOn())
+      throttleNow = SatelliteTapBacklog() <= 2;
+    if (paused || throttleNow)
     {
       SuperSleepUntil(nextTime);
       nextTime = SDL_GetPerformanceCounter() + perfCountPerFrame;
@@ -3603,24 +3615,35 @@ int main(int argc, char **argv)
 
   // 11/23 main6 netlink (R-4 / LB-3): a client connects before the game is loaded and plays with the host's game
   // settings (SpikeJr, EnemyKnockMul, PowerPCFrequency ...) over its own, or its world is another one. Runtime only.
+  // Phase 2: both sides first know who they are (exe and ROM hashes); the host refuses another build or ROM set.
   {
     std::string nl = s_runtime_config["NetlinkConnect"].ValueAsDefault<std::string>("");
     size_t colon = nl.rfind(':');
-    if (s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) && !nl.empty() && colon != std::string::npos && colon > 0)
+    bool nlClient = s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) && !nl.empty() && colon != std::string::npos && colon > 0;
+    if (nlClient || s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0))
+    {
+      std::vector<std::pair<const uint8_t *, size_t>> parts;
+      for (const auto &r : rom_set.rom_by_region)
+        parts.emplace_back(r.second.data.get(), r.second.size);
+      NetlinkSetIdentity(game.name, parts);
+    }
+    if (nlClient)
     {
       printf("[Netlink] Client: waiting for the host's settings (%s)\n", nl.c_str());
       std::vector<std::pair<std::string, std::string>> kv;
-      if (NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), 120000, kv))
+      std::string why;
+      if (!NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), 120000, kv, why))
       {
-        for (const auto &p : kv)
-        {
-          s_runtime_config.Set(p.first, p.second);
-          InfoLog("Netlink: host setting %s = %s", p.first.c_str(), p.second.c_str());
-        }
-        s_runtime_config.Set("AIPlayer", 0);
+        ErrorLog("Netlink: cannot join the host %s: %s", nl.c_str(), why.c_str());
+        NetlinkClientStop();
+        return 1;
       }
-      else
-        ErrorLog("Netlink: no settings from the host %s in 2 minutes; playing with our own (the world may differ).", nl.c_str());
+      for (const auto &p : kv)
+      {
+        s_runtime_config.Set(p.first, p.second);
+        InfoLog("Netlink: host setting %s = %s", p.first.c_str(), p.second.c_str());
+      }
+      s_runtime_config.Set("AIPlayer", 0);
     }
   }
 

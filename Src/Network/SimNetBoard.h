@@ -75,6 +75,10 @@ public:
 	uint16_t ReadIORegister(unsigned reg);
 	void WriteIORegister(unsigned reg, uint16_t data);
 
+	// 11/23 netlink phase 2: right after the host's state is loaded (end of the host's frame F), wait for frame F+1
+	// and take node k's inputs from it, so our first frame plays what the node read (Main.cpp)
+	void ClonePrime(void);
+
 private:
 	// Config
 	const Util::Config::Node& m_config;
@@ -130,6 +134,7 @@ private:
 	bool CloneReady(void);
 	void CloneChoose(const std::vector<std::vector<char>>& segs, const std::vector<std::vector<char>>* next, int n);
 	void PutInputRecord(void);
+	bool CloneTakeInputs(const SatLinkEvent& e, int k);
 
 	// 11/23 main6 (netlink): ini SatelliteSegDump = 1 -> segdump.bin, every frame the clone takes, to measure how
 	// small the link data gets (raw / delta / compressed) before sending it over the internet. Per frame:

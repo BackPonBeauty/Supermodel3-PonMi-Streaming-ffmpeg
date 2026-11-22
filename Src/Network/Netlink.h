@@ -1,5 +1,6 @@
 // 11/23 main6 netlink, phase 1 (LAN prototype). Requirements: the "netlink 要件定義書" doc (HO-*, CL-*).
 //
+// (Phase 1 wire as below; phase 2 packs it - see NetlinkSetIdentity.)
 // Host: the linked cabinet of slot k (ini NetlinkServe = 1) serves its link data on TCP (slot base port + 2)
 // to one client. Every frame, after the ring loop, the N segments it holds are queued - laid out as 08 sends
 // them on the ring (segs[i] = node N - i), with the same framing (native int length + bytes) - and a thread of
@@ -47,7 +48,16 @@ void NetlinkClientStateLoaded();                    // Main.cpp: loaded, the lin
 extern const char *const kNetlinkGameKeys[];
 extern const int kNetlinkGameKeyCount;
 // Client, in Main.cpp before the game is loaded: connect and wait (up to timeoutMs) for the host's settings.
-bool NetlinkClientWaitSettings(const std::string &host, int port, int timeoutMs, std::vector<std::pair<std::string, std::string>> &out);
+// false = refused (error says why: another exe / ROM / protocol) or no answer.
+bool NetlinkClientWaitSettings(const std::string &host, int port, int timeoutMs, std::vector<std::pair<std::string, std::string>> &out, std::string &error);
+
+// Phase 2 (11/23). Who we are, set by Main.cpp once the ROM set is loaded and before the net board starts: protocol
+// version, game, SHA-256 of our exe file and of the ROM regions. A client sends it first ('N','L','H','2', u32,
+// "key=value\n" lines); the host refuses ('N','L','E','1', u32, why) anything that is not its own, or answers
+// with its settings. The state then goes zlib'ed ('N','L','S','2', u32 packed, u32 raw, data), and the ring data
+// as chunks: u32 packed size + one zlib stream (Z_SYNC_FLUSH each) of u8 type (0 bytes, 1 XOR with the last
+// frame) + payload - about 0.13 Mbps for an 8-link instead of 11.3.
+void NetlinkSetIdentity(const std::string &game, const std::vector<std::pair<const uint8_t *, size_t>> &romParts);
 
 bool NetlinkHostStart(int port, const std::string &settings);
 void NetlinkHostStop();

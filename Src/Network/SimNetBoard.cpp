@@ -1112,24 +1112,51 @@ bool CSimNetBoard::CloneReady(void)
 
 	g_satClone.haveInputs = false;
 	if (nextOk)
-	{
-		const auto& s = m_cloneNext.segs[n - k];
-		auto at = [&](unsigned b) { return (uint8_t)s[(kSatInputOffset + b) ^ 2]; };
-		if (s.size() >= kSatInputOffset + 0x20 && at(0) == kSatInputMagic)
-		{
-			for (int p = 0; p < 3; p++)
-			{
-				unsigned c = at(1 + p * 5);
-				g_satClone.inpCnt[p] = (uint8_t)(c > 4 ? 4 : c);
-				for (unsigned i = 0; i < 4; i++)
-					g_satClone.inp[p][i] = at(2 + p * 5 + i);
-				if (g_satClone.inpCnt[p])
-					g_satClone.inpLast[p] = g_satClone.inp[p][g_satClone.inpCnt[p] - 1];
-			}
-			g_satClone.haveInputs = true;
-		}
-	}
+		CloneTakeInputs(m_cloneNext, k);
 	return true;
+}
+
+// The input record (kSatInputOffset) node k put in its segment of frame e: what its game read that frame.
+bool CSimNetBoard::CloneTakeInputs(const SatLinkEvent& e, int k)
+{
+	const int n = (int)e.segs.size();
+	if (k < 1 || k > n)
+		return false;
+	const auto& s = e.segs[n - k];
+	auto at = [&](unsigned b) { return (uint8_t)s[(kSatInputOffset + b) ^ 2]; };
+	if (s.size() < kSatInputOffset + 0x20 || at(0) != kSatInputMagic)
+		return false;
+	for (int p = 0; p < 3; p++)
+	{
+		unsigned c = at(1 + p * 5);
+		g_satClone.inpCnt[p] = (uint8_t)(c > 4 ? 4 : c);
+		for (unsigned i = 0; i < 4; i++)
+			g_satClone.inp[p][i] = at(2 + p * 5 + i);
+		if (g_satClone.inpCnt[p])
+			g_satClone.inpLast[p] = g_satClone.inp[p][g_satClone.inpCnt[p] - 1];
+	}
+	g_satClone.haveInputs = true;
+	return true;
+}
+
+void CSimNetBoard::ClonePrime(void)
+{
+	if (!m_netlinkClient || m_state != State::ready)
+		return;
+	SatLinkEvent e;
+	if (!CloneWait(e))
+		return;
+	if (e.type != SatLinkEvent::Frame || e.numMachines != m_numMachines || (int)e.segs.size() != m_numMachines)
+	{
+		m_cloneNext = std::move(e);		// CloneReady will see it and report the link broken
+		m_cloneHaveNext = true;
+		return;
+	}
+	g_satClone.haveInputs = false;
+	bool got = CloneTakeInputs(e, g_satClone.node);
+	m_cloneNext = std::move(e);			// frame F+1: CloneReady takes it as "cur" at the end of our frame F+1
+	m_cloneHaveNext = true;
+	InfoLog("Netlink: first frame primed (node %d inputs %s).", g_satClone.node, got ? "taken" : "missing");
 }
 
 // 11/23 main6 (netlink): one frame of link data as the clone got it (see SimNetBoard.h).
