@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261123 / PonLuncher 2.1.0
+> Build 20261123b / PonLuncher 2.1.0
 
 ---
 
@@ -57,6 +57,13 @@
 - **Bots (20261123):**
   - One boss handler per boss again (was two). The small-fry handlers guard it first of all: the small fry going for a boss handler or within 3 of one come first, and while there is one, they do not walk off for items or weapons
   - The dash attack's special (B+C+J) is also used only with 150 HP or less, like the other specials
+- **Bots (20261123b):**
+  - The boss-fight roles (boss handler / small-fry handlers), the boss lure (area 87) and the wait mode (keeping 4–6 away from a boss after the bot) are gone: a boss after a bot is fought like any other enemy
+  - The "two or more enemies after the bot → B+C, B" rule is gone; the combo is drawn at random
+  - A downed enemy is now seen as down (the height check was too tight and missed nine in ten): the bot leaves it and takes another, and hits it as it gets up
+  - No pause after a special, after the charge combo's release, after a dash arrival's B+C / C+J, or after a throw
+  - A back grab's jump throw goes toward the nearest other enemy (was away from allies)
+  - Area 75: the bots no longer get stuck at the start room's swing door
 - **Save states with the link (20261123):** a save or load on one cabinet is done on every cabinet of the link at the same frame
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
 
