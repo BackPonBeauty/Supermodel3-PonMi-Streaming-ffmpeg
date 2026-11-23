@@ -220,6 +220,7 @@
 #include <cmath>   // sqrtf for the AI-player camera-relative steering
 #include <cstdlib>
 #include <cstring>
+#include <chrono>   // 11/23 AIProfile
 #include <ctime>   // wall-clock stamp in p1_state.txt (shared between the 8 emulator processes)
 #include "Supermodel.h"
 #include "DriveBoard/BillBoard.h"
@@ -353,6 +354,8 @@ static void SpikeoutCpicLog(const UINT8 *ram, UINT32 frame)
 	fflush(f);
 }
 static bool g_spikeoutAILog = false;    // AIPlayerLog=1: dump what the AI sees to ai.txt
+static bool g_spikeoutAIProfile = false;   // 11/23 AIProfile=1: aiprof.txt, the AI's cost and the frame rate per 600 frames
+static unsigned g_aipFnSearch = 0, g_aipWnSearch = 0, g_aipFnPops = 0;   // 11/23 AIProfile: path searches (not reused) in this period
 // 11/18 (user): the gate decisions ("[GATE] ...", console only before) also go to gatelog.txt (AIPlayerLog=1), with
 // the frame, so a "passed" taken from a camera zone (camsar) change short of the gate can be seen in the log.
 static FILE *g_gateLogF = NULL;
@@ -1679,6 +1682,7 @@ static bool SpikeoutWallNav(const UINT8 *ram, float px, float py, float pz, floa
 	if (!reuse)
 	{
 		int N = g_wn.w * g_wn.h;
+		g_aipWnSearch++;
 		memset(g_wn.dist, 0xFF, (size_t) N * sizeof(UINT16));
 		int qh = 0, qt = 0;
 		g_wn.dist[gC] = 0; g_wnQueue[qt++] = gC;
@@ -2002,7 +2006,7 @@ static int SpikeoutFloorNav(const UINT8 *ram, float px, float py, float pz, floa
 		g_fn.dist[g] = 0; g_fn.next[g] = -1; q.push(QE(0, g));
 		static const int ddx[8] = { 1, -1, 0, 0, 1, 1, -1, -1 }, ddz[8] = { 0, 0, 1, -1, 1, -1, 1, -1 };
 		int sc = g_fn.ncell[s];
-		int pops = 0; g_fn.full = true;
+		int pops = 0; g_fn.full = true; g_aipFnSearch++;
 		while (!q.empty() && pops < 400000)
 		{
 			QE e = q.top(); q.pop(); pops++;
@@ -2026,7 +2030,7 @@ static int SpikeoutFloorNav(const UINT8 *ram, float px, float py, float pz, floa
 				}
 			}
 		}
-		g_fn.goal = g; g_fn.goalF = g_ppcTraceFrame;
+		g_fn.goal = g; g_fn.goalF = g_ppcTraceFrame; g_aipFnPops += (unsigned) pops;
 	}
 	if (g_fn.dist[s] == 0xFFFFFFFFu) { g_aiLogFn = 2; return 2; }
 	// Walk the path: steer for the farthest node (up to ~6 units) reachable on foot in a straight line from us.
@@ -2512,7 +2516,7 @@ static bool SpikeoutGatePassedCam(float x, float z)
 struct SpikeoutWpKick { unsigned area; float x, y, z; };
 // 11/21 (user): boss lure. In these areas the LAST line of ../waypoints.txt for the area is not a jump-kick spot but
 // the point a bot leads a boss to (area 87 = PHOENIX's map). See g_aiLureOn.
-static bool SpikeoutLureArea(unsigned a) { return a == 87; }
+static bool SpikeoutLureArea(unsigned a) { (void) a; return false; }   // 11/23 (owner, later): the boss lure is off (was a == 87)
 static bool g_lureOk[256] = {}; static float g_lureX[256], g_lureZ[256];
 // 11/22 (user): boss-fight roles (8th: no points / waypoints; 10th: every area, was area 87 only - not area 75's start
 // room, which keeps its bosses-only rule). While a live boss is in the area:
@@ -2527,7 +2531,9 @@ static bool g_lureOk[256] = {}; static float g_lureX[256], g_lureZ[256];
 // - Before there is a boss handler, everyone plays the usual logic (a boss going for a bot: wait mode as usual).
 // Worked out from the shared game state only, so all cabinets agree. No live boss: off. The area changed: afresh.
 // 11/23 (owner): never in area 75 (no boss handlers there at all, also after its gate; its own bosses-only rule stays).
-static bool SpikeoutScnArea(unsigned a) { return a != 75; }   // 10th: every area (was a == 87); 11/23: not area 75
+// 11/23 (owner, later): no boss-fight roles at all (no boss handlers, no small-fry handlers, in any area) - back to the
+// play from before 20261122b. The code stays; this switch keeps g_scnPhase at 0.
+static bool SpikeoutScnArea(unsigned a) { (void) a; return false; }   // 10th: every area (was a == 87); 11/23: not area 75; 11/23 later: off
 static int g_scnPhase = 0;         // this frame: 0 none, 1 the boss-fight roles run (a live boss)
 static bool g_scnMob = false;      // 11/22: this frame, we are a small-fry handler (and alive)
 static int g_scnPick = -1;         // 11/22: the small-fry handler's target this frame (-1 none)
@@ -3039,6 +3045,9 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				float dx = eex[j] - px, dz = eez[j] - pz, dd = dx * dx + dz * dz;
 				if (dd < bd) { bd = dd; g_aiBossOnMe = elist[j]; }
 			}
+			// 11/23 (owner, later): off - a boss after us is fought like any other enemy, and no wait mode (g_lureWait stays
+			// false: it needs g_aiBossOnMe). Back to the play from before 11/21.
+			g_aiBossOnMe = -1;
 			if (g_aiBossOnMe >= 0 && !g_scnBossH && !g_scnMob) lockMask |= 1u << g_aiBossOnMe;   // 11/22: handlers fight the boss after them
 		}
 		{
@@ -3131,7 +3140,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			if (*(const UINT16 *) &ram[(er + 0x3F22) ^ 2] != 0) return true;
 			UINT32 k = *(const UINT32 *) &ram[er + 0x44];
 			return (k & 0x00028000u) && !(k & 0x00010000u) && !(k & 0x08000000u)
-			       && fabsf(*(const float *) &ram[er + 0x384] - myY) < 0.6f;
+			       && fabsf(*(const float *) &ram[er + 0x384] - myY) < 1.5f;   // 11/23 (owner): 1.5 (was 0.6) - a downed enemy lies 0.8-1.1 below
+			                                                                    // our Rob y (ai.txt 01-04: 89% of downed targets were missed at 0.6)
 		};
 		if (mine >= 0 && invul(mine))
 		{
@@ -3288,6 +3298,10 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 		// 11/21 (user, 2nd): a boss is after us and there is nothing else for us -> wait mode (late, below)
 		g_lureWait = g_aiBossOnMe >= 0 && (mine < 0 || mine == g_aiBossOnMe);
 		if (g_scnMob || g_scnBossH) g_lureWait = false;   // 11/22: handlers: no wait mode (a boss handler does not back off from the boss after it)
+		// 11/23 (owner): no wait mode in area 75. In its start room the target is the boss (bosses only) in another room, the
+		// boss is after us, so the wait mode's "close in" (Shift + the lever straight at it, a75 = 162) pushed the bot into the
+		// wall / swing door leaf for good and the room exit never ran (00 log: ~90 s at (54.5, 37.3)).
+		if (ram[0x10402D ^ 3] == 75) g_lureWait = false;
 		g_lureWaitSlot = g_aiBossOnMe;
 		if (mine >= 0)
 		{
@@ -4936,7 +4950,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0) continue;
 						if ((*(const UINT32 *) &ram[er + 0x32E4] & 0x7FFFFF) == (rob & 0x7FFFFF)) onMe0++;
 					}
-					if (onMe0 >= 2) comboPat = 2;
+					(void) onMe0;   // 11/23 (owner): no "two or more after us -> 2" any more (B+C - B came out nearly every time); the draw stands
 				}
 				else if (dashArrive) comboPat = 9 + (int) ((rng >> 16) % 4u);   // dash arrival: 9-12
 				else
@@ -4964,8 +4978,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (!(*(const UINT32 *) &ram[er] & 1) || (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] <= 0) continue;
 						if ((*(const UINT32 *) &ram[er + 0x32E4] & 0x7FFFFF) == (rob & 0x7FFFFF)) onMeN++;
 					}
-					if (onMeN >= 2) comboPat = 2;
-					else if (wakeUp) comboPat = 6;
+					(void) onMeN;   // 11/23 (owner): no "two or more after us -> 2" any more
+					if (wakeUp) comboPat = 6;
 				}
 				// 11/22 (user): a small-fry handler (area scenario) - a small fry always gets 22 (Shift + C held closing in,
 				// b-b b-b-b, C let go).
@@ -4999,8 +5013,10 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			{
 				unsigned e = g_ppcTraceFrame - comboStart, tap = e / 8, ph = e % 8;
 				unsigned wait = 10u, after = comboPat == 7 ? 30u : comboPat == 6 ? 30u : 10u;   // 11/14 (user): 5-7 all close in 10f (6/7 were 40f/50f); 6 waits 30f at the end (was 20f; 74f in all)
-				unsigned len = comboPat == 20 ? 24u : comboPat == 21 ? 20u : comboPat <= 1 ? 48u : comboPat == 19 ? 40u : comboPat == 2 ? 28u : comboPat == 3 ? 30u : comboPat == 4 ? 45u :
-				               comboPat <= 7 ? wait + 24 + after + 10 : comboPat == 8 ? 16u : comboPat == 9 ? 8u : comboPat == 12 ? 20u :
+				// 11/23 (owner): no wait at the end of 21 (B+C throw, 20 -> 6), 11 (dash arrival C+J, 30 -> 6) and 6 (the 10
+				// frames after C is let go)
+				unsigned len = comboPat == 20 ? 24u : comboPat == 21 ? 6u : comboPat == 11 ? 6u : comboPat == 10 ? 6u :   // 11/23: 10 (dash arrival B+C) too comboPat <= 1 ? 48u : comboPat == 19 ? 40u : comboPat == 2 ? 28u : comboPat == 3 ? 30u : comboPat == 4 ? 45u :
+				               comboPat <= 7 ? wait + 24 + after + (comboPat == 6 ? 0u : 10u) : comboPat == 8 ? 16u : comboPat == 9 ? 8u : comboPat == 12 ? 20u :
 				               comboPat == 13 ? REC13_LEN : comboPat == 14 ? REC14_LEN :
 				               (comboPat >= 16 && comboPat <= 18) ? 92u + 24u * (unsigned) (comboPat - 16) : comboPat == 22 ? 140u : 30u;   // 11/14: 9 = Shift 8f (was 20f); 11/17: 16-18 at most 92/116/140f (ends earlier, below)
 				bool reAim = false;
@@ -5154,14 +5170,14 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				}
 				// 11/21 (user): the special is B+C+J mashed for 60 frames (4 on / 4 off; was held 30 frames)
 				if (g_ppcTraceFrame < specUntil) { buttons = ((specUntil - g_ppcTraceFrame) % 8u) >= 4u ? (BEAT | CHG | JUMP) : 0; comboPat = -1; }
-				else if (g_ppcTraceFrame < specUntil + 60) { buttons &= ~BEAT; comboPat = -1; }   // no Beat for 60 frames after release
+				// 11/23 (owner): no more "no Beat / no combo for 60 frames after the special" - the fight goes on at once
 				// 11/21 (user): holding a thing and our target within 10: B+C (6 frames) = throw it, facing it (within 30
 				// degrees, when the facing is known; the lever is turning us to it meanwhile). At most every 30 frames. Not in
 				// a special, a hold, or the bonus stage (area 83 has its own throws).
 				{
 					static UINT32 thrUntil = 0, thrNext = 0;
 					if (g_aiHolding && found && bestd < 100.0f && hpNow > 0 && !grabbing && !grabbed && ram[0x10402D ^ 3] != 83 &&
-					    g_ppcTraceFrame >= specUntil + 60 && g_ppcTraceFrame >= thrNext && (!fcKnown || faceErr < 0.5236f))
+					    g_ppcTraceFrame >= specUntil && g_ppcTraceFrame >= thrNext && (!fcKnown || faceErr < 0.5236f))
 					{ thrUntil = g_ppcTraceFrame + 6; thrNext = g_ppcTraceFrame + 30; }
 					if (g_ppcTraceFrame < thrUntil) { buttons = BEAT | CHG; comboPat = -1; }
 				}
@@ -5856,21 +5872,24 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						if (gkMot == 2564) gkThrown = true;
 						if (!gkThrown && pe >= 8 && pe < 40 && ((pe - 8) % 8) < 4) bits |= CHG;
 						// 11/17 (user, 4th): the C at the top throws the enemy we hold - the lever may have to say which way.
-						// Lever held all through the jump: away from the nearest ally within 3 (players 0-7, alive, not us);
+						// Lever held all through the jump: toward the nearest other enemy (11/23; was away from the nearest ally);
 						// none: a random one of the 8 ways (world direction, picked once per jump; camera-relative each frame).
 						static UINT32 gkTwF = 0; static float gkTwX = 0.0f, gkTwZ = 1.0f; static UINT32 gkTwRng = 0x9E3779B9u;
 						if (gkTwF != gkPhF)
 						{
 							gkTwF = gkPhF;
-							float bd2 = 9.0f, ax = 0.0f, az = 0.0f; bool ally = false;
-							for (unsigned s2 = 0; s2 < 8; s2++)
+							// 11/23 (owner): toward the nearest other live enemy instead (was: away from the nearest ally within 3).
+							// The one we hold (mot_kind2 Rob +0x48 held 0x00100000) is skipped. None: a random way, as before.
+							float bd2 = 1e30f, ax = 0.0f, az = 0.0f; bool foe = false;
+							for (unsigned s2 = estart; s2 < 20; s2++)
 							{
 								UINT32 ar = 0x1A0000 + s2 * 0x4000;
-								if (ar == rob || !(*(const UINT32 *) &ram[ar] & 1) || (short) *(const UINT16 *) &ram[(ar + 0x3F02) ^ 2] <= 0) continue;
+								if (!(*(const UINT32 *) &ram[ar] & 1) || (short) *(const UINT16 *) &ram[(ar + 0x3F02) ^ 2] <= 0) continue;
+								if (*(const UINT32 *) &ram[ar + 0x48] & 0x00100000u) continue;   // held (the one we throw)
 								float ox = *(const float *) &ram[ar + 0x380] - px, oz = *(const float *) &ram[ar + 0x388] - pz;
-								if (ox * ox + oz * oz < bd2) { bd2 = ox * ox + oz * oz; ax = ox; az = oz; ally = true; }
+								if (ox * ox + oz * oz < bd2) { bd2 = ox * ox + oz * oz; ax = ox; az = oz; foe = true; }
 							}
-							if (ally && bd2 > 1e-4f) { float inv = 1.0f / sqrtf(bd2); gkTwX = -ax * inv; gkTwZ = -az * inv; }
+							if (foe && bd2 > 1e-4f) { float inv = 1.0f / sqrtf(bd2); gkTwX = ax * inv; gkTwZ = az * inv; }
 							else
 							{
 								gkTwRng = gkTwRng * 1103515245u + 12345u + node;
@@ -6087,6 +6106,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// in (Shift + lever toward it); in between - stand, and turn to it (lever toward it 2 frames in 8) when more than
 				// 30 degrees off (own angle Rob +0x2A vs the angle to its object, Rob +0x3260 + 2 * obj, as elsewhere). No attacks
 				// yet. Ends when the boss is gone (or the area changes). a75 = 160 stand, 161 back off, 162 close in, 163 turn.
+				if (g_lureWait && ram[0x10402D ^ 3] == 75) g_lureWait = false;   // 11/23 (owner): no wait mode in area 75 (the lure's too)
 				if (g_lureWait)
 				{
 					const int ws = g_lureWaitSlot;
@@ -6562,6 +6582,65 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 // rest at exit). One line per emulated frame (the first read of the port in that frame).
 static bool g_spikeoutInputLog = false;
 static std::string g_ilBuf; static unsigned g_ilN = 0; static UINT32 g_ilLastF = ~0u;
+// 11/23 AIProfile=1: is the bot weak because the AI costs too much? Per 600 frames, aiprof.txt gets the frame rate
+// (wall clock), the AI calls per frame, the AI's time per call (average / max, in µs) and the path searches.
+struct SpikeoutAIProf
+{
+	unsigned frames = 0, calls = 0, callsThisF = 0, maxCallsF = 0, multiF = 0, over1 = 0, over4 = 0;
+	unsigned kills = 0, dmgTaken = 0, specials = 0;   // strength: enemies gone, own HP lost, own SP spent (this period)
+	double sumUs = 0, maxUs = 0, maxFrameMs = 0;
+	bool started = false;
+	std::chrono::steady_clock::time_point t0, lastF;
+};
+static SpikeoutAIProf g_aip;
+static void SpikeoutAIProfCall(double us)
+{
+	g_aip.calls++; g_aip.callsThisF++; g_aip.sumUs += us;
+	if (us > g_aip.maxUs) g_aip.maxUs = us;
+	if (us > 1000.0) g_aip.over1++;
+	if (us > 4000.0) g_aip.over4++;
+}
+static void SpikeoutAIProfFrame(const UINT8 *ram)   // once per emulated frame
+{
+	auto now = std::chrono::steady_clock::now();
+	if (!g_aip.started) { g_aip = SpikeoutAIProf(); g_aip.started = true; g_aip.t0 = g_aip.lastF = now; g_aipFnSearch = g_aipWnSearch = g_aipFnPops = 0; return; }
+	double fms = std::chrono::duration<double, std::milli>(now - g_aip.lastF).count();
+	g_aip.lastF = now;
+	if (fms > g_aip.maxFrameMs) g_aip.maxFrameMs = fms;
+	if (g_aip.callsThisF > g_aip.maxCallsF) g_aip.maxCallsF = g_aip.callsThisF;
+	if (g_aip.callsThisF > 1) g_aip.multiF++;
+	g_aip.callsThisF = 0;
+	{   // strength counters (own slot = node - 1; enemies = slots from the player count on)
+		static UINT32 prevAlive = 0; static int prevHp = -1, prevSp = -1;
+		unsigned node = ram[0x10065B ^ 3], pc = ram[0x10065A ^ 3]; if (pc < 1 || pc > 8) pc = 4;
+		UINT32 alive = 0;
+		for (unsigned e = pc; e < 20; e++) if (*(const UINT32 *) &ram[0x1A0000 + e * 0x4000] & 1u) alive |= 1u << e;
+		g_aip.kills += (unsigned) __builtin_popcount(prevAlive & ~alive);
+		prevAlive = alive;
+		if (node >= 1 && node <= 8 && ram[0x10402D ^ 3])
+		{
+			UINT32 rob = 0x1A0000 + (node - 1) * 0x4000;
+			int hp = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2], sp = ram[(rob + 0x3F25) ^ 3];
+			if (prevHp >= 0 && hp < prevHp) g_aip.dmgTaken += (unsigned) (prevHp - hp);
+			if (prevSp >= 0 && sp < prevSp) g_aip.specials++;
+			prevHp = hp; prevSp = sp;
+		}
+		else prevHp = prevSp = -1;
+	}
+	if (++g_aip.frames < 600) return;
+	double sec = std::chrono::duration<double>(now - g_aip.t0).count();
+	if (FILE *f = fopen("aiprof.txt", "a"))
+	{
+		fprintf(f, "f=%u node=%u area=%u fps=%.1f frameMax=%.1fms calls=%u callsPerF(max)=%u multiF=%u ai_avg=%.1fus ai_max=%.1fus >1ms=%u >4ms=%u fnSearch=%u fnPops=%u wnSearch=%u kills=%u dmg=%u sp=%u\n",
+			g_ppcTraceFrame, ram[0x10065B ^ 3], ram[0x10402D ^ 3], sec > 0 ? g_aip.frames / sec : 0.0, g_aip.maxFrameMs,
+			g_aip.calls, g_aip.maxCallsF, g_aip.multiF, g_aip.calls ? g_aip.sumUs / g_aip.calls : 0.0, g_aip.maxUs,
+			g_aip.over1, g_aip.over4, g_aipFnSearch, g_aipFnPops, g_aipWnSearch, g_aip.kills, g_aip.dmgTaken, g_aip.specials);
+		fclose(f);
+	}
+	g_aip = SpikeoutAIProf(); g_aip.started = true; g_aip.t0 = g_aip.lastF = now;
+	g_aipFnSearch = g_aipWnSearch = g_aipFnPops = 0;
+}
+
 static void SpikeoutInputLogFlush()
 {
 	if (g_ilBuf.empty()) return;
@@ -6818,6 +6897,13 @@ UINT8 CModel3::ReadInputs(unsigned reg)
       if (g_spikeoutAI && !g_streamHumanJoined.load())   // AI player: override stick/beat for this cabinet (P4: stops for good once a streaming client took the slot)
       {
         g_spikeoutCrom = crom; g_spikeoutCromBank = cromBank; g_spikeoutRam = ram;
+        if (g_spikeoutAIProfile)   // 11/23 AIProfile
+        {
+          auto t0 = std::chrono::steady_clock::now();
+          data &= ~SpikeoutAIInputBits(ram);
+          SpikeoutAIProfCall(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+        }
+        else
         data &= ~SpikeoutAIInputBits(ram);     // (active-low: clearing a bit = pressed)
       }
     }
@@ -8770,6 +8856,7 @@ void CModel3::RunMainBoardFrame(void)
 	g_satInRec = SatInputRecord();   // 11/20: this frame's input reads, for the satellite clone
 	m_testFrame++;
 	g_ppcTraceFrame = m_testFrame;
+	if (g_spikeoutAIProfile) SpikeoutAIProfFrame(ram);   // 11/23 AIProfile
 	if (g_spikeoutScenarioLog) SpikeoutScenarioLog(ram);
 	if (g_spikeoutItemLog) SpikeoutItemLog(ram);
 	SpikeoutP1StateTick(ram);   // bot cabinets mark their link record, so the bots can tell a started human (bots must not start a game on their own)
@@ -10203,6 +10290,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   if (g_spikeoutAIRoute2 < 0 || g_spikeoutAIRoute2 > 1) g_spikeoutAIRoute2 = -1;
   g_spikeoutGateLog = (game.name == "spikeofe" && m_config["GateLog"].ValueAsDefault<bool>(false));
   g_spikeoutAILog = (game.name == "spikeofe" && m_config["AIPlayerLog"].ValueAsDefault<bool>(false));
+  g_spikeoutAIProfile = (game.name == "spikeofe" && m_config["AIProfile"].ValueAsDefault<bool>(false));   // 11/23
   g_spikeoutCpicLog = (game.name == "spikeofe" && m_config["CpicLog"].ValueAsDefault<bool>(false));
   g_spikeoutAITargetMarker = (game.name == "spikeofe" && m_config["AITargetMarker"].ValueAsDefault<bool>(false));
   g_spikeoutBotCanOpenGate = m_config["BotCanOpenGate"].ValueAsDefault<bool>(true);
