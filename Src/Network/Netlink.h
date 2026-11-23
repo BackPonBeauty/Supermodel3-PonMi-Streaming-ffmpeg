@@ -80,5 +80,23 @@ void NetlinkClientSetSession(int slot, const std::string &name, const std::strin
 bool NetlinkClientEnded(std::string &why);
 // Host, Main.cpp: the room session of our client ended (BYE, kick, idle kick, timeout): stop its link data too.
 void NetlinkHostDropClient();
+
+// 11/23: the client's latency display (F3 in Main.cpp).
+struct NetlinkStats
+{
+  bool on = false;          // playing (link data flowing)
+  bool session = false;     // joined through the room (else a home test without one)
+  int slot = 0, node = 0;
+  int rttMs = -1;           // room session PING -> PONG (UDP), -1 = none yet / no session
+  int backlog = 0;          // frames received and not played yet
+  int inputMs = -1;         // the last "our pad changed -> the host's node played it -> we have that frame"
+  int inputAvgMs = -1;      // the average of the last 10 of those
+  double kbps = 0;          // link data received, kbit/s (the last second)
+};
+NetlinkStats NetlinkClientStats();
+// Main.cpp, every frame: the pad we send (a change starts a measurement)
+void NetlinkLatencyMarkInput(uint32_t buttons, uint8_t hat);
+// net board, every frame: the node's input record for the frame we are about to play (a change ends it)
+void NetlinkLatencyInputPlayed(uint32_t sig);
 bool NetlinkClientOn();
 void NetlinkClientSendInput(const NetlinkInputMsg &m);

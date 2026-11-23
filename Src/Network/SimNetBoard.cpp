@@ -1136,6 +1136,9 @@ bool CSimNetBoard::CloneTakeInputs(const SatLinkEvent& e, int k)
 			g_satClone.inpLast[p] = g_satClone.inp[p][g_satClone.inpCnt[p] - 1];
 	}
 	g_satClone.haveInputs = true;
+	// 11/23 netlink: the latency display - what the node read changes when our pad's change has gone round
+	if (m_netlinkClient)
+		NetlinkLatencyInputPlayed((uint32_t)g_satClone.inpLast[0] | ((uint32_t)g_satClone.inpLast[1] << 8) | ((uint32_t)g_satClone.inpLast[2] << 16));
 	return true;
 }
 

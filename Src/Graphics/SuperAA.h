@@ -71,6 +71,8 @@ public:
 	// Pre-encode callback (renders ImGui overlay into fbo2 before encoding)
 	using PreEncodeCallback = std::function<void(GLuint fboID, int width, int height)>;
 	void SetPreEncodeCallback(PreEncodeCallback cb) { m_preEncodeCallback = cb; }
+	// 11/23 netlink: drawn on the window itself (framebuffer 0, after the frame is shown there) - not into the stream
+	void SetLocalOverlayCallback(PreEncodeCallback cb) { m_localOverlayCallback = cb; }
 private:
 	FBO m_fbo;
 	FBO m_fbo2;
@@ -108,4 +110,5 @@ private:
     IEncoder* m_encoder = nullptr;
     bool m_streamingEnabled = false;
     PreEncodeCallback m_preEncodeCallback;
+    PreEncodeCallback m_localOverlayCallback;
 };

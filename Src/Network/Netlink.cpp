@@ -585,6 +585,27 @@ namespace
   };
   NlSession s_sess;
 
+  // ---- the client's latency display ----
+  uint64_t NowUs()
+  {
+    static LARGE_INTEGER freq = []() { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (uint64_t) (c.QuadPart * 1000000 / freq.QuadPart);
+  }
+  std::atomic<int> s_rttMs{ -1 };
+  std::atomic<uint64_t> s_wireBytes{ 0 };
+  std::mutex s_latLock;
+  bool s_latPending = false;
+  uint64_t s_latStart = 0;
+  uint32_t s_latButtons = 0xFFFFFFFF;
+  uint8_t s_latHat = 0xFF;
+  bool s_latHaveSig = false;
+  uint32_t s_latSig = 0;
+  int s_latLast = -1;
+  int s_latHist[10] = {};
+  int s_latCount = 0;
+
   const char *RejectText(uint8_t reason)
   {
     using namespace StreamProto;
@@ -763,7 +784,7 @@ namespace
   void SessionThread()
   {
     using namespace StreamProto;
-    uint64_t lastHb = 0;
+    uint64_t lastHb = 0, lastPing = 0;
     char buf[1024];
     while (s_sess.run.load())
     {
@@ -774,6 +795,14 @@ namespace
         FillHeader(h, T_HB, s_sess.key);
         SessSend(&h, sizeof(h), s_sess.sessAddr);
         lastHb = now;
+      }
+      if (now - lastPing >= 500)                // the round trip for the latency display (the host echoes it)
+      {
+        Ping p;
+        FillHeader(p.h, T_PING, s_sess.key);
+        p.clientTime = NowUs();
+        SessSend(&p, sizeof(p), s_sess.sessAddr);
+        lastPing = now;
       }
       if (now - s_sess.lastReply.load() > kDropTimeoutMs)
       {
@@ -787,7 +816,13 @@ namespace
       if (n <= 0 || !ParseHeader(buf, n, &h) || h.version != kVersion || h.key != s_sess.key)
         continue;
       s_sess.lastReply.store(GetTickCount64());
-      if (h.type == T_NOTICE && n >= (int) sizeof(Notice))
+      if (h.type == T_PONG && n >= (int) sizeof(Ping))
+      {
+        Ping p;
+        memcpy(&p, buf, sizeof(p));
+        s_rttMs.store((int) ((NowUs() - p.clientTime + 500) / 1000));
+      }
+      else if (h.type == T_NOTICE && n >= (int) sizeof(Notice))
       {
         Notice nt;
         memcpy(&nt, buf, sizeof(nt));
@@ -968,6 +1003,7 @@ namespace
         break;
       }
       wire += 4 + n;
+      s_wireBytes.fetch_add(4 + n);
       if (plain[0] == 1)
       {
         if (prev.size() != plain.size() - 1)
@@ -1157,6 +1193,79 @@ bool NetlinkClientEnded(std::string &why)
 void NetlinkHostDropClient()
 {
   s_hostDrop.store(true);
+}
+
+NetlinkStats NetlinkClientStats()
+{
+  NetlinkStats st;
+  st.on = s_clientOn.load();
+  st.session = s_sess.want;
+  st.slot = s_sess.slot;
+  st.node = g_satClone.node;
+  st.rttMs = s_sess.want ? s_rttMs.load() : -1;
+  st.backlog = SatelliteTapBacklog();
+  // link data in the last second (measured over about one second between calls)
+  static uint64_t lastT = 0, lastBytes = 0;
+  static double kbps = 0;
+  uint64_t t = GetTickCount64(), b = s_wireBytes.load();
+  if (lastT == 0)
+  {
+    lastT = t;
+    lastBytes = b;
+  }
+  else if (t - lastT >= 1000)
+  {
+    kbps = (double) (b - lastBytes) * 8.0 / (double) (t - lastT);
+    lastT = t;
+    lastBytes = b;
+  }
+  st.kbps = kbps;
+  std::lock_guard<std::mutex> lk(s_latLock);
+  st.inputMs = s_latLast;
+  if (s_latCount > 0)
+  {
+    int n = s_latCount < 10 ? s_latCount : 10, sum = 0;
+    for (int i = 0; i < n; i++)
+      sum += s_latHist[i];
+    st.inputAvgMs = sum / n;
+  }
+  return st;
+}
+
+void NetlinkLatencyMarkInput(uint32_t buttons, uint8_t hat)
+{
+  std::lock_guard<std::mutex> lk(s_latLock);
+  if (buttons == s_latButtons && hat == s_latHat)
+    return;
+  static uint64_t lastChange = 0;
+  bool first = s_latButtons == 0xFFFFFFFF;
+  s_latButtons = buttons;
+  s_latHat = hat;
+  uint64_t now = NowUs();
+  if (s_latPending && now - s_latStart > 1000000)
+    s_latPending = false;                       // never came back (a press too short for the game to read): drop it
+  // only a change after 0.5 s of no change is timed: with mashing, the echo of an earlier change would end it early
+  if (!first && !s_latPending && now - lastChange >= 500000)
+  {
+    s_latPending = true;
+    s_latStart = now;
+  }
+  lastChange = now;
+}
+
+void NetlinkLatencyInputPlayed(uint32_t sig)
+{
+  std::lock_guard<std::mutex> lk(s_latLock);
+  bool changed = s_latHaveSig && sig != s_latSig;
+  s_latHaveSig = true;
+  s_latSig = sig;
+  if (!changed || !s_latPending)
+    return;
+  int ms = (int) ((NowUs() - s_latStart + 500) / 1000);
+  s_latPending = false;
+  s_latLast = ms;
+  s_latHist[s_latCount % 10] = ms;
+  s_latCount++;
 }
 
 bool NetlinkClientWaitSettings(const std::string &host, int port, int timeoutMs, std::vector<std::pair<std::string, std::string>> &out, std::string &error)

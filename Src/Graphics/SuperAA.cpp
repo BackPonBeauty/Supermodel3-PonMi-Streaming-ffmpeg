@@ -485,6 +485,16 @@ void SuperAA::Draw()
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // 11/23 netlink: our own overlay on the window (the latency display, F3)
+        if (m_localOverlayCallback)
+        {
+            GLint vp[4];
+            glGetIntegerv(GL_VIEWPORT, vp);
+            m_localOverlayCallback(0, m_width, m_height);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(vp[0], vp[1], vp[2], vp[3]);
+        }
     }
 
     if (m_overlayTex != 0 && m_wideScreen && m_overlay)

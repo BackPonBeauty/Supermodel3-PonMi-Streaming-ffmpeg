@@ -852,6 +852,8 @@ static unsigned s_saveSlot = 0;          // save state slot #
 // 11/23 netlink phase 3: a NETLINK slot chosen in the lobby runs the ROM here as that slot's clone; when the game ends
 // (left, kicked, the host gone) this process starts itself again with the lobby and why (-netlink-lobby=<why>).
 static bool s_netlinkFromLobby = false;
+static bool s_netlinkHud = false;               // F3: the latency display (netlink client)
+static int s_netlinkBuffer = 1;                 // ini NetlinkBuffer: frames kept in hand (0..2, default 1)
 static std::string s_netlinkLeave;              // why we left (empty: the player closed the game)
 static std::string s_netlinkLobbyMessage;       // -netlink-lobby=: open the lobby with this at start-up
 static std::vector<std::string> s_netlinkPassArgs;   // our own options to give the new process (-ini=...)
@@ -1469,6 +1471,8 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   // 11/23 netlink phase 3: a NETLINK slot (launcher: Streaming = 1 + NetlinkServe = 1) has the room's session
   // (tickets, password, idle kick, Firebase, UPnP) but sends link data instead of video and sound: no encoders
   const bool netlinkHost = streamingEnabled && s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) != 0;
+  s_netlinkHud = s_runtime_config["NetlinkHud"].ValueAsDefault<bool>(false);   // 11/23: the latency display at start (F3 toggles)
+  s_netlinkBuffer = std::min(2, std::max(0, s_runtime_config["NetlinkBuffer"].ValueAsDefault<int>(1)));
   SetAudioType(game.audio);
   if (Result::OKAY != OpenAudio(s_runtime_config, streamingEnabled && !netlinkHost))
     return 1;
@@ -1532,6 +1536,41 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   // P1 (11/16): the remote meta keys (Alt+D, bitrate up/down) came in through the ViGEm/XInput receiver,
   // which was removed. They come back through the new SessionServer in P4 (design SV-15, D-6).
+
+  // 11/23 netlink: the client's latency display (F3), on our own window
+  superAA->SetLocalOverlayCallback([](GLuint fbo, int w, int h) {
+    if (!s_netlinkHud || !ImGui::GetCurrentContext())
+      return;
+    NetlinkStats st = NetlinkClientStats();
+    if (!st.on)
+      return;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glViewport(0, 0, w, h);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.6f);
+    ImGui::Begin("##netlink_latency", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
+    const ImVec4 head(0.55f, 0.85f, 1.0f, 1.0f), val(1.0f, 1.0f, 1.0f, 1.0f), dim(0.7f, 0.7f, 0.7f, 1.0f);
+    ImGui::TextColored(head, "NETLINK  slot %d  node %d%s", st.slot, st.node, st.session ? "" : "  (home test)");
+    if (st.rttMs >= 0)
+      ImGui::TextColored(val, "Round trip (ping):   %d ms", st.rttMs);
+    else
+      ImGui::TextColored(dim, "Round trip (ping):   -");
+    ImGui::TextColored(val, "Buffer:              %d frames (%d ms), setting %d", st.backlog, (st.backlog * 1000 + 28) / 57, s_netlinkBuffer);
+    if (st.inputMs >= 0)
+      ImGui::TextColored(val, "Button -> game:      %d ms  (avg %d)", st.inputMs, st.inputAvgMs);
+    else
+      ImGui::TextColored(dim, "Button -> game:      press a button after a pause");
+    ImGui::TextColored(dim, "  on screen about one frame (17 ms) later");
+    ImGui::TextColored(val, "Link data:           %.0f kbit/s", st.kbps);
+    ImGui::End();
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+  });
 
   // Pre-encode callback: render debug panel / notifications into the stream
   superAA->SetPreEncodeCallback([decoderCodec](GLuint fboID, int w, int h) {
@@ -1873,6 +1912,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       if (on(Inputs->down[0]))  m.hat |= 0x04;
       if (on(Inputs->left[0]))  m.hat |= 0x08;
       NetlinkClientSendInput(m);
+      NetlinkLatencyMarkInput(m.buttons, m.hat);   // the latency display (F3)
     }
     static bool frameFlip = false;
     // Render if paused, otherwise run a frame (alternate every 2 loops if 120fps interpolation is active)
@@ -2280,15 +2320,23 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
         printf("[Debug] Panel %s (local Alt+D)\n", s_debugPanelVisible ? "ON" : "OFF");
       }
       altD_prev = altD_now;
+      // 11/23 netlink client: F3 = the latency display
+      static bool f3_prev = false;
+      bool f3_now = ks[SDL_SCANCODE_F3] != 0;
+      if (f3_now && !f3_prev && NetlinkClientOn())
+        s_netlinkHud = !s_netlinkHud;
+      f3_prev = f3_now;
     }
 
     // Refresh rate (frame limiting)
-    // 11/23 netlink phase 2: a client keeps about 2 frames of the host's data in hand - it runs at the refresh rate
-    // while it has 2 or fewer, without waiting while more have piled up (catching up), and blocks in the net board
-    // when none has come yet. Throttle in the ini does not matter then.
+    // 11/23 netlink phase 2: a client keeps a few frames of the host's data in hand - it runs at the refresh rate
+    // while it has NetlinkBuffer or fewer, without waiting while more have piled up (catching up), and blocks in the
+    // net board when none has come yet. Throttle in the ini does not matter then. NetlinkBuffer (11/23, owner):
+    // 1 by default (2 was 17 ms more); 0 = play each frame as soon as it comes (least delay, the network's jitter
+    // shows as judder); 2 for a shaky line.
     bool throttleNow = s_runtime_config["Throttle"].ValueAs<bool>();
     if (NetlinkClientOn())
-      throttleNow = SatelliteTapBacklog() <= 2;
+      throttleNow = SatelliteTapBacklog() <= s_netlinkBuffer && s_netlinkBuffer > 0;
     if (paused || throttleNow)
     {
       SuperSleepUntil(nextTime);
