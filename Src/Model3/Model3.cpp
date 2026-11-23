@@ -2531,6 +2531,7 @@ static bool SpikeoutScnArea(unsigned a) { return a != 75; }   // 10th: every are
 static int g_scnPhase = 0;         // this frame: 0 none, 1 the boss-fight roles run (a live boss)
 static bool g_scnMob = false;      // 11/22: this frame, we are a small-fry handler (and alive)
 static int g_scnPick = -1;         // 11/22: the small-fry handler's target this frame (-1 none)
+static bool g_scnGuard = false;    // 11/23: this frame, we are a small-fry handler guarding a boss handler (no item walks)
 static bool g_scnBossH = false;    // 11/22 (6th): this frame, we are a boss handler (and alive): bosses only, no wait mode
 static std::vector<SpikeoutWpKick> g_wpk;
 // Mall area 44 hidden route (11/10): when the pick is the heavy door D#5 (the other way is the A+B gate wall at
@@ -2962,7 +2963,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 					const UINT32 on = onOf(e9);
 					for (unsigned s = 0; s < np8; s++) if (alive[s] && on == robOf(s)) targeted |= 1u << s;
 				}
-				nBossL *= 2;   // 11/22 (user, 9th): two boss handlers per boss (area 87: 2)
+				// 11/22 (user, 9th): two boss handlers per boss (area 87: 2). 11/23 (owner): one per boss again - the small-fry
+				// handlers guard it instead (g_scnGuard below)
 				UINT32 keep = 0; int nKeep = 0;   // the boss handlers still alive stay
 				for (unsigned s = 0; s < np8; s++) if (((bossHMask >> s) & 1u) && alive[s] && nKeep < nBossL) { keep |= 1u << s; nKeep++; }
 				for (unsigned s = 0; s < np8 && nKeep < nBossL; s++)   // room: the lowest-slot bots a boss is going for
@@ -2978,10 +2980,26 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 			g_scnMob = g_scnPhase && bossHMask && !g_scnBossH && meAlive;
 			// The small-fry handler's target: (1) the nearest small fry going for a boss handler, (2) the nearest other small
 			// fry, (3) the nearest boss.
+			// 11/23 (owner): "the small-fry handlers guard the boss handler from the small fry first of all": (1) is also a small
+			// fry within 3 of a boss handler (same level within 1.5) that is not going for it yet, and while there is one of
+			// those (g_scnGuard) we do not walk off for items or things to hold.
+			g_scnGuard = false;
 			if (g_scnMob)
 			{
 				auto d2Of = [&](unsigned e9) { const UINT32 er = robOf(e9);
 					const float qx = *(const float *) &ram[er + 0x380] - px, qz = *(const float *) &ram[er + 0x388] - pz; return qx * qx + qz * qz; };
+				auto nearBossH = [&](unsigned e9) {
+					const UINT32 er = robOf(e9);
+					for (unsigned s = 0; s < np8; s++)
+					{
+						if (!((bossHMask >> s) & 1u)) continue;
+						const UINT32 hr = robOf(s);
+						const float qx = *(const float *) &ram[er + 0x380] - *(const float *) &ram[hr + 0x380];
+						const float qz = *(const float *) &ram[er + 0x388] - *(const float *) &ram[hr + 0x388];
+						const float qy = *(const float *) &ram[er + 0x384] - *(const float *) &ram[hr + 0x384];
+						if (qx * qx + qz * qz < 9.0f && fabsf(qy) < 1.5f + 1.15f) return true;   // (players stand ~0.9 above enemies)
+					}
+					return false; };
 				int p1 = -1, p2 = -1, p3 = -1; float d1 = 1e30f, d2 = 1e30f, d3 = 1e30f;
 				for (unsigned e9 = estart; e9 < 20; e9++)
 				{
@@ -2991,12 +3009,13 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						const UINT32 on = onOf(e9);
 						bool onBossH = false;
 						for (unsigned s = 0; s < np8; s++) if (((bossHMask >> s) & 1u) && on == robOf(s)) onBossH = true;
-						if (onBossH) { if (d < d1) { d1 = d; p1 = (int) e9; } }
+						if (onBossH || nearBossH(e9)) { if (d < d1) { d1 = d; p1 = (int) e9; } }
 						else if (d < d2) { d2 = d; p2 = (int) e9; }
 					}
 					else if (bossLiveE(e9) && d < d3) { d3 = d; p3 = (int) e9; }
 				}
 				g_scnPick = p1 >= 0 ? p1 : p2 >= 0 ? p2 : p3;
+				g_scnGuard = p1 >= 0;
 			}
 		}
 		UINT32 lockMask = 0;
@@ -4204,7 +4223,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				if (hpMe > 0 && hpMax > 0 && hpMe * 2 < hpMax) wantBits |= 0x31;
 				if (ram[(rob + 0x3F25) ^ 3] <= 4) wantBits |= 0x04;
 				static UINT32 nearSince = 0; static int nearIdx = -1;
-				if (AI_ITEM_SEEK && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)
+				if (AI_ITEM_SEEK && !g_scnGuard && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/23: not while guarding a boss handler
 				{
 					int cnt = *(const UINT16 *) &ram[(mgr + 0x10) ^ 2];
 					if (cnt > 0x106) cnt = 0x106;
@@ -4253,7 +4272,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// getting it: leave it for 10 s. a75 = 92.
 				g_aiWeaponPress = false;
 				g_aiHolding = SpikeoutHolding(ram, rob);   // 11/18
-				if (AI_ITEM_SEEK && seekIdx < 0 && !teOn && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/18: not on the way to the gate
+				if (AI_ITEM_SEEK && seekIdx < 0 && !teOn && !g_scnGuard && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/18: not on the way to the gate; 11/23: nor while guarding
 				{
 					static const UINT32 s_holdDefs[] = { 0xFFF6F3EC, 0xFFF6F574, 0xFFF6F880, 0xFFF6F904, 0xFFF6FB24,
 					                                     0xFFF701C8, 0xFFF7026C, 0xFFF7068C, 0xFFF6FCB4 };
@@ -5120,7 +5139,8 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						float ox = *(const float *) &ram[er + 0x380] - px, oz = *(const float *) &ram[er + 0x388] - pz;
 						if (ox * ox + oz * oz < 9.0f && fabsf(*(const float *) &ram[er + 0x384] - myY3) < 1.5f) nNear++;
 					}
-					g_aiCrowd4 = nNear >= 3;   // 11/21 (user): 3+ (was 4+, then 2+) - the B+C -> B+C+J here and at the dash attack
+					g_aiCrowd4 = nNear >= 3 && hpNow <= 150;   // 11/21 (user): 3+ (was 4+, then 2+) - the B+C -> B+C+J here and at the dash attack
+					                                           // 11/23 (owner): the dash attack's J too only at 150 HP or below, as every special
 					// 11/22 (user): the B+C -> B+C+J only when we are at 150 HP or below too (the dash attack's J: 3+ around, as before)
 					// 11/22 (user, 2nd): and 4+ around (was 3+)
 					crowdSpecial = nNear >= 4 && hpNow <= 150 && !g_aiHolding && (buttons & (BEAT | CHG)) == (BEAT | CHG) && !(buttons & JUMP);   // 11/18: the throw stays a throw
@@ -5366,7 +5386,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				comboPat = -1;
 				g_aiLogA75 = 124;
 			}
-			else if (dashAtk) { bits &= ~0x0F; bits |= BEAT | CHG; if (g_aiCrowd4 && g_ppcTraceFrame >= g_aiSpecNext) { bits |= JUMP; g_aiSpecNext = g_ppcTraceFrame + 180; } comboPat = -1; g_aiLogA75 = 132; }   // 11/18: dash attack (lever kept); 4+ around: B+C+J   // 11/18: dash attack (lever kept)
+			else if (dashAtk) { bits &= ~0x0F; bits |= BEAT | CHG; if (g_aiCrowd4 && g_ppcTraceFrame >= g_aiSpecNext) { bits |= JUMP; g_aiSpecNext = g_ppcTraceFrame + 180; } comboPat = -1; g_aiLogA75 = 132; }   // 11/18: dash attack (lever kept); 3+ around and (11/23) HP 150 or below: B+C+J
 			else if (dashStop) { bits &= ~(DIRS | 0x0F); bits |= 0x04; comboPat = -1; g_aiLogA75 = 120; }
 			else if (tooClose && comboPat < 0)
 			{

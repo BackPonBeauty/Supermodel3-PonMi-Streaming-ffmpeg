@@ -636,8 +636,9 @@ void SessionServer::SessionLoop()
     }
     if (h.type == T_KICK)
     {
-      // P7: the launcher on this PC removes the player of this slot
-      if (h.version == kVersion && from.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
+      // P7: the launcher on this PC removes the player of this slot. 11/23: any protocol version - the launcher
+      // still sent version 1 after the protocol went to 2 / 3, so no kick worked; only 127.0.0.1 matters here
+      if (from.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
         Kick();
       continue;
     }

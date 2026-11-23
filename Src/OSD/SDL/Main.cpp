@@ -279,7 +279,19 @@ void RelaunchHidden(int argc, char **argv)
 
   if (!isHidden)
   {
+    // (the command line's first word is the child's argv[0]: "--hidden")
     std::string cmdLine = "--hidden";
+    // 11/23 netlink: keep the lobby's message and our ini (-netlink-lobby=..., -ini=...); nothing else is passed on
+    for (int i = 1; i < argc; i++)
+    {
+      std::string a = argv[i];
+      if (a.rfind("-netlink-lobby=", 0) == 0 || a.rfind("-ini=", 0) == 0)
+      {
+        for (char &c : a)
+          if (c == '"') c = '\'';
+        cmdLine += " \"" + a + "\"";
+      }
+    }
     // Retrieve own executable path
     char szPath[MAX_PATH];
     GetModuleFileNameA(NULL, szPath, MAX_PATH);
@@ -2404,11 +2416,20 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   delete Render3D;
   delete superAA;
 
-  if (s_runtime_config["HideCMD"].ValueAs<bool>())
+  // 11/23: a netlink game from the lobby goes back to the lobby at the end of main (with why) - not here
+  if (s_runtime_config["HideCMD"].ValueAs<bool>() && !s_netlinkFromLobby)
   {
 
     {
       printf("[RELAUNCH] Game quit detected, relaunching...\n");
+#ifdef _WIN32
+      // 11/23: let go of "one client per PC" first, or the new process finds it still held and refuses to start
+      if (s_clientMutex)
+      {
+        CloseHandle(s_clientMutex);
+        s_clientMutex = nullptr;
+      }
+#endif
 
       char *argv[] = {
           (char *)"supermodel3",
@@ -3572,7 +3593,18 @@ int main(int argc, char **argv)
     // Checked after the HideCMD relaunch (the first process exits there). No setting lifts it (distribution build:
     // a player must not take several slots).
     {
-      HANDLE clientMutex = CreateMutexA(nullptr, FALSE, "Local\\SupermodelPonMi_StreamClient");
+      // 11/23: a client that has just closed (and started us again: back to the lobby) may still hold it for a
+      // moment while it exits - look again for up to 3 s before saying another client runs
+      HANDLE clientMutex = nullptr;
+      for (int tries = 0; ; tries++)
+      {
+        clientMutex = CreateMutexA(nullptr, FALSE, "Local\\SupermodelPonMi_StreamClient");
+        if (!(clientMutex && GetLastError() == ERROR_ALREADY_EXISTS) || tries >= 30)
+          break;
+        CloseHandle(clientMutex);
+        clientMutex = nullptr;
+        Sleep(100);
+      }
       if (clientMutex && GetLastError() == ERROR_ALREADY_EXISTS)
       {
         HWND other = FindWindowA(nullptr, "Supermodel-PonMi-Edition");

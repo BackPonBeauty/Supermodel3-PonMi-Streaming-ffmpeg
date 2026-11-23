@@ -7,12 +7,13 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261122b / PonLuncher 2.0.0
+> Build 20261123 / PonLuncher 2.1.0
 
 ---
 
 ## 🆕 What's new
 
+- **NETLINK (new in 20261123)** — a second way to join over the internet: instead of video, the host sends the link data, and the client runs the game itself from its own ROM. Low latency (button → game about 22–24 ms on a nearby connection with NET BUFFER 1) and little traffic (about 20–50 kbit/s). In the lobby NETLINK slots are blue. Players without the ROM can still join the STREAM slots
 - **Spikeout Final Edition with up to 8 players** (2–8 links). Bots can play the cabinets nobody is using
 - **The client is the same supermodel.exe** — no StreamReceiver. Open the lobby from the setup screen and connect
 - **New launcher, PonLuncher** — choose the number of links, the mode of each slot (stream, local, bot), the codec and so on, then press START
@@ -53,6 +54,10 @@
   - A long dash is reset twice the way a player does it (Shift + Charge, the lever back, a new dash), Charge held throughout
   - After an ally hold: the thank-you gesture, then the bot steps away from that ally
   - With 4 or more enemies around and 150 HP or less, B+C becomes the special (B+C+J)
+- **Bots (20261123):**
+  - One boss handler per boss again (was two). The small-fry handlers guard it first of all: the small fry going for a boss handler or within 3 of one come first, and while there is one, they do not walk off for items or weapons
+  - The dash attack's special (B+C+J) is also used only with 150 HP or less, like the other specials
+- **Save states with the link (20261123):** a save or load on one cabinet is done on every cabinet of the link at the same frame
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
 
 ---
@@ -74,6 +79,8 @@
 - The client uses the first controller
 - Streaming 8 slots at once puts a heavy load on the host. For 8 links a lower resolution (960×540 or 640×360) is recommended (tested: 8 links at 640×360 on an RTX 3060 host)
 - The room password option is turned off in the launcher for now (all rooms are public)
+- **NETLINK:** the client needs the ROM and **exactly the same supermodel.exe** as the host (the same release). A different exe or ROM is refused when connecting. The host's game settings (BOSS HP x1, SPIKE JR, NET BUFFER and so on) are sent to the client, so both run the same game
+- **NETLINK:** latency is the round trip plus about one frame per NET BUFFER step; far-away players feel the distance as with any online game
 
 ---
 
@@ -126,6 +133,7 @@ PonLuncher is distributed as a program only; its source is not part of this repo
 | OS | Windows 10 / 11, 64-bit |
 | Discord | Member of the designated Discord server (over the internet) |
 | Other | The ROM file, an XInput or DirectInput controller (a keyboard also works) |
+| NETLINK | The same release as the host. The game runs on the client PC, so it needs a PC that runs Supermodel at full speed (AVX2 CPU) |
 
 > Test machine: Core i7-13700F / RTX 4070 Super 12GB / 64GB RAM / Windows 11 (hosting also tested on an RTX 3060 PC)
 
@@ -134,6 +142,7 @@ PonLuncher is distributed as a program only; its source is not part of this repo
 ## 🔌 Ports (UDP)
 
 Slot n uses 4 ports starting at `55000 + (n − 1) × 4`.
+A NETLINK slot uses the input and session ports (UDP), and the video port number as **TCP** for the link data (opened with UPnP too); it uses no audio port.
 
 | Slot | Input | Session | Video | Audio |
 |------|-------|---------|-------|-------|
@@ -168,25 +177,28 @@ Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
    - CODEC: H264 or H265
    - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
    - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
-   - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
    - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn
    - BOSS HP x1: the boss's life stays as for one player, whatever the number of players
+   - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: TOY SHOP / PARKING, ROUTE3: COURTYARD / DIRECT
+   - BOT CAN OPEN GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
+3. **DEVELOP** (since 20261123 these options are here too):
+   - Log switches for testing (leave them off), SPIKE JR, INFINITE SPECIAL, KNOCK UP / KNOCK SIDE
    - 01 INVINCIBLE: slot 1 takes no damage (for testing)
    - TIMER STOP: the in-game countdown stays at 99 for every number of players
    - TARGET MARKER: a marker over the enemy each bot is aiming at
-   - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: TOY SHOP / PARKING, ROUTE3: COURTYARD / DIRECT
-   - BOT CAN OPEN GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
-   - DEVELOP: log switches for testing (leave them off)
-3. **SLOTS**: choose a mode for each slot
+   - NET BUFFER (0 / 1 / 2, default 1): frames a NETLINK client keeps in hand. 0 = lowest latency but every hiccup of the connection shows; 2 = smoother on a shaky connection, about 17 ms more per step
+   - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
+4. **SLOTS**: choose a mode for each slot
 
 | Mode | Meaning |
 |------|---------|
 | STREAM | A slot for a player over the internet (streamed) |
+| NETLINK | A slot for a player over the internet who runs the game from their own ROM (link data, no video) |
 | LOCAL | A slot played with a controller on the host PC (choose XINPUT / DINPUT under PAD) |
 | BOT | A slot played by a bot |
 
-4. **START** launches every slot and lists the host in the lobby. **STOP** ends it
-5. The name of each player is shown under PLAYER. **KICK** removes them from that slot
+5. **START** launches every slot and lists the host in the lobby. **STOP** ends it
+6. The name of each player is shown under PLAYER. **KICK** removes them from that slot
 
 > The streaming windows can be minimised. This does not affect the stream.
 
@@ -196,8 +208,10 @@ Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
 
 1. Start `PonMi/00/supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
 2. The lobby opens. Press LOGIN under **Discord** at the top
-3. In the host list, press a **green slot (free)**
-4. Once connected, the game screen appears
+3. In the host list, press a **green slot (free, STREAM)** or a **blue slot (free, NETLINK — plays from your own ROM)**
+4. Once connected, the game screen appears. A NETLINK game goes back to the lobby when you close it
+
+On a NETLINK slot, **F3** shows the round trip, the frames in hand, button → game latency and the data rate.
 
 | Key | Action |
 |-----|--------|

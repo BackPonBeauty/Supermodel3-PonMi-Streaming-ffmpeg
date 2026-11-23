@@ -44,7 +44,8 @@ void NetlinkClientStateLoaded();                    // Main.cpp: loaded, the lin
 // The settings (R-4 / LB-3, seen 11/23: the client had SpikeJr / EnemyKnockMul of its own and played another world):
 // the ini keys that change what the game computes are sent the moment a client connects, before anything else -
 // 'N','L','C','1', u32 size, "key=value\n" lines - and the client puts them over its own before the game is loaded.
-// kNetlinkGameKeys lists them (Model3.cpp reads them in LoadGame / GetCPUClockFrequencyInHz).
+// kNetlinkGameKeys lists them (Model3.cpp reads them in LoadGame / GetCPUClockFrequencyInHz). 11/23: + NetlinkBuffer
+// (Main.cpp), so the host launcher's NET BUFFER is what the client uses.
 extern const char *const kNetlinkGameKeys[];
 extern const int kNetlinkGameKeyCount;
 // Client, in Main.cpp before the game is loaded: connect and wait (up to timeoutMs) for the host's settings.
