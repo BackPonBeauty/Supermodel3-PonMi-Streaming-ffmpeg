@@ -177,17 +177,17 @@ Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
    - CODEC: H264 or H265
    - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
    - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
-   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn
-   - BOSS HP x1: the boss's life stays as for one player, whatever the number of players
-   - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: TOY SHOP / PARKING, ROUTE3: COURTYARD / DIRECT
+   - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: OTHER SIDE / TOY SHOP, ROUTE3: COURTYARD / DIRECT
    - BOT CAN OPEN GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
 3. **DEVELOP** (since 20261123 these options are here too):
-   - Log switches for testing (leave them off), SPIKE JR, INFINITE SPECIAL, KNOCK UP / KNOCK SIDE
+   - Log switches for testing (leave them off), SPIKE JR, ELECTRIC THUNDER, FLAMING TOP (KNOCK UP) / KNOCK SIDE
    - 01 INVINCIBLE: slot 1 takes no damage (for testing)
-   - TIMER STOP: the in-game countdown stays at 99 for every number of players
+   - FISH POSE (TIMER STOP): the in-game countdown stays at 99 for every number of players
    - TARGET MARKER: a marker over the enemy each bot is aiming at
    - NET BUFFER (0 / 1 / 2, default 1): frames a NETLINK client keeps in hand. 0 = lowest latency but every hiccup of the connection shows; 2 = smoother on a shaky connection, about 17 ms more per step
    - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
+   - BOSS HP x1: the boss's life stays as for one player, whatever the number of players
+   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn
 4. **SLOTS**: choose a mode for each slot
 
 | Mode | Meaning |
