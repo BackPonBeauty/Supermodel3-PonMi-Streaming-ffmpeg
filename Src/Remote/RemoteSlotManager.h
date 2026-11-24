@@ -37,6 +37,7 @@ public:
     void StartFirebaseAsync(const std::string &gameTitle = "", const std::string &serverName = "");
     void SetLocked(bool locked) { m_firebase.SetLocked(locked); }   // SV-18: room password set (lock icon)
     void SetNetlink(bool netlink) { m_firebase.SetNetlink(netlink); }   // 11/23: a NETLINK slot ("mode":"netlink")
+    void SetRemote(bool remote) { m_firebase.SetRemote(remote); }       // 11/24: a REMOTE slot ("mode":"auto")
 
     // Host information
     const std::string &GetHostId() const { return m_hostId; }

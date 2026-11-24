@@ -123,6 +123,12 @@ const char *CInput::GetMapping()
 	return m_mapping;
 }
 
+bool CInput::PeekSwitch() const
+{
+	bool v = value != 0;
+	return m_source != NULL && m_source->GetValueAsSwitch(v) && v;
+}
+
 void CInput::ClearMapping()
 {
 	SetMapping("NONE");

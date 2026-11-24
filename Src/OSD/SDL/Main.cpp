@@ -151,6 +151,13 @@ Util::Config::Node s_runtime_config("Global");
 ******************************************************************************/
 
 SDL_Window *s_window = nullptr;
+// 11/24 Headless (ini, owner): a bot cabinet runs with its window hidden and draws nothing (the game, the link and the
+// bot go on as before). Ignored with Streaming = 1 (the encoder needs the picture) unless NetlinkServe (a NETLINK slot
+// sends link data, no video). Set before CreateGLScreen.
+static bool s_headless = false;
+// 11/24 boot timeline (NetlinkTime) on a netlink client / satellite, or with BootTimeLog = 1
+static bool s_bootTime = false;
+#define BOOT_TIME(text) do { if (s_bootTime) NetlinkTime("boot: %s", text); } while (0)
 
 /*
  * Position and size of rectangular region within OpenGL display to render to.
@@ -188,6 +195,9 @@ static void PushBitrateNotify(int avgBps, const char* reason)
     char buf[128];
     snprintf(buf, sizeof(buf), "Bitrate: %.1f Mbps  [%s]", avgBps / 1000000.0f, reason);
     s_bitrateNotify = {buf, SDL_GetTicks() / 1000.0f + 4.0f};
+    // 11/24 (owner): the client draws it (a NOTICE, like the idle-kick warning) - no longer drawn into the video, so a
+    // STREAM node's window can be minimized (ImGui draws nothing at window size 0)
+    s_session.Notify(buf);
 }
 
 static int       s_currentAvgBitrate = 2500000;
@@ -285,7 +295,7 @@ void RelaunchHidden(int argc, char **argv)
     for (int i = 1; i < argc; i++)
     {
       std::string a = argv[i];
-      if (a.rfind("-netlink-lobby=", 0) == 0 || a.rfind("-ini=", 0) == 0)
+      if (a.rfind("-netlink-lobby=", 0) == 0 || a.rfind("-ini=", 0) == 0 || a == "-lobby")   // 11/24: -lobby too
       {
         for (char &c : a)
           if (c == '"') c = '\'';
@@ -421,14 +431,14 @@ static Result CreateGLScreen(bool coreContext, bool quadRendering, const std::st
   }
 
   // Set video mode
-  s_window = SDL_CreateWindow(caption.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, *xResPtr, *yResPtr, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | (fullScreen ? SDL_WINDOW_FULLSCREEN : 0));
+  s_window = SDL_CreateWindow(caption.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, *xResPtr, *yResPtr, SDL_WINDOW_OPENGL | (s_headless ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN) | (fullScreen ? SDL_WINDOW_FULLSCREEN : 0));
   if (nullptr == s_window)
   {
     ErrorLog("Unable to create an OpenGL display: %s\n", SDL_GetError());
     return Result::FAIL;
   }
 
-  if (focusWindow)
+  if (focusWindow && !s_headless)
   {
     SDL_RaiseWindow(s_window);
   }
@@ -859,15 +869,18 @@ static const int STATE_FILE_VERSION = 6; // save state file version
 static const int NVRAM_FILE_VERSION = 0; // NVRAM file version
 static unsigned s_saveSlot = 0;          // save state slot #
 #include "Network/Netlink.h"
+#include "OSD/SDL/PonUI.h"
 #include "Network/SimNetBoard.h"
 #include "Stream/Satellite.h"
 // 11/23 netlink phase 3: a NETLINK slot chosen in the lobby runs the ROM here as that slot's clone; when the game ends
 // (left, kicked, the host gone) this process starts itself again with the lobby and why (-netlink-lobby=<why>).
 static bool s_netlinkFromLobby = false;
+static uint64_t s_slotChosenTick = 0;          // 11/24: GetTickCount64() when the NETLINK slot was chosen in the lobby
 static bool s_netlinkHud = false;               // F3: the latency display (netlink client)
 static int s_netlinkBuffer = 1;                 // ini NetlinkBuffer: frames kept in hand (0..2, default 1)
 static std::string s_netlinkLeave;              // why we left (empty: the player closed the game)
 static std::string s_netlinkLobbyMessage;       // -netlink-lobby=: open the lobby with this at start-up
+static bool s_lobbyAtStart = false;             // 11/24: -lobby: open the lobby at start-up
 static std::vector<std::string> s_netlinkPassArgs;   // our own options to give the new process (-ini=...)
 #ifdef _WIN32
 static HANDLE s_clientMutex = nullptr;          // "one client per PC" (released just before starting the lobby again)
@@ -904,13 +917,15 @@ extern bool g_netStateSyncOn;
 extern int g_netStateReq, g_netStateReqSlot;
 extern int g_netStateDo, g_netStateDoSlot;
 
-static void SaveState(IEmulator *Model3, std::string file_path = std::string())
+// 11/24: mem != nullptr = save into / load from memory (file_path is only a name for the log)
+static void SaveState(IEmulator *Model3, std::string file_path = std::string(), std::vector<char> *mem = nullptr)
 {
   CBlockFile SaveState;
 
   if (file_path.empty())
     file_path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << Model3->GetGame().name << ".st" << s_saveSlot;
-  if (Result::OKAY != SaveState.Create(file_path, "Supermodel Save State", "Supermodel Version " SUPERMODEL_VERSION))
+  if (Result::OKAY != (mem ? SaveState.Create(*mem, "Supermodel Save State", "Supermodel Version " SUPERMODEL_VERSION)
+                           : SaveState.Create(file_path, "Supermodel Save State", "Supermodel Version " SUPERMODEL_VERSION)))
   {
     ErrorLog("Unable to save state to '%s'.", file_path.c_str());
     return;
@@ -928,7 +943,7 @@ static void SaveState(IEmulator *Model3, std::string file_path = std::string())
   InfoLog("Saved state to '%s'.", file_path.c_str());
 }
 
-static void LoadState(IEmulator *Model3, std::string file_path = std::string())
+static void LoadState(IEmulator *Model3, std::string file_path = std::string(), const std::vector<char> *mem = nullptr)
 {
   CBlockFile SaveState;
 
@@ -937,7 +952,7 @@ static void LoadState(IEmulator *Model3, std::string file_path = std::string())
     file_path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << Model3->GetGame().name << ".st" << s_saveSlot;
 
   // Open and check to make sure format is correct
-  if (Result::OKAY != SaveState.Load(file_path))
+  if (Result::OKAY != (mem ? SaveState.Load(*mem) : SaveState.Load(file_path)))
   {
     ErrorLog("Unable to load state from '%s'.", file_path.c_str());
     return;
@@ -1047,7 +1062,7 @@ static uint32_t currentInputs = 0;
 
 bool BeginFrameVideo()
 {
-  return true;
+  return !s_headless;   // 11/24 Headless: no drawing at all
 }
 
 /*
@@ -1337,6 +1352,8 @@ static void SpikeoutDrawWalls()
 
 void EndFrameVideo()
 {
+  if (s_headless) return;   // 11/24 Headless: nothing drawn, nothing to swap
+
   // Show crosshairs for light gun games
   if (videoInputs)
     s_crosshair->Update(currentInputs, videoInputs, xOffset, yOffset, xRes, yRes);
@@ -1374,6 +1391,51 @@ static uint64_t GetDesiredRefreshRateMilliHz()
   return refreshRateMilliHz;
 }
 
+// 11/24 (owner, plan 1): a netlink client used to read its pad once a frame (17.4 ms) and send it then, so a press
+// waited 0-17 ms (8.7 on average) before it left. Now it also reads the pad about every 1 ms while the main loop
+// waits between frames, and sends a change at once. The once-a-frame send stays (a lost UDP packet is mended by the
+// next one; the host's idle kick sees the same stream). PeekSwitch reads the mapped sources (keyboard, any pad,
+// with the client's own ini) without touching the inputs' value / prevValue, so nothing else sees an extra poll.
+static CInputs *s_nlPadInputs = nullptr;        // set while a netlink client (not the satellite) runs
+static uint32_t s_nlSentButtons = 0xFFFFFFFFu;  // the last message sent
+static uint8_t s_nlSentHat = 0xFF;
+
+static NetlinkInputMsg NetlinkPadMsg(CInputs *Inputs, bool peek)
+{
+  NetlinkInputMsg m;
+  auto on = [peek](const std::shared_ptr<CSwitchInput> &s) { return s && (peek ? s->PeekSwitch() : s->value != 0); };
+  if (on(Inputs->shift))    m.buttons |= 1u << 0;
+  if (on(Inputs->beat))     m.buttons |= 1u << 2;
+  if (on(Inputs->charge))   m.buttons |= 1u << 3;
+  if (on(Inputs->jump))     m.buttons |= 1u << 5;
+  if (on(Inputs->coin[0]))  m.buttons |= 1u << 6;
+  if (on(Inputs->start[0])) m.buttons |= 1u << 7;
+  if (on(Inputs->up[0]))    m.hat |= 0x01;
+  if (on(Inputs->right[0])) m.hat |= 0x02;
+  if (on(Inputs->down[0]))  m.hat |= 0x04;
+  if (on(Inputs->left[0]))  m.hat |= 0x08;
+  return m;
+}
+
+static void NetlinkPadSend(const NetlinkInputMsg &m)
+{
+  NetlinkClientSendInput(m);
+  NetlinkLatencyMarkInput(m.buttons, m.hat);   // the latency display (F3)
+  s_nlSentButtons = m.buttons;
+  s_nlSentHat = m.hat;
+}
+
+// between frames: refresh SDL's keyboard / pad state (events stay queued for the main loop) and send a change
+static void NetlinkPadPeek()
+{
+  if (!s_nlPadInputs)
+    return;
+  SDL_PumpEvents();
+  NetlinkInputMsg m = NetlinkPadMsg(s_nlPadInputs, true);
+  if (m.buttons != s_nlSentButtons || m.hat != s_nlSentHat)
+    NetlinkPadSend(m);
+}
+
 static void SuperSleepUntil(const uint64_t target)
 {
   uint64_t time = SDL_GetPerformanceCounter();
@@ -1389,6 +1451,7 @@ static void SuperSleepUntil(const uint64_t target)
   while (int64_t(target - time) * 1000 > 2 * int64_t(s_perfCounterFrequency))
   {
     SDL_Delay(1);
+    NetlinkPadPeek();   // 11/24: a netlink client's pad, about every 1 ms (nothing otherwise)
     time = SDL_GetPerformanceCounter();
   }
 
@@ -1427,10 +1490,13 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   bool dumpTimings = false;
 
   // Initialize and load ROMs
+  BOOT_TIME("Supermodel() start");
   if (Result::OKAY != Model3->Init())
     return 1;
+  BOOT_TIME("Model3 Init done");
   if (Model3->LoadGame(game, *rom_set) != Result::OKAY)
     return 1;
+  BOOT_TIME("LoadGame done (patches, costumes)");
   *rom_set = ROMSet(); // free up this memory we won't need anymore
 
   // Customized music for games with MPEG boards
@@ -1438,6 +1504,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
   // Load NVRAM
   LoadNVRAM(Model3);
+  BOOT_TIME("NVRAM loaded");
 
   // Set the video mode
   char baseTitleStr[128];
@@ -1482,7 +1549,11 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   bool streamingEnabled = s_runtime_config["Streaming"].ValueAsDefault<bool>(false);
   // 11/23 netlink phase 3: a NETLINK slot (launcher: Streaming = 1 + NetlinkServe = 1) has the room's session
   // (tickets, password, idle kick, Firebase, UPnP) but sends link data instead of video and sound: no encoders
-  const bool netlinkHost = streamingEnabled && s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) != 0;
+  const bool netlinkHost = streamingEnabled && s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) == 1;
+  // 11/24 (owner) REMOTE slot (Streaming = 1 + NetlinkServe = 2): the client picks STREAM (video) or NETLINK (its own
+  // ROM) - its HELLO says which (codecs = 0: netlink). The encoder is made as on a STREAM slot but encodes only while a
+  // stream client is in; the link data port (TCP base + 2) is open as on a NETLINK slot.
+  const bool remoteSlot = streamingEnabled && s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) == 2;
   s_netlinkHud = s_runtime_config["NetlinkHud"].ValueAsDefault<bool>(false);   // 11/23: the latency display at start (F3 toggles)
   s_netlinkBuffer = std::min(2, std::max(0, s_runtime_config["NetlinkBuffer"].ValueAsDefault<int>(1)));
   SetAudioType(game.audio);
@@ -1536,11 +1607,17 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     videoEncoder = s_runtime_config["VideoEncoder"].ValueAs<std::string>();
 
   SuperAA *superAA = new SuperAA(aaValue, CRTcolors, m_scanLine, scanlineStrength, totalXRes, totalYRes, BarrelStrength, game.title.c_str(), m_wideScreen, m_Overlay, s_configFilePath.c_str());
+  BOOT_TIME("SuperAA Init start");
   superAA->Init(totalXRes, totalYRes, videoPort, streamingEnabled && !netlinkHost, decoderCodec, videoEncoder); // pass actual frame sizes here
+  BOOT_TIME("SuperAA Init done");
+  if (remoteSlot)
+    superAA->SetEncodeOn(false);   // 11/24: nobody yet
 
   // Re-initialize ImGui for gameplay overlay
   if (!ImGui::GetCurrentContext())
     ImGui::CreateContext();
+  if (ImGui::GetIO().Fonts->Fonts.empty())
+    PonUI::AddWindowsFont(16.0f);   // 11/24 (owner): the overlay's text in a Windows font
   ImGui_ImplSDL2_InitForOpenGL(s_window, SDL_GL_GetCurrentContext());
   ImGui_ImplOpenGL3_Init("#version 150");
 
@@ -1591,7 +1668,8 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 
     float now = SDL_GetTicks() / 1000.0f;
 
-    bool hasBitrate = (now < s_bitrateNotify.expireTime);
+    bool hasBitrate = false;   // 11/24: the bitrate notice is the client's now (PushBitrateNotify sends a NOTICE)
+    (void) now;
     bool needDraw   = s_debugPanelVisible || hasBitrate;
     if (!needDraw) return;
 
@@ -1660,8 +1738,16 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   {
     int linkplay = (int)s_runtime_config["LinkPlay"].ValueAsDefault<int64_t>(0);
     SessionServer::Callbacks cb;
-    cb.onConnected = [superAA, linkplay, netlinkHost](const std::string &name, const std::string &ip) {
-      if (!netlinkHost)
+    cb.onConnected = [superAA, linkplay, netlinkHost, remoteSlot](const std::string &name, const std::string &ip) {
+      if (remoteSlot)
+      {
+        const bool nl = s_session.ClientIsNetlink();
+        printf("[Session] REMOTE slot: %s joined as %s\n", name.c_str(), nl ? "NETLINK (link data)" : "STREAM (video)");
+        superAA->SetEncodeOn(!nl);
+        if (!nl)
+          superAA->GetEncoder().RequestKeyframe();
+      }
+      else if (!netlinkHost)
         superAA->GetEncoder().RequestKeyframe();   // the new client starts with a keyframe
 #ifdef SUPERMODEL_WIN32
       s_remoteSlotMgr.SetSlotClientCount(linkplay, 1);
@@ -1669,14 +1755,16 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       s_remoteSlotMgr.SetSlotOccupied();
 #endif
     };
-    cb.onDisconnected = [superAA, linkplay, netlinkHost](const char *why) {
+    cb.onDisconnected = [superAA, linkplay, netlinkHost, remoteSlot](const char *why) {
       if (!netlinkHost)
       {
         superAA->GetEncoder().SetDestEndpoints({});
         SetAudioDestEndpoints({});
       }
-      else
+      if (netlinkHost || remoteSlot)
         NetlinkHostDropClient();   // the link data stops with the session
+      if (remoteSlot)
+        superAA->SetEncodeOn(false);   // 11/24: nobody in the REMOTE slot
 #ifdef SUPERMODEL_WIN32
       s_remoteSlotMgr.SetSlotClientCount(linkplay, 0);
       s_remoteSlotMgr.SetSlotPlayer(linkplay, "");
@@ -1684,7 +1772,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
 #endif
     };
     cb.onKeyframeRequest = [superAA, netlinkHost]() {
-      if (!netlinkHost)
+      if (!netlinkHost && superAA->IsEncodeOn())
         superAA->GetEncoder().RequestKeyframe();
     };
     cb.onMetaKeys = [](uint8_t risen) {
@@ -1722,6 +1810,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       s_session.SetPassword(pw);
     }
     s_session.SetNetlink(netlinkHost);
+    s_session.SetAuto(remoteSlot);   // 11/24
     if (!s_session.Start(linkplay, sessionPort, inputPort, netlinkHost ? 0 : superAA->GetEncoder().GetWidth(),
                          netlinkHost ? 0 : superAA->GetEncoder().GetHeight(), decoderCodec, cb))
       printf("[Session] Failed to start the session server (ports %d / %d)\n", sessionPort, inputPort);
@@ -1737,14 +1826,19 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   if (Result::OKAY != Render3D->Init(xOffset * aaValue, yOffset * aaValue, xRes * aaValue, yRes * aaValue, totalXRes * aaValue, totalYRes * aaValue, superAA->GetTargetID()))
     goto QuitError;
 
+  BOOT_TIME("Render2D / Render3D Init done");
   Model3->AttachRenderers(Render2D, Render3D, superAA);
 
   // Reset emulator
   Model3->Reset();
+  BOOT_TIME("Reset done");
 
   // Load initial save state if requested
   if (!initialState.empty())
+  {
     LoadState(Model3, initialState);
+    BOOT_TIME("initial state loaded");
+  }
 
 #ifdef SUPERMODEL_DEBUGGER
   // If debugger was supplied, set it as logger and attach it to system
@@ -1770,6 +1864,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
   }
 
 #endif
+  BOOT_TIME("main loop start");
   while (!quit)
   {
     // 11/23 netlink phase 3: our room session / the host's link data is over (BYE, kick, idle kick, host gone):
@@ -1786,7 +1881,7 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     }
     static uint32_t lastBitrateUpdate = 0;
     uint32_t now = GetTickCount();
-    if (streamingEnabled && !netlinkHost && (now - lastBitrateUpdate > 1500))   // 11/23: no video on a netlink slot
+    if (streamingEnabled && !netlinkHost && superAA->IsEncodeOn() && (now - lastBitrateUpdate > 1500))   // 11/23: no video on a netlink slot (11/24: nor on a REMOTE slot without a stream client)
     {
         lastBitrateUpdate = now;
 
@@ -1873,22 +1968,12 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       std::vector<char> st;
       if (NetlinkClientTakeState(st))
       {
-        std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << "netlink_client.st";
-        bool written = false;
-        if (FILE *f = fopen(path.c_str(), "wb"))
-        {
-          written = fwrite(st.data(), 1, st.size(), f) == st.size();
-          fclose(f);
-        }
-        if (written)
-        {
-          Model3->PauseThreads();
-          LoadState(Model3, path);
-          Model3->ResumeThreads();
-        }
-        else
-          ErrorLog("Netlink: cannot write '%s'.", path.c_str());
+        // 11/24: straight from memory (it went through Saves\netlink_client.st: 48 MB on the disk, 1.4 s)
+        Model3->PauseThreads();
+        LoadState(Model3, "netlink state (memory)", &st);
+        Model3->ResumeThreads();
         NetlinkClientStateLoaded();
+        NetlinkTime("client: state loaded (the game runs from here)");
         // phase 2: our first frame plays the inputs node k read in it (they come with the host's frame F+1)
         if (CModel3 *m3 = dynamic_cast<CModel3 *>(Model3))
           if (CSimNetBoard *nb = dynamic_cast<CSimNetBoard *>(m3->GetNetBoard()))
@@ -1909,22 +1994,23 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
     }
     // 11/23 main6 netlink phase 1: on a client, our pad (read with our own ini) goes to the host's node in its
     // STREAM layout; our own game (the clone) plays what that node read, so it never sees these directly.
-    if (NetlinkClientOn())
+    if (NetlinkClientOn() && !NetlinkClientIsWatch())   // (the satellite only watches)
     {
-      NetlinkInputMsg m;
-      auto on = [](const std::shared_ptr<CSwitchInput> &s) { return s && s->value; };
-      if (on(Inputs->shift))    m.buttons |= 1u << 0;
-      if (on(Inputs->beat))     m.buttons |= 1u << 2;
-      if (on(Inputs->charge))   m.buttons |= 1u << 3;
-      if (on(Inputs->jump))     m.buttons |= 1u << 5;
-      if (on(Inputs->coin[0]))  m.buttons |= 1u << 6;
-      if (on(Inputs->start[0])) m.buttons |= 1u << 7;
-      if (on(Inputs->up[0]))    m.hat |= 0x01;
-      if (on(Inputs->right[0])) m.hat |= 0x02;
-      if (on(Inputs->down[0]))  m.hat |= 0x04;
-      if (on(Inputs->left[0]))  m.hat |= 0x08;
-      NetlinkClientSendInput(m);
-      NetlinkLatencyMarkInput(m.buttons, m.hat);   // the latency display (F3)
+      s_nlPadInputs = Inputs;                      // 11/24: also read between frames (NetlinkPadPeek)
+      NetlinkPadSend(NetlinkPadMsg(Inputs, false));
+    }
+    else
+      s_nlPadInputs = nullptr;
+    // 11/24: with no frame of the host's in hand (NetlinkBuffer = 0, or the line is late) the net board would block
+    // inside RunFrame; wait here instead (up to 40 ms, then the net board waits as before), reading the pad meanwhile
+    if (s_nlPadInputs && !paused && SatelliteTapBacklog() == 0)
+    {
+      uint64_t until = SDL_GetPerformanceCounter() + s_perfCounterFrequency * 40 / 1000;
+      while (SatelliteTapBacklog() == 0 && SDL_GetPerformanceCounter() < until)
+      {
+        SDL_Delay(1);
+        NetlinkPadPeek();
+      }
     }
     static bool frameFlip = false;
     // Render if paused, otherwise run a frame (alternate every 2 loops if 120fps interpolation is active)
@@ -1952,27 +2038,39 @@ int Supermodel(const Game &game, ROMSet *rom_set, IEmulator *Model3, CInputs *In
       Model3->RunFrame();
     }
 
+    // 11/24 test (ini MemStateTest = 1): at frame 600, the memory save = the file save, then load it back from memory
+    {
+      static int s_mstFrame = 0;
+      if (++s_mstFrame == 600 && s_runtime_config["MemStateTest"].ValueAsDefault<bool>(false))
+      {
+        std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << "memtest.st";
+        std::vector<char> mem;
+        Model3->PauseThreads();
+        SaveState(Model3, "memtest (memory)", &mem);
+        SaveState(Model3, path);
+        std::vector<char> disk;
+        if (FILE *f = fopen(path.c_str(), "rb"))
+        {
+          fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+          disk.resize((size_t) n);
+          if (fread(disk.data(), 1, (size_t) n, f) != (size_t) n) disk.clear();
+          fclose(f);
+        }
+        LoadState(Model3, "memtest (memory)", &mem);
+        Model3->ResumeThreads();
+        InfoLog("MemStateTest: memory %u bytes, file %u bytes, same = %d", (unsigned) mem.size(), (unsigned) disk.size(), (int) (mem == disk));
+      }
+    }
+
     // 11/23 main6 netlink: a new client on our node gets our state at the end of this frame (Network/Netlink.h)
     if (NetlinkHostTakeSaveRequest())
     {
-      std::string path = Util::Format() << FileSystemPath::GetPath(FileSystemPath::Saves) << "netlink_host.st";
-      Model3->PauseThreads();
-      SaveState(Model3, path);
-      Model3->ResumeThreads();
+      // 11/24: saved into memory (it went through Saves\netlink_host.st: 48 MB written and read back)
       std::vector<char> st;
-      if (FILE *f = fopen(path.c_str(), "rb"))
-      {
-        fseek(f, 0, SEEK_END);
-        long n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        if (n > 0)
-        {
-          st.resize((size_t) n);
-          if (fread(st.data(), 1, (size_t) n, f) != (size_t) n)
-            st.clear();
-        }
-        fclose(f);
-      }
+      Model3->PauseThreads();
+      SaveState(Model3, "netlink state (memory)", &st);
+      Model3->ResumeThreads();
+      NetlinkTime("host: save state made in memory (%u bytes)", (unsigned) st.size());
       NetlinkHostSetState(std::move(st));
     }
 
@@ -3402,7 +3500,7 @@ static ParsedCommandLine ParseCommandLine(int argc, char **argv)
 // minimised). The two lines are replaced in place (other lines left as they are); missing lines are not added.
 static void SaveWindowPosToINI()
 {
-  if (s_window == nullptr || s_configFilePath.empty()) return;
+  if (s_window == nullptr || s_configFilePath.empty() || s_headless) return;
   const Uint32 wf = SDL_GetWindowFlags(s_window);
   if (wf & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MINIMIZED)) return;
   int x = 0, y = 0;
@@ -3511,6 +3609,13 @@ int main(int argc, char **argv)
       s_netlinkLobbyMessage = argv[i] + strlen(opt);
       continue;
     }
+    // 11/24 (owner): "-lobby" = the client starts in the streaming lobby (without it, the settings GUI, and LAUNCH
+    // starts Spikeout at once)
+    if (i > 0 && strcmp(argv[i], "-lobby") == 0)
+    {
+      s_lobbyAtStart = true;
+      continue;
+    }
     const char *optJoin = "-netlink-test-join=";
     if (i > 0 && strncmp(argv[i], optJoin, strlen(optJoin)) == 0)
     {
@@ -3590,8 +3695,10 @@ int main(int argc, char **argv)
 #ifdef _WIN32
     // 11/16 (owner): only one client per PC. A start without a ROM (settings GUI -> lobby -> stream client) takes a
     // named mutex; servers started by the launcher with a ROM never get here, so they stay multi-instance.
-    // Checked after the HideCMD relaunch (the first process exits there). No setting lifts it (distribution build:
-    // a player must not take several slots).
+    // Checked after the HideCMD relaunch (the first process exits there). (Distribution build: a player must not take
+    // several slots.) 11/24 (owner): ini Admin = 1 (PonLuncher's DEVELOP > ADMIN, written to the PonMi node folders
+    // at LUNCH) lifts it - several clients on one PC for testing.
+    if (!fConfig2["Admin"].ValueAsDefault<bool>(false))
     {
       // 11/23: a client that has just closed (and started us again: back to the lobby) may still hold it for a
       // moment while it exits - look again for up to 3 s before saying another client runs
@@ -3625,6 +3732,8 @@ int main(int argc, char **argv)
 #endif
     if (!s_netlinkLobbyMessage.empty())
       Lobby::Open(s_netlinkLobbyMessage);   // 11/23 netlink: back from a NETLINK game, with why
+    else if (s_lobbyAtStart)
+      Lobby::Open();                        // 11/24: -lobby
 
     // Streaming (P5): GUI -> (spikeofe) lobby -> stream client -> back to the lobby, until a ROM is
     // launched (normal play, or "skip" in the lobby) or the GUI is closed.
@@ -3654,6 +3763,7 @@ int main(int argc, char **argv)
         cmd_line.config.Set("AIPlayer", std::string("0"));
         NetlinkClientSetSession(req.slot, req.name, req.password);   // the password stays in memory (not in the config / log)
         s_netlinkFromLobby = true;
+        s_slotChosenTick = GetTickCount64();
         break;
       }
       std::string message;
@@ -3691,6 +3801,8 @@ int main(int argc, char **argv)
   InfoLog("Started as:");
   for (int i = 0; i < argc; i++)
     InfoLog("  argv[%d] = %s", i, argv[i]);
+  if (s_slotChosenTick)
+    NetlinkTime("lobby: the slot was chosen %llu ms ago", (unsigned long long) (GetTickCount64() - s_slotChosenTick));
 
   // Time-limited execution limit (expiration setting)
   {
@@ -3767,15 +3879,23 @@ int main(int argc, char **argv)
         PrintGameList(xml_file, loader.GetGames());
         return 0;
       }
+      if (s_slotChosenTick)
+        NetlinkTime("ROM: reading the zip");
       if (loader.Load(&game, &rom_set, *cmd_line.rom_files.begin()))
         return 1;
+      if (s_slotChosenTick)
+        NetlinkTime("ROM: zip read");
       Util::Config::MergeINISections(&config4, config3, fileConfig[game.name]); // apply game-specific config
     }
     else
       config4 = config3;
     Util::Config::MergeINISections(&s_runtime_config, config4, cmd_line.config); // apply command line overrides once more
   }
+  if (s_slotChosenTick)
+    NetlinkTime("config merged");
   LogConfig(s_runtime_config);
+  if (s_slotChosenTick)
+    NetlinkTime("config logged");
 
   // Initialize SDL (individual subsystems get initialized later)
   if (SDL_Init(0) != 0)
@@ -3783,6 +3903,8 @@ int main(int argc, char **argv)
     ErrorLog("Unable to initialize SDL: %s\n", SDL_GetError());
     return 1;
   }
+  if (s_slotChosenTick)
+    NetlinkTime("SDL_Init(0) done");
 
   // Flag as DPI-aware, otherwise the window content might be scaled by some graphics drivers
   SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "system");
@@ -3803,7 +3925,7 @@ int main(int argc, char **argv)
   // 11/23 main6 netlink phase 1 (HO-1, HO-5): a host node with NetlinkServe = 1 is played from its netlink client:
   // no local pads (input system NONE), no bot, the controls in the fixed STREAM layout the client sends. Runtime
   // only - the ini is not changed, so whatever the launcher wrote for the slot stays.
-  if (s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0))
+  if (s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) == 1)   // 11/24: 2 = a REMOTE slot, set up below as a STREAM slot
   {
     selectedInputSystem = "none";
     s_runtime_config.Set("AIPlayer", 0);
@@ -3816,27 +3938,55 @@ int main(int argc, char **argv)
       s_runtime_config.Set(kv[0], std::string(kv[1]));
     printf("[Netlink] Host node: input from the netlink client (input system NONE, no bot)\n");
   }
+  // 11/24 (owner): the launcher no longer writes the controls; supermodel sets them for the node's role at run time
+  // (the ini is not changed). A STREAM slot (Streaming = 1, not a netlink / satellite client): no local pads (input
+  // system NONE, ESC only), the controls in the layout the stream client sends (what PonLuncher used to write).
+  else if (s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && !s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false))
+  {
+    selectedInputSystem = "none";
+    static const char *const kStreamMap[][2] = {
+      { "InputStart1", "KEY_1,JOY1_BUTTON8" }, { "InputCoin1", "JOY1_BUTTON7" },
+      { "InputJoyUp", "KEY_W,JOY1_YAXIS_NEG,JOY1_POV1_UP" }, { "InputJoyDown", "KEY_S,JOY1_YAXIS_POS,JOY1_POV1_DOWN" },
+      { "InputJoyLeft", "KEY_A,JOY1_XAXIS_NEG,JOY1_POV1_LEFT" }, { "InputJoyRight", "KEY_D,JOY1_XAXIS_POS,JOY1_POV1_RIGHT" },
+      { "InputShift", "JOY1_BUTTON1" }, { "InputBeat", "JOY1_BUTTON3" }, { "InputCharge", "JOY1_BUTTON4" },
+      { "InputJump", "JOY1_BUTTON6" } };
+    for (const auto &kv : kStreamMap)
+      s_runtime_config.Set(kv[0], std::string(kv[1]));
+    printf("[Stream] STREAM slot: input from the stream client only (input system NONE)\n");
+  }
+  else if (selectedInputSystem == "none")
+    selectedInputSystem = "sdl";   // 11/24: NONE only means something on a STREAM / NETLINK slot (an old launcher's ini)
 
   // 11/23 main6 netlink (R-4 / LB-3): a client connects before the game is loaded and plays with the host's game
   // settings (SpikeJr, EnemyKnockMul, PowerPCFrequency ...) over its own, or its world is another one. Runtime only.
   // Phase 2: both sides first know who they are (exe and ROM hashes); the host refuses another build or ROM set.
   {
+    // 11/23 (owner): SatelliteConnect = the satellite outside the ring (a host node's NetlinkWatchPort) - the same wait
     std::string nl = s_runtime_config["NetlinkConnect"].ValueAsDefault<std::string>("");
+    const std::string satConnect = s_runtime_config["SatelliteConnect"].ValueAsDefault<std::string>("");
+    const bool satWatch = !satConnect.empty();
+    if (satWatch)
+      nl = satConnect;
     size_t colon = nl.rfind(':');
     bool nlClient = s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) && !nl.empty() && colon != std::string::npos && colon > 0;
-    if (nlClient || s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0))
+    if (nlClient || s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) || s_runtime_config["NetlinkWatchPort"].ValueAsDefault<int>(0) > 0)
     {
       std::vector<std::pair<const uint8_t *, size_t>> parts;
       for (const auto &r : rom_set.rom_by_region)
         parts.emplace_back(r.second.data.get(), r.second.size);
+      if (nlClient)
+        NetlinkTime("ROM loaded, hashing the exe and the ROM");
       NetlinkSetIdentity(game.name, parts);
+      if (nlClient)
+        NetlinkTime("exe and ROM hashed");
     }
     if (nlClient)
     {
-      printf("[Netlink] Client: waiting for the host's settings (%s)\n", nl.c_str());
+      printf("[Netlink] Client: waiting for the host's settings (%s)%s\n", nl.c_str(), satWatch ? " - satellite" : "");
       std::vector<std::pair<std::string, std::string>> kv;
       std::string why;
-      if (!NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), s_netlinkFromLobby ? 30000 : 120000, kv, why))
+      NetlinkClientSetWatch(satWatch);   // (the satellite may start before the links: it waits up to 10 minutes)
+      if (!NetlinkClientWaitSettings(nl.substr(0, colon), atoi(nl.c_str() + colon + 1), satWatch ? 600000 : s_netlinkFromLobby ? 30000 : 120000, kv, why))
       {
         ErrorLog("Netlink: cannot join the host %s: %s", nl.c_str(), why.c_str());
         NetlinkClientStop();
@@ -3853,6 +4003,7 @@ int main(int argc, char **argv)
         InfoLog("Netlink: host setting %s = %s", p.first.c_str(), p.second.c_str());
       }
       s_runtime_config.Set("AIPlayer", 0);
+      NetlinkTime("client: settings applied, loading the game");
     }
   }
 
@@ -3879,10 +4030,27 @@ int main(int argc, char **argv)
   // Create a window
   xRes = 496;
   yRes = 384;
+  // 11/24 (owner): a NETLINK slot (NetlinkServe, Streaming = 1 but no encoder - link data only) may be headless too;
+  // a STREAM slot never (its picture is the stream)
+  s_headless = s_runtime_config["Headless"].ValueAsDefault<bool>(false) &&
+               (!s_runtime_config["Streaming"].ValueAsDefault<bool>(false) || s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) == 1);   // 11/24: not a REMOTE slot (2)
+  if (s_headless)
+    printf("Headless: the window is hidden and nothing is drawn.\n");
+  s_bootTime = s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) || s_runtime_config["BootTimeLog"].ValueAsDefault<bool>(false);
   if (Result::OKAY != CreateGLScreen(s_runtime_config["New3DEngine"].ValueAs<bool>(), s_runtime_config["QuadRendering"].ValueAs<bool>(), "Supermodel", false, &xOffset, &yOffset, &xRes, &yRes, &totalXRes, &totalYRes, false, false))
   {
     exitCode = 1;
     goto Exit;
+  }
+  BOOT_TIME("window created");
+  // 11/24 (owner): StartMinimized = 1 - a STREAM / NETLINK slot (Streaming = 1, not a netlink / satellite client) starts
+  // with its window minimized. The stream is encoded from SuperAA's own image, so it goes on; the bitrate notice is drawn
+  // by the client. Other nodes ignore it (their window is what is played / watched).
+  if (!s_headless && s_runtime_config["StartMinimized"].ValueAsDefault<bool>(false) &&
+      s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && !s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false))
+  {
+    SDL_MinimizeWindow(s_window);
+    printf("StartMinimized: the window starts minimized.\n");
   }
 
   // --- After Launch: If streaming=true and linkplay is configured, start XInput listening ---
@@ -3897,9 +4065,11 @@ int main(int argc, char **argv)
         // P1 (11/16): the ViGEm virtual pad and the XInput listener were removed (remote input: P3/P4).
         // Only the UPnP port opening of the old StartListening() is kept.
         // 11/23 netlink: a NETLINK slot also opens TCP base + 2 and says "mode":"netlink" in Firebase
-        const bool nlSlot = s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) != 0;
+        const int nlServe = s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0);
+        const bool nlSlot = nlServe != 0;   // NETLINK (1) or REMOTE (2): TCP base + 2 too
         UPnPHelper::netlinkTcp = nlSlot;
-        s_remoteSlotMgr.SetNetlink(nlSlot);
+        s_remoteSlotMgr.SetNetlink(nlServe == 1);
+        s_remoteSlotMgr.SetRemote(nlServe == 2);   // 11/24: "mode":"auto"
         s_remoteSlotMgr.StartStreaming(linkplay);
 
         // メタデータ (gametitle, servername, timestamp, ip) のFirebase初回ポスト
@@ -3920,6 +4090,7 @@ int main(int argc, char **argv)
 
   // Create Crosshair
   s_crosshair = new CCrosshair(s_runtime_config);
+  BOOT_TIME("crosshair start");
   if (s_crosshair->Init() != Result::OKAY)
   {
     ErrorLog("Unable to load bitmap crosshair texture\n");
@@ -3959,6 +4130,7 @@ int main(int argc, char **argv)
   }
 
   // Create inputs from input system (configuring them if required)
+  BOOT_TIME("inputs start");
   Inputs = new CInputs(InputSystem);
   if (!Inputs->Initialize())
   {
@@ -3980,6 +4152,25 @@ int main(int argc, char **argv)
   {
     exitCode = 1;
     goto Exit;
+  }
+  // 11/24 (owner): a bot node (Spikeout, AIPlayer = 1, not a STREAM / NETLINK slot or a netlink / satellite client)
+  // ignores this PC's keyboard and pads for the game: every game control is unmapped at run time (the bot puts its own
+  // presses into the inputs). The UI keys (ESC, save / load ...) stay. Not stored: the ini keeps its mapping.
+  if (game.name == "spikeofe" && s_runtime_config["AIPlayer"].ValueAsDefault<bool>(false) &&
+      !s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && !s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) &&
+      !s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false))
+  {
+    unsigned cleared = 0;
+    for (unsigned i = 0; i < Inputs->Count(); i++)
+    {
+      std::shared_ptr<CInput> in = (*Inputs)[i];
+      if (in && in->gameFlags != Game::INPUT_UI)
+      {
+        in->ClearMapping();
+        cleared++;
+      }
+    }
+    InfoLog("Bot node: %u game controls ignore the local keyboard and pads (UI keys kept).", cleared);
   }
 
   if (cmd_line.print_inputs)

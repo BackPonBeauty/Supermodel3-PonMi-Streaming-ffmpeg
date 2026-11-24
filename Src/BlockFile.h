@@ -29,7 +29,9 @@
 #define INCLUDED_BLOCKFILE_H
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
+#include <vector>
 #include "Types.h"
 
 /*
@@ -215,6 +217,13 @@ public:
   Result Load(const std::string &file);
 
   /*
+   * 11/24: the same in memory - Create fills mem (cleared first), Load reads
+   * mem (it must stay alive until Close).
+   */
+  Result Create(std::vector<char> &mem, const std::string &headerName, const std::string &comment);
+  Result Load(const std::vector<char> &mem);
+
+  /*
    * Close(void):
    *
    * Closes the file.
@@ -241,8 +250,16 @@ private:
   void      WriteBytes(const void *data, uint32_t numBytes);
   void      WriteBlockHeader(const std::string &name, const std::string &comment);
 
+  size_t    IoRead(void *data, size_t n);
+  void      IoWrite(const void *data, size_t n);
+  void      IoSeek(long pos);
+  long      IoTell();
+  bool      IsOpen() const { return fp != nullptr || m_mem != nullptr; }
+
   // File state data
   FILE      *fp;
+  std::vector<char> *m_mem; // 11/24: memory instead of fp
+  long int  m_pos;
   int       mode;           // 'r' for read, 'w' for write
   long int  fileSize;       // size of file in bytes
   long int  blockStartPos;  // points to beginning of current block (or file) header

@@ -195,6 +195,7 @@ private:
 
   void ReopenFiles(std::ios_base::openmode mode);
   void WriteToFiles(const char *str);
+  void FlushFiles();   // 11/24
 };
 
 /*

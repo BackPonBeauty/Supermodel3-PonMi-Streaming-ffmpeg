@@ -162,6 +162,11 @@ private:
 	// fed from the host's socket (ini NetlinkConnect = host:port) instead of the 09 relay
 	bool m_netlinkServe = false;
 	bool m_netlinkClient = false;
+	// 11/23 (owner): the satellite outside the ring - host: ini NetlinkWatchPort serves it; clone: ini SatelliteConnect
+	// (a netlink client that keeps the satellite view and its switching, and sends no inputs)
+	bool m_netlinkWatchServe = false;
+	bool m_netlinkWatch = false;
+	int m_cloneFixedIni = 0;	// ini SatelliteNode (the satellite keeps it after loading the host's state)
 	uint8_t m_machineIndex = 0;
 };
 

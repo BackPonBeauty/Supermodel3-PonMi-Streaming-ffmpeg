@@ -57,6 +57,10 @@ public:
   // 11/23 netlink: this slot sends link data (Network/Netlink.h), not video: only netlink clients (Hello.codecs = 0).
   // Set before Start().
   void SetNetlink(bool on) { m_netlink = on; }
+  // 11/24 (owner) REMOTE slot: takes either kind of client; the HELLO says which (codecs = 0: netlink, else video).
+  // Set before Start(). ClientIsNetlink() = the connected client is a netlink one.
+  void SetAuto(bool on) { m_auto = on; }
+  bool ClientIsNetlink() const { return m_clientNetlink.load(); }
 
   bool IsConnected() const { return m_connected.load(); }
   std::string GetPlayerName();
@@ -64,6 +68,9 @@ public:
   // Adaptive bitrate (fed by STATUS packets)
   float GetLatestLossRate() const { return m_lossRate.load(); }
   uint32_t GetLastStatusTime() const { return m_lastStatusTime.load(); }   // GetTickCount() of the last STATUS
+
+  // 11/24: a one-line message the client shows near the top for 6 s (the bitrate notice)
+  void Notify(const char *text) { SendNotice(text); }
 
 private:
   void SessionLoop();
@@ -87,6 +94,8 @@ private:
 
   int m_slot = 0;
   bool m_netlink = false;
+  bool m_auto = false;                       // 11/24
+  std::atomic<bool> m_clientNetlink{false};  // 11/24
   int m_width = 0, m_height = 0;
   uint8_t m_codecBit = StreamProto::CODEC_H264;
   Callbacks m_cb;

@@ -51,6 +51,9 @@ namespace Lobby
   // StreamPadName). The client opens the pad with this name first, else this SDL index (0-based), else the first.
   int PadIndex();
   std::string PadName();
+
+  // 11/24 (owner): where the game's ROM is (the GUI's ROM folder + spikeofe.zip). Joining as NETLINK needs it.
+  void SetRomFile(const std::string &path);
 }
 
 #endif // INCLUDED_STREAM_LOBBY_H

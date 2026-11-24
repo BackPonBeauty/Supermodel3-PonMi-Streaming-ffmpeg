@@ -484,17 +484,17 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
 
   // 11/23 netlink: a NETLINK slot takes netlink clients only (they say codecs = 0: no video), a video slot video
   // clients only
-  if (m_netlink && hello.codecs != 0)
+  if (m_netlink && !m_auto && hello.codecs != 0)
   {
     reject(R_NETLINK_SLOT, "a video client at a netlink slot");
     return;
   }
-  if (!m_netlink && hello.codecs == 0)
+  if (!m_netlink && !m_auto && hello.codecs == 0)
   {
     reject(R_STREAM_SLOT, "a netlink client at a video slot");
     return;
   }
-  if (!m_netlink && !(hello.codecs & m_codecBit))
+  if (!m_netlink && hello.codecs != 0 && !(hello.codecs & m_codecBit))
   {
     reject(R_CODEC, "client cannot decode our codec");
     return;
@@ -544,7 +544,9 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
     // 11/16 (owner): one Discord account = one slot of this host. Every slot is its own process on this PC, so a
     // named mutex per Discord user ID is held while that user is connected; a second slot finds it and refuses.
     // No setting lifts it (distribution build). The ID comes from a signed ticket, so it cannot be made up.
-    if (!m_pendingId.empty())
+    // 11/24 (owner): except the owner's account - the Discord name in the signed ticket is "背中ポン美" (UTF-8 below)
+    static const char kOwnerName[] = "\xE8\x83\x8C\xE4\xB8\xAD\xE3\x83\x9D\xE3\x83\xB3\xE7\xBE\x8E";
+    if (!m_pendingId.empty() && ticketName != kOwnerName)
     {
       std::string lockName = "Local\\SupermodelPonMi_DiscordUser_" + m_pendingId;
       HANDLE h = CreateMutexA(nullptr, FALSE, lockName.c_str());
@@ -578,6 +580,7 @@ void SessionServer::HandleHello(const char *buf, int len, const sockaddr_in &fro
       m_lastActivity = NowMs();
       m_lastIdleWarn = 0;
       m_haveActInput = false;
+      m_clientNetlink.store(hello.codecs == 0);   // 11/24: what this client plays with (REMOTE slot)
       m_connected.store(true);
     }
     FillHeader(w.h, T_WELCOME, m_key);
@@ -640,6 +643,17 @@ void SessionServer::SessionLoop()
       // still sent version 1 after the protocol went to 2 / 3, so no kick worked; only 127.0.0.1 matters here
       if (from.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
         Kick();
+      continue;
+    }
+
+    // 11/24 (owner: ping in the lobby list): a PING with key 0 is the lobby's probe - answered (PONG, same size) to
+    // anyone, connected or not; nothing else is done with it
+    if (h.type == T_PING && h.key == 0 && n >= (int) sizeof(Ping))
+    {
+      Ping p;
+      memcpy(&p, buf, sizeof(p));
+      p.h.type = T_PONG;
+      SendTo(&p, sizeof(p), from);
       continue;
     }
 

@@ -50,7 +50,7 @@ CSimNetBoard::~CSimNetBoard(void)
 		NetlinkClientStop();
 	if (m_clone)
 		SatelliteTapStop();
-	if (m_netlinkServe)
+	if (m_netlinkServe || m_netlinkWatchServe)
 		NetlinkHostStop();
 	if (m_segDump)
 	{
@@ -156,7 +156,7 @@ void CSimNetBoard::LoadState(CBlockFile* SaveState)
 		if (k < 1 || k > numMachines)
 			k = 1;
 		m_machineIndex = (uint8_t)(k - 1);
-		m_cloneFixed = k;
+		m_cloneFixed = m_netlinkWatch ? m_cloneFixedIni : k;	// 11/23: the satellite keeps switching (SatelliteNode 0)
 		g_satClone.numMachines = numMachines;
 		g_satClone.node = k;
 		g_satClone.view = k;
@@ -237,6 +237,7 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 		m_cloneFixed = m_config["SatelliteNode"].ValueAsDefault<int>(0);
 		if (m_cloneFixed < 0 || m_cloneFixed > 8)
 			m_cloneFixed = 0;
+		m_cloneFixedIni = m_cloneFixed;
 		int sec = m_config["SatelliteInterval"].ValueAsDefault<int>(10);
 		m_cloneInterval = sec <= 0 ? 0 : (sec < 2 ? 2 : sec) * 60;	// 0 = stay with one node
 		g_satClone.on = true;
@@ -266,6 +267,19 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 		}
 		// 11/23 main6 netlink phase 1: NetlinkConnect = host:port -> the link data from the host's node k, which we
 		// follow with the game's own camera and HUD (no satellite view)
+		// 11/23 (owner): SatelliteConnect = host:port -> the satellite outside the ring: the same data from a node's
+		// NetlinkWatchPort, with the satellite view and switching kept, no inputs sent
+		std::string sat = m_config["SatelliteConnect"].ValueAsDefault<std::string>("");
+		size_t satColon = sat.rfind(':');
+		if (!sat.empty() && satColon != std::string::npos && satColon > 0)
+		{
+			m_netlinkClient = true;
+			m_netlinkWatch = true;
+			NetlinkClientSetWatch(true);
+			NetlinkClientStart(sat.substr(0, satColon), atoi(sat.c_str() + satColon + 1));
+			printf("[Satellite] Clone: outside the ring, link data from %s\n", sat.c_str());
+			return Result::OKAY;
+		}
 		std::string nl = m_config["NetlinkConnect"].ValueAsDefault<std::string>("");
 		size_t colon = nl.rfind(':');
 		if (!nl.empty() && colon != std::string::npos && colon > 0)
@@ -282,13 +296,10 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 	}
 
 	// 11/23 main6 netlink phase 1: serve our link data to one client on TCP (slot base port + 2, or NetlinkPort)
-	if (m_spikeofe && m_config["NetlinkServe"].ValueAsDefault<int>(0))
+	// 11/23 (owner): + NetlinkWatchPort > 0 -> also serve the satellite (09) outside the ring on that port
+	const int watchPort = m_spikeofe ? m_config["NetlinkWatchPort"].ValueAsDefault<int>(0) : 0;
+	if (m_spikeofe && (m_config["NetlinkServe"].ValueAsDefault<int>(0) || watchPort > 0))
 	{
-		int port = m_config["NetlinkPort"].ValueAsDefault<int>(0);
-		int slot = m_config["LinkPlay"].ValueAsDefault<int>(0);
-		if (port <= 0)
-			port = StreamProto::SlotBasePort(slot >= 1 && slot <= 8 ? slot : 1) + StreamProto::PORT_VIDEO;
-		m_netlinkServe = true;
 		std::string settings;
 		for (int i = 0; i < kNetlinkGameKeyCount; i++)
 		{
@@ -296,7 +307,20 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 			if (!v.empty())
 				settings += std::string(kNetlinkGameKeys[i]) + "=" + v + "\n";
 		}
-		NetlinkHostStart(port, settings);
+		if (m_config["NetlinkServe"].ValueAsDefault<int>(0))
+		{
+			int port = m_config["NetlinkPort"].ValueAsDefault<int>(0);
+			int slot = m_config["LinkPlay"].ValueAsDefault<int>(0);
+			if (port <= 0)
+				port = StreamProto::SlotBasePort(slot >= 1 && slot <= 8 ? slot : 1) + StreamProto::PORT_VIDEO;
+			m_netlinkServe = true;
+			NetlinkHostStart(port, settings);
+		}
+		if (watchPort > 0 && watchPort < 65536)
+		{
+			m_netlinkWatchServe = true;
+			NetlinkWatchStart(watchPort, settings);
+		}
 	}
 
 	nets = std::make_unique<TCPSend>(addr_out, port_out);
@@ -700,7 +724,7 @@ void CSimNetBoard::RunFrame(void)
 				m_state = State::error;
 				if (m_gameType == GameType::one)
 					m_status1 = 0x40;			// send "link broken" message to mainboard
-				if (m_netlinkServe)
+				if (m_netlinkServe || m_netlinkWatchServe)
 					NetlinkHostBroken();
 				break;
 			}
@@ -708,7 +732,7 @@ void CSimNetBoard::RunFrame(void)
 			if (m_spikeofe)
 				NetStateRead(recv_data);
 		}
-		if (m_netlinkServe && m_state == State::ready)
+		if ((m_netlinkServe || m_netlinkWatchServe) && m_state == State::ready)
 			NetlinkHostFrame(CommRAM, m_numMachines, m_machineIndex + 1, m_segmentSize);
 		if (m_spikeofe && !m_clone && m_state == State::ready)
 			NetStateEnd();
@@ -883,7 +907,7 @@ bool CSimNetBoard::CloneTesting(uint8_t& numMachines, uint8_t& machineIndex)
 		int k = (m_cloneFixed >= 1 && m_cloneFixed <= n) ? m_cloneFixed : 1;
 		if (m_netlinkClient && e.node >= 1 && e.node <= n)
 			k = e.node;		// 11/23 netlink: the host's node (its header), whatever the ini says
-		if (m_netlinkClient)
+		if (m_netlinkClient && !m_netlinkWatch)
 			m_cloneFixed = k;	// and stay with it (no switches)
 		numMachines = (uint8_t)(n - 1);
 		machineIndex = (uint8_t)(k - 1);
@@ -1137,7 +1161,7 @@ bool CSimNetBoard::CloneTakeInputs(const SatLinkEvent& e, int k)
 	}
 	g_satClone.haveInputs = true;
 	// 11/23 netlink: the latency display - what the node read changes when our pad's change has gone round
-	if (m_netlinkClient)
+	if (m_netlinkClient && !m_netlinkWatch)
 		NetlinkLatencyInputPlayed((uint32_t)g_satClone.inpLast[0] | ((uint32_t)g_satClone.inpLast[1] << 8) | ((uint32_t)g_satClone.inpLast[2] << 16));
 	return true;
 }
@@ -1160,6 +1184,7 @@ void CSimNetBoard::ClonePrime(void)
 	m_cloneNext = std::move(e);			// frame F+1: CloneReady takes it as "cur" at the end of our frame F+1
 	m_cloneHaveNext = true;
 	InfoLog("Netlink: first frame primed (node %d inputs %s).", g_satClone.node, got ? "taken" : "missing");
+	NetlinkTime("client: first frame primed");   // 11/24
 }
 
 // 11/23 main6 (netlink): one frame of link data as the clone got it (see SimNetBoard.h).

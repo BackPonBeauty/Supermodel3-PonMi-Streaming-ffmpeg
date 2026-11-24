@@ -19,7 +19,9 @@
 #include "../Src/Inputs/Inputs.h"
 #include "Main.h"
 #include "Stream/Lobby.h"
+#include "Stream/Version.h"
 #include "Font01.h"
+#include "PonUI.h"
 #include <ctime>   // for time, localtime, strftime
 #include <fstream> // for ofstream
 #include <SDL.h>
@@ -56,6 +58,7 @@ static char bufPosX[16] = "0";
 static char bufPosY[16] = "0";
 static char bufPortIn[64] = "";
 static char bufPortOut[64] = "";
+static bool s_launchFromLobby = false;   // 11/24: the launch came from the lobby (SKIP / a NETLINK slot): Spikeout's ROM
 static char bufAddressOut[256] = "";
 static bool scrollToSelected = true;
 
@@ -338,10 +341,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         }
     }
 
-    // Japan Blue color scheme
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.20f, 0.45f, 1.0f));        // Normal: Deep Navy Blue (Japan Blue)
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.00f, 0.35f, 0.70f, 1.0f)); // Hover: Bright Blue
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.00f, 0.15f, 0.35f, 1.0f));  // Active: Deeper Navy Blue
+    // 11/24 (owner): PonNvram's look (PonUI) - the "Japan Blue" buttons are gone
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -349,12 +349,25 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
     // Base scale of the entire window
     ImGui::SetWindowFontScale(scale);
-    ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "SEGA MODEL3 UI v2");
-    ImGui::Separator();
+    const int psc = PonUI::Scale();
+    PonUI::Title("SUPERMODEL", PonUI::cText, psc + 1);
+    ImGui::SameLine(0, 14.0f * scale);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f * (psc + 1) - 8.0f * psc - 1.0f);
+    PonUI::Title("PONMI EDITION", PonUI::cAccent, psc);
+    // 11/24 (owner): the build number, small, after the title (bottoms lined up), as PonLuncher's version
+    {
+      const int bsc = std::max(1, psc - 1);
+      char bb[32];
+      snprintf(bb, sizeof(bb), "BUILD %lld", StreamVersion::kBuild);
+      ImGui::SameLine(0, 14.0f * scale);
+      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f * psc - 8.0f * bsc);
+      PonUI::Title(bb, IM_COL32(120, 132, 156, 255), bsc);
+    }
+    PonUI::Separator();
     // float headerBottomY = ImGui::GetCursorPosY();
 
     // Calculate height
-    float footerHeight = 32.0f * scale;
+    float footerHeight = 50.0f * scale;   // 11/24: room for PonUI's buttons
 
     // Automatically calculate left column width to 50% of window
 
@@ -424,7 +437,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
             }
             else
             {
-                ImGui::TextDisabled("(NO IMAGE)");
+                PonUI::Text("(NO IMAGE)", PonUI::cFaint);
             }
         }
         ImGui::EndChild();
@@ -538,133 +551,126 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         if (ImGui::BeginChild("RightOptions", ImVec2(0, optionsHeight), true))
         {
             ImGui::SetWindowFontScale(scale); // Re-apply scale
-            if (ImGui::BeginTabBar("Tabs"))
+            static int s_ponTab = 0;
+            static const char *const kTabs[] = { "VIDEO", "SOUND", "CONTROL", "NETWORK", "OTHER", "ABOUT" };
+            PonUI::Tabs("##settabs", kTabs, 6, &s_ponTab);
+            const float labelW0 = 170.0f * scale;
             {
-                if (ImGui::BeginTabItem("Video"))
+                if (s_ponTab == 0)
                 {
-                    ImGui::Text("Video Settings");
 
                     // Lower part of the main GUI's right column
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     // ImGui::Text("Last Preview Position:");
 
-                    // --- new3D / Legacy Radio Button ---
-                    ImGui::Text("Graphics Engine");
-                    // static int engineSelection = 0; // 0: new3D, 1: Legacy (actually read from config)
-                    if (ImGui::RadioButton("new3D", &engineSelection, 0))
-                    { /* Update config */
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::RadioButton("Legacy", &engineSelection, 1))
-                    { /* Update config */
+                    // --- new3D / Legacy ---
+                    {
+                        static const char *const engines[] = { "NEW3D", "LEGACY" };
+                        PonUI::Choice("GRAPHICS ENGINE", &engineSelection, engines, 2);
                     }
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- 2-column checkbox layout ---
-                    ImGui::Columns(3, "VideoSettingsColumns", false); // Create columns, no borders
 
                     // --- Column 1 ---
                     {
-                        if (ImGui::Checkbox("Vsync", &vVsync))
+                        if (PonUI::Toggle("VSYNC", &vVsync))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("QuadRendering", &vQuadRendering))
+                        if (PonUI::Toggle("QUADRENDERING", &vQuadRendering))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("GPUMultiThreaded", &vGPUMultiThreaded))
+                        if (PonUI::Toggle("GPUMULTITHREADED", &vGPUMultiThreaded))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("MultiThreaded", &vMultiThreaded))
+                        if (PonUI::Toggle("MULTITHREADED", &vMultiThreaded))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("MultiTexture", &vMultiTexture))
+                        if (PonUI::Toggle("MULTITEXTURE", &vMultiTexture))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("Borderless", &vBorderless))
+                        if (PonUI::Toggle("BORDERLESS", &vBorderless))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("True-Hz", &vTrueHz))
+                        if (PonUI::Toggle("TRUE-HZ", &vTrueHz))
                         {
                             saveSettings = true;
                         }
                     }
 
-                    ImGui::NextColumn(); // Move to column 2
 
                     // --- Column 2 ---
                     {
-                        if (ImGui::Checkbox("FullScreen", &vFullScreen))
+                        if (PonUI::Toggle("FULLSCREEN", &vFullScreen))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("WideScreen", &vWideScreen))
+                        if (PonUI::Toggle("WIDESCREEN", &vWideScreen))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("WideBackground", &vWideBackground))
+                        if (PonUI::Toggle("WIDEBACKGROUND", &vWideBackground))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("Stretch", &vStretch))
+                        if (PonUI::Toggle("STRETCH", &vStretch))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("ShowFrameRate", &vShowFrameRate))
+                        if (PonUI::Toggle("SHOWFRAMERATE", &vShowFrameRate))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("Throttle", &vThrottle))
+                        if (PonUI::Toggle("THROTTLE", &vThrottle))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("NoWhiteFlash", &vNoWhiteFlash))
+                        if (PonUI::Toggle("NOWHITEFLASH", &vNoWhiteFlash))
                         {
                             saveSettings = true;
                         }
                     }
-                    ImGui::NextColumn();
                     {
-                        if (ImGui::Checkbox("True-AR", &vTrueAR))
+                        if (PonUI::Toggle("TRUE-AR", &vTrueAR))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("Overlay", &vOverlay))
+                        if (PonUI::Toggle("OVERLAY", &vOverlay))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("HideCMD", &vHideCMD))
+                        if (PonUI::Toggle("HIDECMD", &vHideCMD))
                         {
                             saveSettings = true;
                         }
-                        if (ImGui::Checkbox("DefaultScanline", &vDefaultScanline))
+                        if (PonUI::Toggle("DEFAULTSCANLINE", &vDefaultScanline))
                         {
                             saveSettings = true;
                         }
                     }
-                    ImGui::Columns(1);
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
                     int w, h;
                     static bool isFirstFrame = true;
                     if (isFirstFrame)
                     {
-                        snprintf(bufPosX, sizeof(bufPosX), "%d", WindowXPosition);
-                        snprintf(bufPosY, sizeof(bufPosY), "%d", WindowYPosition);
+                        // 11/24: bufPosX / bufPosY are filled from the ini when the settings are read (empty stays empty)
+                        (void) WindowXPosition; (void) WindowYPosition;
                         isFirstFrame = false;
                     }
 
-                    if (ImGui::Button("Position##Button"))
+                    if (PonUI::SmallButton("POSITION##Button"))
                     {
 
                         if (g_PreviewWindow)
@@ -701,10 +707,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         }
                     }
 
-                    float availableWidth = ImGui::GetContentRegionAvail().x - (150.0f * scale); // Remaining width after subtracting label
+                    float availableWidth = ImGui::GetContentRegionAvail().x - labelW0; // Remaining width after subtracting label
                     float inputWidth = (availableWidth * 0.5f);                                 // Split in half
 
-                    ImGui::SameLine(150.0f * scale);
+                    ImGui::SameLine(labelW0);
 
                     // --- X Coordinate ---
                     ImGui::PushItemWidth(inputWidth);
@@ -724,13 +730,9 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
                     ImGui::PopItemWidth();
 
-                    ImGui::Text("Resolution");
-                    ImGui::SameLine(150.0f * scale);
-                    ImGui::PushItemWidth(-1);
-                    // Process to display current selection value as string
-                    const char *previewValue = resolutions.empty() ? "" : resolutions[selectedResIndex].c_str();
-
-                    if (ImGui::BeginCombo("##Resolution", resolutions[selectedResIndex].c_str()))
+                    if (!resolutions.empty())
+                        PonUI::Choice("RESOLUTION", &selectedResIndex, resolutions);
+                    if (false && ImGui::BeginCombo("##Resolution", resolutions[selectedResIndex].c_str()))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int i = 0; i < (int)resolutions.size(); i++)
@@ -761,8 +763,8 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
                     // --- SuperSampling Slider (1-8) ---
                     // static int superSampling = 1; // actually read from config
-                    ImGui::Text("Super Sampling");
-                    ImGui::SameLine(150.0f * scale);
+                    PonUI::Label("SUPER SAMPLING", labelW0 - 8.0f, PonUI::cLabel, PonUI::RowScale());
+                    ImGui::SameLine(labelW0);
                     ImGui::PushItemWidth(-1); // Expand slider to right edge
                     if (ImGui::SliderInt("##SS", &superSampling, 1, 8))
                     {
@@ -780,12 +782,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         "5=BT601_625/D65 (recommended for all EUR/AUS developed games)"};
 
                     // Use selectedCRT passed as argument
-                    ImGui::Text("CRT Color");
-                    ImGui::SameLine(150.0f * scale);
+                    if (PonUI::Choice("CRT COLOR", &selectedCRT, crtItems, IM_ARRAYSIZE(crtItems)))
+                        saveSettings = true;
                     ImGui::PushItemWidth(-1);
-
-                    // Display current selection string in preview
-                    if (ImGui::BeginCombo("##CRTColor", crtItems[selectedCRT]))
+                    if (false && ImGui::BeginCombo("##CRTColor", crtItems[selectedCRT]))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int n = 0; n < IM_ARRAYSIZE(crtItems); n++)
@@ -808,10 +808,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // --- UpscaleMode Dropdown (1-3) ---
                     const char *upscaleItems[] = {"0=none/sharp pixels", "1=biquintic", "2=bilinear", "3=bicubic"};
                     // static int selectedUpscale = 0;
-                    ImGui::Text("Upscale Mode");
-                    ImGui::SameLine(150.0f * scale);
+                    if (PonUI::Choice("UPSCALE MODE", &selectedUpscale, upscaleItems, IM_ARRAYSIZE(upscaleItems)))
+                        saveSettings = true;
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::BeginCombo("##UpscaleMode", upscaleItems[selectedUpscale]))
+                    if (false && ImGui::BeginCombo("##UpscaleMode", upscaleItems[selectedUpscale]))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int n = 0; n < IM_ARRAYSIZE(upscaleItems); n++)
@@ -829,8 +829,8 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
                     ImGui::PopItemWidth();
                     // static int ppcFreq = 57; // Default value
-                    ImGui::Text("PPC Frequency");
-                    ImGui::SameLine(150.0f * scale);
+                    PonUI::Label("PPC FREQUENCY", labelW0 - 8.0f, PonUI::cLabel, PonUI::RowScale());
+                    ImGui::SameLine(labelW0);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##PPCFreq", &ppcFreq, 0, 200))
                     {
@@ -839,8 +839,8 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
                     ImGui::PopItemWidth();
                     // static int Scanline = 1;
-                    ImGui::Text("Scanline Strength");
-                    ImGui::SameLine(150.0f * scale);
+                    PonUI::Label("SCANLINE STRENGTH", labelW0 - 8.0f, PonUI::cLabel, PonUI::RowScale());
+                    ImGui::SameLine(labelW0);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##Scanline", &Scanline, 1, 100))
                     {
@@ -849,8 +849,8 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
                     ImGui::PopItemWidth();
                     // static int Barrel = 1;
-                    ImGui::Text("Barrel Strength");
-                    ImGui::SameLine(150.0f * scale);
+                    PonUI::Label("BARREL STRENGTH", labelW0 - 8.0f, PonUI::cLabel, PonUI::RowScale());
+                    ImGui::SameLine(labelW0);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##Barrel", &Barrel, 0, 100))
                     {
@@ -858,14 +858,13 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         saveSettings = true;
                     }
                     ImGui::PopItemWidth();
-                    ImGui::EndTabItem();
                 }
                 // --- Audio Tab ---
-                if (ImGui::BeginTabItem("Sound"))
+                if (s_ponTab == 1)
                 {
                     ImGui::SetWindowFontScale(scale);
-                    ImGui::Text("Audio Settings");
-                    ImGui::Separator();
+                    PonUI::Text("AUDIO SETTINGS", PonUI::cAccent);
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // Slider items
@@ -876,7 +875,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     float labelWidth = 140.0f * scale; // Align label widths
 
                     // Music
-                    ImGui::Text("Music");
+                    PonUI::Label("MUSIC", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##Music", &musicVol, 0, 100))
@@ -886,7 +885,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     // Balance
-                    ImGui::Text("Balance");
+                    PonUI::Label("BALANCE", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##Balance", &balance, -100, 100))
@@ -896,7 +895,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     // Sound
-                    ImGui::Text("Sound");
+                    PonUI::Label("SOUND", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(-1);
                     if (ImGui::SliderInt("##Sound", &sfxVol, 0, 100))
@@ -906,7 +905,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- Checkbox items ---
@@ -916,42 +915,41 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // static bool vFlipStereo = false;
                     // static bool vLegacySoundDSP = false;
 
-                    if (ImGui::Checkbox("EmulateSound", &vEmulateSound))
+                    if (PonUI::Toggle("EMULATESOUND", &vEmulateSound))
                     {
                         saveSettings = true;
                     }
-                    if (ImGui::Checkbox("EmulateDSB", &vEmulateDSB))
+                    if (PonUI::Toggle("EMULATEDSB", &vEmulateDSB))
                     {
                         saveSettings = true;
                     }
-                    if (ImGui::Checkbox("FlipStereo", &vFlipStereo))
+                    if (PonUI::Toggle("FLIPSTEREO", &vFlipStereo))
                     {
                         saveSettings = true;
                     }
-                    if (ImGui::Checkbox("LegacySoundDSP", &vLegacySoundDSP))
+                    if (PonUI::Toggle("LEGACYSOUNDDSP", &vLegacySoundDSP))
                     {
                         saveSettings = true;
                     }
 
-                    ImGui::EndTabItem();
                 }
 
                 // --- Control Tab ---
-                if (ImGui::BeginTabItem("Control"))
+                if (s_ponTab == 2)
                 {
                     ImGui::SetWindowFontScale(scale);
-                    ImGui::Text("Control Settings");
-                    ImGui::Separator();
+                    PonUI::Text("CONTROL SETTINGS", PonUI::cAccent);
+                    PonUI::Separator();
                     ImGui::Spacing();
                     float labelWidth = 150.0f * scale; // Align label widths
 
                     // --- Input Type ---
                     const char *inputTypes[] = {"Xinput", "Dinput", "Rawinput","SDL","NONE (streaming server)"};
                     // static int selectedInputType = 0; // Link with config
-                    ImGui::Text("Input Type");
-                    ImGui::SameLine(labelWidth);
+                    if (PonUI::Choice("INPUT TYPE", &selectedInputType, inputTypes, IM_ARRAYSIZE(inputTypes)))
+                        saveSettings = true;
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::BeginCombo("##InputType", inputTypes[selectedInputType]))
+                    if (false && ImGui::BeginCombo("##InputType", inputTypes[selectedInputType]))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int n = 0; n < IM_ARRAYSIZE(inputTypes); n++)
@@ -966,10 +964,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // --- CrossHairs ---
                     const char *crosshairTypes[] = {"Disable", "Player1", "Player2", "2Players"};
                     // static int selectedCrosshair = 0;
-                    ImGui::Text("CrossHairs");
-                    ImGui::SameLine(labelWidth);
+                    if (PonUI::Choice("CROSSHAIRS", &selectedCrosshair, crosshairTypes, IM_ARRAYSIZE(crosshairTypes)))
+                        saveSettings = true;
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::BeginCombo("##CrossHairs", crosshairTypes[selectedCrosshair]))
+                    if (false && ImGui::BeginCombo("##CrossHairs", crosshairTypes[selectedCrosshair]))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int n = 0; n < IM_ARRAYSIZE(crosshairTypes); n++)
@@ -984,10 +982,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // --- Style (Vector / bmp) ---
                     const char *styleTypes[] = {"vector", "bmp"};
                     // static int selectedStyle = 0;
-                    ImGui::Text("Style");
-                    ImGui::SameLine(labelWidth);
+                    if (PonUI::Choice("STYLE", &selectedStyle, styleTypes, IM_ARRAYSIZE(styleTypes)))
+                        saveSettings = true;
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::BeginCombo("##Style", styleTypes[selectedStyle]))
+                    if (false && ImGui::BeginCombo("##Style", styleTypes[selectedStyle]))
                     {
                         ImGui::SetWindowFontScale(scale);
                         for (int n = 0; n < IM_ARRAYSIZE(styleTypes); n++)
@@ -1000,22 +998,22 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- ForceFeedback ---
                     // static bool vForceFeedback = false;
-                    if (ImGui::Checkbox("Force Feedback", &vForceFeedback))
+                    if (PonUI::Toggle("FORCE FEEDBACK", &vForceFeedback))
                     {
                         saveSettings = true;
                     }
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- Config Button ---
-                    if (ImGui::Button("CONFIG", ImVec2(-1, 40.0f * scale)))
+                    if (PonUI::Button("CONFIG", ImVec2(-1, 40.0f * scale), PonUI::Kind::Primary))
                     {
                         ShellExecuteA(NULL, "open", "Supermodel.exe", "-config-inputs", NULL, SW_SHOWNORMAL);
 
@@ -1024,15 +1022,14 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         saveSettings = true;
                     }
 
-                    ImGui::EndTabItem();
                 }
 
                 // --- Network Tab ---
-                if (ImGui::BeginTabItem("Network"))
+                if (s_ponTab == 3)
                 {
                     ImGui::SetWindowFontScale(scale);
-                    ImGui::Text("Network Setting");
-                    ImGui::Separator();
+                    PonUI::Text("NETWORK SETTING", PonUI::cAccent);
+                    PonUI::Separator();
                     ImGui::Spacing();
                     float labelWidth = 150.0f * scale; // Align label widths
 
@@ -1040,31 +1037,29 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // static bool vNetwork = false;
                     // static bool vSimulateNet = false;
 
-                    if (ImGui::Checkbox("Network", &vNetwork))
+                    if (PonUI::Toggle("NETWORK", &vNetwork))
                     {
                         saveSettings = true;
                     }
-                    if (ImGui::Checkbox("SimulateNet", &vSimulateNet))
+                    if (PonUI::Toggle("SIMULATENET", &vSimulateNet))
                     {
                         saveSettings = true;
                     }
-                    if (ImGui::Checkbox("Streaming", &vStreaming))
+                    if (PonUI::Toggle("STREAMING", &vStreaming))
                     {
                         saveSettings = true;
                     }
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // Codec selection combo
                     {
                         const char* codecs[] = { "H264", "H265" };
                         int selectedCodec = (vCodec == "H264") ? 0 : 1;
-                        ImGui::Text("Codec");
-                        ImGui::SameLine(labelWidth);
                         ImGui::PushItemWidth(100.0f * scale);
-                        if (ImGui::Combo("##Codec", &selectedCodec, codecs, IM_ARRAYSIZE(codecs)))
+                        if (PonUI::Choice("CODEC", &selectedCodec, codecs, IM_ARRAYSIZE(codecs)))
                         {
                             vCodec = codecs[selectedCodec];
                             saveSettings = true;
@@ -1073,7 +1068,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- Text input items ---
@@ -1083,7 +1078,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     static char bufAddressOut[128] = "127.0.0.1";
                     */
                     // PortIn
-                    ImGui::Text("PortIn");
+                    PonUI::Label("PORTIN", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(100.0f * scale); // Short width for port number
                     if (ImGui::InputText("##PortIn", bufPortIn, sizeof(bufPortIn), ImGuiInputTextFlags_CharsDecimal))
@@ -1093,7 +1088,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     // PortOut
-                    ImGui::Text("PortOut");
+                    PonUI::Label("PORTOUT", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(100.0f * scale);
                     if (ImGui::InputText("##PortOut", bufPortOut, sizeof(bufPortOut), ImGuiInputTextFlags_CharsDecimal))
@@ -1103,7 +1098,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::PopItemWidth();
 
                     // AddressOut
-                    ImGui::Text("AddressOut");
+                    PonUI::Label("ADDRESSOUT", labelWidth - 8.0f, PonUI::cLabel, PonUI::RowScale());
                     ImGui::SameLine(labelWidth);
                     ImGui::PushItemWidth(-1); // Expand address input to right edge
                     if (ImGui::InputText("##AddressOut", bufAddressOut, sizeof(bufAddressOut)))
@@ -1112,17 +1107,16 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     }
                     ImGui::PopItemWidth();
 
-                    ImGui::EndTabItem();
                 }
 
                 // --- Other Tab ---
-                if (ImGui::BeginTabItem("Other"))
+                if (s_ponTab == 4)
                 {
                     ImGui::SetWindowFontScale(scale);
 
                     // --- Replay Control Section ---
-                    ImGui::Text("Replay System");
-                    ImGui::Separator();
+                    PonUI::Text("REPLAY SYSTEM", PonUI::cAccent);
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // Group into Child Window for Replay
@@ -1183,7 +1177,8 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
                         // 2. Select file via combo box
                         const char *preview = (selectedFileIdx >= 0) ? replayFiles[selectedFileIdx].c_str() : "Select Replay...";
-                        if (ImGui::BeginCombo("Files", preview))
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 100.0f * scale);
+                        if (ImGui::BeginCombo("##Files", preview))
                         {
                             ImGui::SetWindowFontScale(scale);
                             for (int i = 0; i < replayFiles.size(); i++)
@@ -1205,7 +1200,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
                         // 1. Apply reddish color for delete button warning
                         ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
-                        if (ImGui::Button("Delete", ImVec2(80 * scale, 0)))
+                        if (PonUI::Button("DELETE", ImVec2(90 * scale, 0), PonUI::Kind::Stop))
                         {
                             if (selectedFileIdx >= 0 && selectedFileIdx < (int)replayFiles.size())
                             {
@@ -1221,9 +1216,9 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         {
                             ImGui::SetWindowFontScale(scale);
                             ImGui::Text("Are you sure you want to delete this replay?\nThis cannot be undone!\n\n");
-                            ImGui::Separator();
+                            PonUI::Separator();
 
-                            if (ImGui::Button("OK", ImVec2(120 * scale, 0)))
+                            if (PonUI::Button("OK", ImVec2(120 * scale, 0), PonUI::Kind::Stop))
                             {
                                 // Physically delete and update list
                                 if (std::remove(replayFiles[selectedFileIdx].c_str()) == 0)
@@ -1237,7 +1232,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
                             ImGui::SameLine();
 
-                            if (ImGui::Button("Cancel", ImVec2(120 * scale, 0)))
+                            if (PonUI::Button("CANCEL", ImVec2(120 * scale, 0)))
                             {
                                 ImGui::CloseCurrentPopup();
                             }
@@ -1248,7 +1243,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         ImGui::Spacing();
 
                         // 3. Action buttons
-                        if (ImGui::Button("Record New", ImVec2(120 * scale, 0)))
+                        if (PonUI::Button("RECORD NEW", ImVec2(150 * scale, 0), PonUI::Kind::Go))
                         {
                             std::string currentRomName = "";
 
@@ -1311,7 +1306,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         if (!hasSelection)
                             ImGui::BeginDisabled();
 
-                        if (ImGui::Button("Play Selected", ImVec2(120 * scale, 0)))
+                        if (PonUI::Button("PLAY SELECTED", ImVec2(170 * scale, 0), PonUI::Kind::Primary, hasSelection))
                         {
                             if (selectedFileIdx >= 0 && !replayFilename.empty())
                             {
@@ -1356,7 +1351,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         if (!hasSelection)
                             ImGui::EndDisabled();
 
-                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Note: Replay files must be located in the 'Replays' folder.");
+                        PonUI::Text("REPLAY FILES GO IN THE 'REPLAYS' FOLDER.", PonUI::cFaint, std::max(1, psc - 1));
                     }
                     ImGui::EndChild();
 
@@ -1364,12 +1359,12 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::Spacing();
 
                     // --- System Settings Section ---
-                    ImGui::Text("System");
-                    ImGui::Separator();
+                    PonUI::Text("SYSTEM", PonUI::cAccent);
+                    PonUI::Separator();
                     ImGui::Spacing();
                     ImGui::SetWindowFontScale(scale);
                     ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
-                    if (ImGui::Button("Reset All Settings", ImVec2(240 * scale, 0)))
+                    if (PonUI::Button("RESET ALL SETTINGS", ImVec2(260 * scale, 0), PonUI::Kind::Stop))
                     {
                         // Open confirmation popup
                         ImGui::OpenPopup("Reset Confirmation");
@@ -1381,10 +1376,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         ImGui::SetWindowFontScale(scale);
                         ImGui::Text("This will delete your 'Config/Supermodel.ini' and close the app.\n"
                                     "All your preferences will be lost. Are you sure?\n\n");
-                        ImGui::Separator();
+                        PonUI::Separator();
 
                         // "Yes" button
-                        if (ImGui::Button("YES, Reset Everything", ImVec2(180 * scale, 0)))
+                        if (PonUI::Button("YES, RESET EVERYTHING", ImVec2(260 * scale, 0), PonUI::Kind::Stop))
                         {
                             // Physical deletion
                             // Attempt deletion
@@ -1401,19 +1396,18 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         ImGui::SameLine();
 
                         // "No" button
-                        if (ImGui::Button("Cancel", ImVec2(100 * scale, 0)))
+                        if (PonUI::Button("CANCEL", ImVec2(120 * scale, 0)))
                         {
                             ImGui::CloseCurrentPopup();
                         }
 
                         ImGui::EndPopup();
                     }
-                    ImGui::TextDisabled("Warning: This will delete Supermodel.ini and close the app.");
+                    PonUI::Text("DELETES SUPERMODEL.INI AND CLOSES THE APP.", PonUI::cFaint, std::max(1, psc - 1));
                     // Position at the end of tabs
 
-                    ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("About"))
+                if (s_ponTab == 5)
                 {
                     ImGui::SetWindowFontScale(scale);
                     float windowWidth = ImGui::GetContentRegionAvail().x;
@@ -1434,7 +1428,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ver);
 
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // --- 3. Center Message ---
@@ -1446,13 +1440,13 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     // --- 4. Center Buttons ---
                     float buttonWidth = 240.0f * scale;
                     ImGui::SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
-                    if (ImGui::Button("Visit GitHub Repository", ImVec2(buttonWidth, 40 * scale)))
+                    if (PonUI::Button("VISIT GITHUB REPOSITORY", ImVec2(buttonWidth, 40 * scale), PonUI::Kind::Primary))
                     {
                         ShellExecuteA(NULL, "open", "https://github.com/BackPonBeauty", NULL, NULL, SW_SHOWNORMAL);
                     }
                     // --- Supporters Section ---
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
 
                     // 1. Get available width
@@ -1478,17 +1472,10 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                     float btnWidth = 240.0f * scale;
                     ImGui::SetCursorPosX((availWidth - btnWidth) * 0.5f);
 
-                    ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor(36, 41, 46, 255)); // GitHub Black
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor(50, 55, 60, 255));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor(20, 25, 30, 255));
-                    ImGui::PushStyleColor(ImGuiCol_Text, (ImVec4)ImColor(255, 255, 255, 255));
-
-                    if (ImGui::Button("Sponsor on GitHub", ImVec2(btnWidth, 40 * scale)))
+                    if (PonUI::Button("SPONSOR ON GITHUB", ImVec2(btnWidth, 40 * scale), PonUI::Kind::Go))
                     {
                         ShellExecuteA(NULL, "open", "https://github.com/sponsors/BackPonBeauty", NULL, NULL, SW_SHOWNORMAL);
                     }
-
-                    ImGui::PopStyleColor(4);
 
                     // Tooltip
                     if (ImGui::IsItemHovered())
@@ -1506,7 +1493,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
                         ImGui::EndTooltip();
                     }
                     ImGui::Spacing();
-                    ImGui::Separator();
+                    PonUI::Separator();
                     ImGui::Spacing();
                     // 1. Section Title
                     const char *thanksTitle = "[ Special Thanks ]";
@@ -1547,9 +1534,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
                     ImGui::Dummy(ImVec2(0, 10.0f * scale));
 
-                    ImGui::EndTabItem();
                 }
-                ImGui::EndTabBar();
             }
         }
         ImGui::EndChild();
@@ -1567,21 +1552,14 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         float btnHeight = -1.0f; // Expand button height
         float spacing = 10.0f * scale;
 
-        if (ImGui::Button("LAUNCH", ImVec2(btnWidth, btnHeight)))
+        if (PonUI::Button("LAUNCH", ImVec2(btnWidth, btnHeight), PonUI::Kind::Go))
         {
             if (CheckRomExists(selectedGameIndex, games, config))
             {
                 saveSettings = true;
-                if (GetSelectedGameName(selectedGameIndex, games) == "spikeofe")
-                {
-                    // Streaming (P5, CL-02): Spikeout goes to the lobby first (connect / skip to play locally)
-                    Lobby::Open();
-                }
-                else
-                {
-                    exitLaunch = true;
-                    exit = true;
-                }
+                // 11/24 (owner): Spikeout too starts at once - the lobby is only for a start with -lobby (Main.cpp)
+                exitLaunch = true;
+                exit = true;
             }
             else
             {
@@ -1592,7 +1570,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
         // std::string Dir = config["Dir"].ValueAs<std::string>();
         //  --- Add ROM path setting area ---
         // 2. Folder selection button
-        if (ImGui::Button("DIR...", ImVec2(80.0f * scale, -1)))
+        if (PonUI::Button("DIR...", ImVec2(90.0f * scale, -1)))
         {
             std::string pickedPath = "";
 
@@ -1666,7 +1644,7 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
 
         ImGui::SameLine(ImGui::GetWindowWidth() - btnWidth - 10.0f);
 
-        if (ImGui::Button("EXIT", ImVec2(btnWidth, btnHeight)))
+        if (PonUI::Button("EXIT", ImVec2(btnWidth, btnHeight), PonUI::Kind::Stop))
         {
             exitLaunch = false;
             exit = true;
@@ -1710,13 +1688,12 @@ void GUI(ImGuiIO &io, Util::Config::Node &config,
     }
 
     ImGui::End();
-    // Restore set colors
-    ImGui::PopStyleColor(3);
 }
 
 // --- Entry Point ---
 std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Node &config)
 {
+    s_launchFromLobby = false;
     if (!resLoaded)
     {
         std::ifstream file("Resolution.txt");
@@ -1781,6 +1758,15 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     int ppcFreq = (int)config["PowerPCFrequency"].ValueAs<int64_t>();
     int WindowXPosition = (int)config["WindowXPosition"].ValueAs<int64_t>();
     int WindowYPosition = (int)config["WindowYPosition"].ValueAs<int64_t>();
+    // 11/24 (owner): the boxes start from the ini (the position the game window was last closed at). They were "0"
+    // until the Video tab was opened, so saving the settings (also on LAUNCH) wrote 0,0 over the remembered position.
+    // An empty ini value stays empty (= centred).
+    {
+        const bool hasX = config.TryGet("WindowXPosition") && !config["WindowXPosition"].Empty();
+        const bool hasY = config.TryGet("WindowYPosition") && !config["WindowYPosition"].Empty();
+        if (hasX) snprintf(bufPosX, sizeof(bufPosX), "%d", WindowXPosition); else bufPosX[0] = '\0';
+        if (hasY) snprintf(bufPosY, sizeof(bufPosY), "%d", WindowYPosition); else bufPosY[0] = '\0';
+    }
     int Scanline = (int)config["ScanlineStrength"].ValueAs<int64_t>();
     int Barrel = (int)config["BarrelStrength"].ValueAs<int64_t>();
 
@@ -1902,6 +1888,10 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
         ifs.close();
     }
 
+    // 11/24 (owner): every text not in the game's font is in a Windows font (Yu Gothic: Japanese too). The old
+    // pixel font (Font01) and the Japanese glyphs merged into it only when no Windows font is there.
+    if (!PonUI::AddWindowsFont(fontSize))
+    {
     font_cfg.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF((void *)Font01_data, sizeof(Font01_data), fontSize, &font_cfg);
 
@@ -1918,13 +1908,19 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
             ImFontConfig jp;
             jp.MergeMode = true;
             jp.PixelSnapH = true;
+            // 11/24 (owner): the Japanese glyphs sat lower than the pixel font's letters ("背中ポン美 TEST")
+            jp.GlyphOffset = ImVec2(0.0f, -fontSize * 0.20f);
             io.Fonts->AddFontFromFileTTF(path, fontSize, &jp, io.Fonts->GetGlyphRangesJapanese());
             break;
         }
     }
+    }
+    // 11/24 (owner): the lobby's server names in a Windows font (Yu Gothic Bold, else Meiryo / MS Gothic)
+    PonUI::SetSystemFont(PonUI::AddWindowsFont(fontSize, true));
 
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 150");
+    PonUI::Init();   // 11/24: PonNvram's look (colours, the game's font)
 
     uint32_t window_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (startMaximized)
@@ -2007,6 +2003,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
         // Streaming (P5): the lobby replaces the settings screen while it is open
         if (Lobby::IsOpen())
         {
+            Lobby::SetRomFile((std::filesystem::path(s_Dir) / "spikeofe.zip").string());   // 11/24: NETLINK needs it
             Lobby::Action action = Lobby::Draw(1.0f);
             if (action == Lobby::Action::Connect)
             {
@@ -2014,16 +2011,23 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
                 // no ROM launch: Main runs the stream client (Lobby::Request()); 11/23 a NETLINK slot launches the ROM
                 // (Main joins as that slot's clone)
                 exitLaunch = Lobby::Request().netlink;
+                s_launchFromLobby = exitLaunch;
                 exit = true;
             }
             else if (action == Lobby::Action::Skip)
             {
                 Lobby::Close();
                 exitLaunch = true;      // CL-02b: the normal local spikeofe
+                s_launchFromLobby = true;
                 exit = true;
             }
             else if (action == Lobby::Action::Back)
+            {
+                // 11/24 (owner): the lobby's EXIT closes the program, as the settings screen's EXIT does
                 Lobby::Close();
+                exitLaunch = false;
+                exit = true;
+            }
         }
         else
         // GUI(io, config, games, selectedGame, exit, exitLaunch, saveSettings, window,selectedResIndex);
@@ -2056,8 +2060,23 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     // Return ROM path on LAUNCH button click
     if (exitLaunch)
     {
-        // Get default ROM path
-        std::string path = GetRomPath(selectedGame, games, config);
+        // Get default ROM path. 11/24: from the lobby (SKIP, a NETLINK slot) it is always Spikeout's ROM, whatever
+        // game the list has chosen (the lobby can be opened at start with -lobby, before any choice)
+        int romGame = selectedGame;
+        if (s_launchFromLobby)
+        {
+            int idx = 0;
+            for (auto const &pair : games)
+            {
+                if (pair.second.name == "spikeofe")
+                {
+                    romGame = idx;
+                    break;
+                }
+                idx++;
+            }
+        }
+        std::string path = GetRomPath(romGame, games, config);
         if (!path.empty())
         {
             roms.emplace_back(path);
@@ -2067,6 +2086,7 @@ std::vector<std::string> RunGUI(const std::string &configPath, Util::Config::Nod
     // Cleanup
     if (g_GameTexture)
         glDeleteTextures(1, &g_GameTexture);
+    PonUI::Shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
 

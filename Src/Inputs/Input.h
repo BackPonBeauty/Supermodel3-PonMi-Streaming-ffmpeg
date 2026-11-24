@@ -139,6 +139,12 @@ public:
 	void ClearMapping();
 
 	/*
+	 * 11/24 netlink: what Poll() would give for a switch right now, without touching value / prevValue
+	 * (the client reads its pad between frames and sends a change at once).
+	 */
+	bool PeekSwitch() const;
+
+	/*
 	 * Sets the current mapping(s) assigned to this input. 
 	 * Multiple mapping assignments are comma-separated, eg KEY_RIGHT,JOY1_XAXIS_POS.
 	 * Simultaneous assignments are joined with a plus, eg KEY_ALT+KEY_P.

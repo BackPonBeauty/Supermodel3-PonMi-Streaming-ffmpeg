@@ -140,6 +140,7 @@ SRC_FILES = \
 	Src/OSD/SDL/Audio.cpp \
 	Src/OSD/SDL/Thread.cpp \
 	Src/OSD/SDL/Gui.cpp \
+	Src/OSD/SDL/PonUI.cpp \
 	Src/Model3/SoundBoard.cpp \
 	Src/Sound/SCSP.cpp \
 	Src/Sound/SCSPDSP.cpp \

@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261124 / PonLuncher 2.1.0
+> Build 20261125 / PonLuncher 3.0.0
 
 ---
 
@@ -15,8 +15,8 @@
 
 - **NETLINK (new in 20261123)** — a second way to join over the internet: instead of video, the host sends the link data, and the client runs the game itself from its own ROM. Low latency (button → game about 22–24 ms on a nearby connection with NET BUFFER 1) and little traffic (about 20–50 kbit/s). In the lobby NETLINK slots are blue. Players without the ROM can still join the STREAM slots
 - **Spikeout Final Edition with up to 8 players** (2–8 links). Bots can play the cabinets nobody is using
-- **The client is the same supermodel.exe** — no StreamReceiver. Open the lobby from the setup screen and connect
-- **New launcher, PonLuncher** — choose the number of links, the mode of each slot (stream, local, bot), the codec and so on, then press START
+- **The client is the same supermodel.exe** — no StreamReceiver. Start it with `-lobby` and it opens straight in the lobby
+- **PonLuncher 3.0.0** (new in 20261125) — one full-screen launcher in the game's own font: the link line-up (MAIN), the host settings (HOST), the game's REGION / DIFFICULTY written into every node's NVRAM (GAME), the display size, Discord and the test options (DEVELOP). **LUNCH** starts the link, **STOP** ends it, **LOBBY** opens the client lobby on this PC
 - **Discord sign-in** — only members of the designated Discord server can host and join
 - **Entry tickets** — your Discord token never goes to the host. A small server checks your membership and gives you a signed, single-use ticket for that host and slot
 - **Firebase lobby** — hosts and free slots are listed automatically. No IP address to type
@@ -26,7 +26,8 @@
 - **NVENC (NVIDIA) without the CUDA Toolkit** — the NVIDIA driver is enough. On other GPUs the stream is encoded with FFmpeg (x264 / x265, CPU)
 - **H.264 / H.265** video, Opus audio
 - **Anti-abuse** — disconnect after 3 minutes without input, host-side kick, one client per PC, one PonLuncher per PC, one slot per Discord account, old versions cannot connect
-- **Satellite node 09** (new in 20261120) — a spectator cabinet in the link ring that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker). Since 20261121: the followed player's name in its HUD colour, allies on the left with their colours (`_BOT` on bot cabinets), `LOADING...` during joins and area / stage changes, and the timer held at 99 so the satellite never times out. Since 20261122: the camera is the game's own camera moved over to the shown player, following smoothly and gliding to the next one without going through walls; while a boss is out it shows the boss (every 10 s the next boss), with all 8 players in the ally list and ⚡ marks for their specials; the satellite also changes the cabinet it copies mid-game (only while the link is quiet and both players are alive)
+- **Satellite node 09** (new in 20261120) — a spectator cabinet that shows one player after another, from the link data alone, with its own overlay (title, the player's name and life bar, STAGE - AREA, bosses with their names and life bars, a scrolling ticker). Since 20261121: the followed player's name in its HUD colour, allies on the left with their colours (`_BOT` on bot cabinets), `LOADING...` during joins and area / stage changes, and the timer held at 99 so the satellite never times out. Since 20261122: the camera is the game's own camera moved over to the shown player, following smoothly and gliding to the next one without going through walls; while a boss is out it shows the boss (every 10 s the next boss), with all 8 players in the ally list and ⚡ marks for their specials; the satellite also changes the cabinet it copies mid-game (only while the link is quiet and both players are alive). Since 20261125: the ally list on the left shows every player, the followed one too; the ticker reads `Welcome to PonMi's SPIKEOUT FE 8-Link ONLINE SYSTEM. ::: Current status Difficulty … ::: Stage …: Area … ::: …/… Player(s) ...` (the difficulty from slot 1's NVRAM); the overlay text has the font's dark edge on top as well
+- **Lobby** (20261125) — each server shows its ping (ms) after its name: green under 60, yellow under 120, red above; `-` = no answer (a host on an older build). The setup screen shows the build number next to its title
 
 ### Spikeout FE changes
 
@@ -64,6 +65,14 @@
   - No pause after a special, after the charge combo's release, after a dash arrival's B+C / C+J, or after a throw
   - A back grab's jump throw goes toward the nearest other enemy (was away from allies)
   - Area 75: the bots no longer get stuck at the start room's swing door
+- **Bots (20261125):**
+  - Starting: when every cabinet **in the link** is a bot (a 4-link looks at slots 1–4 only), each bot keeps checking whether a game is running — it joins one if there is, and starts one if there is not (they all start together and make one game). With any cabinet in the link that is not a bot, the bots join once that player has started
+  - A target that goes down or invincible is dropped at once for an enemy that can be hit (the boss-first rule and the 1.5-second hold no longer bring it back); with nothing else to hit, the bot waits by it and hits it as it gets up. The charge / lever turn at a downed boss is gone
+  - Area 75 start room: bosses only until the bot has once been within 1 of a boss; then the small fry too
+  - A boss within 2 turning invincible: if the bot is facing it (within 15°) and is not in front of it (more than 90° off its facing), the bot holds C and closes in, letting go as the invincibility ends; otherwise Shift + lever away with a small jump (Jump held 15 frames)
+  - Charge from behind a boss: only when facing it within 15° and not in its front half; C is let go at once if the boss turns round
+  - A dizzy target while the bot is mid-combo: the combo is dropped, every button let go, and the bot dashes away, then looks for a target again
+  - A back grab's jump throw goes away from the nearest ally within 3; with no ally near, toward the nearest other enemy
 - **Save states with the link (20261123):** a save or load on one cabinet is done on every cabinet of the link at the same frame
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
 
@@ -81,7 +90,7 @@
 - **When a player disconnects, their character stands still** (it does not become a bot). The next person who joins that slot takes control
 - **3 minutes without input disconnects you automatically** (a warning is shown for the last 30 seconds)
 - **Connecting over the internet requires Discord sign-in.** Without sign-in you can only connect from the same PC or your home network
-- **The client needs the ROM too** (the lobby opens when Spikeout FE is selected)
+- **The client needs the ROM only for NETLINK slots (and to play alone with LAUNCH)** — a STREAM slot plays without it
 - **Connect your controllers before starting** so Windows recognises them (controllers connected later are not detected)
 - The client uses the first controller
 - Streaming 8 slots at once puts a heavy load on the host. For 8 links a lower resolution (960×540 or 640×360) is recommended (tested: 8 links at 640×360 on an RTX 3060 host)
@@ -174,38 +183,34 @@ Allow `supermodel.exe` on both private and public networks.
 
 Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
 
-### 3. Start PonLuncher
+### 3. Start PonLuncher (3.0.0)
 
-1. **DISCORD**: press LOGIN and sign in to Discord in your browser. "server member" is shown if you are a member of the server
-2. **HOST**:
-   - HOST NAME: the name shown in the lobby
-   - GAME: spikeofe
-   - LINKS: number of links (2–8)
-   - CODEC: H264 or H265
-   - ENCODER: AUTO (NVENC on NVIDIA, FFmpeg otherwise) / NVENC / FFMPEG
-   - BOT CHAR: the bots' character — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE
+PonLuncher opens full screen. Its tabs (CONTROLS, GRAPHICS and AUDIO are greyed out for now):
+
+1. **DISCORD**: press LOGIN and sign in to Discord in your browser. Your Discord name appears at the top, and SERVER MEMBER shows YES if you are a member of the server
+2. **MAIN** — the link line-up:
+   - LINKS: number of links (1–8)
+   - SLOT 1–8: the mode of each slot (table below), and the bot's character for a BOT slot — ORIGINAL (the cursor's character), SPIKE, LINDA, TENSHIN or WHITE. From the first BOT slot on, every later slot is BOT
    - ROUTE / ROUTE2 / ROUTE3: the bots' route — ROUTE: FRONT MALL / BACK MALL / FRONT SHIP / BACK SHIP, ROUTE2: OTHER SIDE / TOY SHOP, ROUTE3: COURTYARD / DIRECT
-   - BOT CAN OPEN GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
-3. **DEVELOP** (since 20261123 these options are here too):
-   - Log switches for testing (leave them off), SPIKE JR, ELECTRIC THUNDER, FLAMING TOP (KNOCK UP) / KNOCK SIDE
-   - 01 INVINCIBLE: slot 1 takes no damage (for testing)
-   - FISH POSE (TIMER STOP): the in-game countdown stays at 99 for every number of players
-   - TARGET MARKER: a marker over the enemy each bot is aiming at
-   - NET BUFFER (0 / 1 / 2, default 1): frames a NETLINK client keeps in hand. 0 = lowest latency but every hiccup of the connection shows; 2 = smoother on a shaky connection, about 17 ms more per step
-   - RANDOM CHARACTER ON CONTINUE: with ORIGINAL, bots pick a random character when they continue
-   - BOSS HP x1: the boss's life stays as for one player, whatever the number of players
-   - SATELLITE (09): also start the satellite node `PonMi/09` (a spectator screen on the host PC). It joins the link ring after the last slot and shows each player in turn
-4. **SLOTS**: choose a mode for each slot
+   - BOT OPENS GATE: bots break gates and doors open by themselves. Always on when every slot is a BOT
+   - BOT RANDOM CHAR: with ORIGINAL, bots pick a random character when they continue
+   - HEADLESS BOT/NL: BOT slots (and NETLINK slots with 2 or more links) run without a window
+   - MINIMIZE STREAM: STREAM / NETLINK / REMOTE windows start minimised (the stream is not affected)
+   - SATELLITE (09): start the satellite node `PonMi/09` (a spectator screen on the host PC). It is outside the link ring: slot 1 sends it the link data (TCP 55034, this PC only), so it can start late and be closed at any time without stopping the link
+   - POST DISCORD: post the room's free and used slots to Discord
+3. **HOST** — HOST NAME (the name shown in the lobby), CODEC (H264 / H265), ENCODER (AUTO = NVENC on NVIDIA, FFmpeg otherwise / NVENC / FFMPEG), NET BUFFER (0 / 1 / 2, default 1: frames a NETLINK client keeps in hand; 0 = lowest latency, 2 = smoother on a shaky connection, about 17 ms more per step)
+4. **GAME** — REGION and DIFFICULTY, written into the NVRAM of every node with SAVE (linked nodes must use the same region)
+5. **DISPLAY** — RESOLUTION (from `Config/Resolution.txt`; KEEP = leave each node as it is), written to the link nodes at LUNCH
+6. **DEVELOP** — test options written to every node at LUNCH: SPIKE JR, ELECTRIC THUNDER, FLAMING KOMA (KNOCK UP / KNOCK SIDE), P1 SUPERNOVA (slot 1 takes no damage), FISH POSE (TIMER STOP: the countdown stays at 99), TARGET MARKER (a marker over each bot's target), BOSS HP x1 (the boss's life and the damage players take stay as for one player), and the log switches (leave them off)
+7. **SAVE** keeps the settings. On MAIN, **LUNCH** launches every slot and lists the host in the lobby, **STOP** ends it, and **LOBBY** starts `PonMi/00` as a client in the lobby
 
 | Mode | Meaning |
 |------|---------|
 | STREAM | A slot for a player over the internet (streamed) |
 | NETLINK | A slot for a player over the internet who runs the game from their own ROM (link data, no video) |
-| LOCAL | A slot played with a controller on the host PC (choose XINPUT / DINPUT under PAD) |
+| REMOTE | A slot for a player over the internet who picks STREAM or NETLINK when joining |
+| LOCAL | A slot played with a controller on the host PC |
 | BOT | A slot played by a bot |
-
-5. **START** launches every slot and lists the host in the lobby. **STOP** ends it
-6. The name of each player is shown under PLAYER. **KICK** removes them from that slot
 
 > The streaming windows can be minimised. This does not affect the stream.
 
@@ -213,9 +218,10 @@ Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
 
 ## 🕹️ Playing (client)
 
-1. Start `PonMi/00/supermodel.exe`, select **Spikeout Final Edition** on the setup screen and press **LAUNCH**
-2. The lobby opens. Press LOGIN under **Discord** at the top
-3. In the host list, press a **green slot (free, STREAM)** or a **blue slot (free, NETLINK — plays from your own ROM)**
+1. Start `PonMi/00/supermodel.exe` **with `-lobby`** — for example a shortcut whose target ends in ` -lobby`, or `supermodel.exe -lobby` in a terminal in `PonMi/00`. The lobby opens at once
+   - Without `-lobby` the setup screen opens, and **LAUNCH** there starts Spikeout FE on its own (offline, no lobby)
+2. Press **LOGIN** at the top right of the lobby (Discord). Once signed in, your Discord name is shown there
+3. In the host list, press a **green slot (free, STREAM)**, a **blue slot (free, NETLINK — plays from your own ROM)** or a **light-blue slot (free, REMOTE — you choose STREAM or NETLINK)**. The number after each server name is its ping
 4. Once connected, the game screen appears. A NETLINK game goes back to the lobby when you close it
 
 On a NETLINK slot, **F3** shows the round trip, the frames in hand, button → game latency and the data rate.
@@ -227,7 +233,7 @@ On a NETLINK slot, **F3** shows the round trip, the frames in hand, button → g
 | ↑ / ↓ | Raise / lower the bitrate |
 | ESC | Full screen → window → back to the lobby |
 
-> A host on the same PC or in your home network can also be reached with "Connect directly" at the bottom of the lobby, by typing its IP address.
+> A host on the same PC or in your home network is found through the same list (the lobby connects to it over the local network).
 
 ---
 

@@ -259,10 +259,11 @@ void CFileLogger::InfoLog(const char *fmt, va_list vl)
   vsnprintf(string1, sizeof(string1), fmt, vl);
   snprintf(string2, sizeof(string2), "[Info]  %s\n", string1);
 
-  // Write to file, close, and reopen to ensure it was saved
+  // 11/24 (owner): written and flushed (it was closed and opened again for every line: ~18 ms a line on a drive
+  // whose files are scanned on close - the ~300 lines of the runtime configuration took 5.3 s on a netlink client)
   std::unique_lock<std::mutex> lock(m_mtx);
   WriteToFiles(string2);
-  ReopenFiles(std::ios::app);
+  FlushFiles();
 }
 
 void CFileLogger::ErrorLog(const char *fmt, va_list vl)
@@ -302,6 +303,14 @@ void CFileLogger::ReopenFiles(std::ios_base::openmode mode)
       m_logFiles.emplace_back(std::move(ofs));
     }
   }
+}
+
+void CFileLogger::FlushFiles()
+{
+  for (std::ofstream &ofs: m_logFiles)
+    ofs.flush();
+  for (FILE *fp: m_systemFiles)
+    fflush(fp);
 }
 
 void CFileLogger::WriteToFiles(const char *str)

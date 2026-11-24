@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #include "IEncoder.h"
 #include "NvencEncoder.h"
@@ -67,6 +68,9 @@ public:
 	void InitFrameRingBuffer(int width, int height);
 	void UpdateFrameRingBuffer();
 	bool IsStreamingEnabled() const { return m_streamingEnabled; }
+	// 11/24 (owner) REMOTE slot: encode only while a stream client is in (a netlink client or nobody: no encoding)
+	void SetEncodeOn(bool on) { m_encodeOn.store(on); }
+	bool IsEncodeOn() const { return m_encodeOn.load(); }
 
 	// Pre-encode callback (renders ImGui overlay into fbo2 before encoding)
 	using PreEncodeCallback = std::function<void(GLuint fboID, int width, int height)>;
@@ -109,6 +113,7 @@ private:
 	GLint m_locMixEnabled;	// Location of uMixEnabled
     IEncoder* m_encoder = nullptr;
     bool m_streamingEnabled = false;
+    std::atomic<bool> m_encodeOn{true};
     PreEncodeCallback m_preEncodeCallback;
     PreEncodeCallback m_localOverlayCallback;
 };

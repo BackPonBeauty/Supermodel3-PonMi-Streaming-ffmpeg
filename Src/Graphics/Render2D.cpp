@@ -424,7 +424,10 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 				uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
 				uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
 				if (c >= 0x1000000)
+				{
 					put(x0 + x, y0 + y, c);
+					if (y == 0) put(x0 + x, y0 - 1, 0xFF000000u);   // 11/24: the black top edge the tiles lack
+				}
 			}
 	};
 	auto text = [&](const std::string &t, int x, int y) { for (char ch : t) { glyph((unsigned char) ch, x, y); x += 8; } };
@@ -449,7 +452,10 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 					}
 					for (int dy = 0; dy < sc; dy++)
 						for (int dx = 0; dx < sc; dx++)
+						{
 							put(x0 + ((int) i * 8 + x) * sc + dx, y0 + y * sc + dy, c);
+							if (y == 0) put(x0 + ((int) i * 8 + x) * sc + dx, y0 - sc + dy, 0xFF000000u);   // 11/24: top edge
+						}
 				}
 		}
 	};
@@ -476,7 +482,10 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 					const int px0 = tx0 + (int) ((i * 8 + x) * sx), px1 = tx0 + (int) ((i * 8 + x + 1) * sx);
 					for (int dy = 0; dy < sy; dy++)
 						for (int px = px0; px < px1; px++)
+						{
 							put(px, 4 + y * sy + dy, c);
+							if (y == 0) put(px, 4 - sy + dy, 0xFF000000u);   // 11/24: top edge
+						}
 				}
 		}
 	}
@@ -536,7 +545,10 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 					uint32_t o = lum < 200 ? 0xFF000000u : col;        // the font's dark edge stays dark, the rest in the colour
 					for (int dy = 0; dy < nameSc; dy++)
 						for (int dx = 0; dx < nameSc; dx++)
+						{
 							put(x0 + ((int) i * 8 + x) * nameSc + dx, nameY + y * nameSc + dy, o);
+							if (y == 0) put(x0 + ((int) i * 8 + x) * nameSc + dx, nameY - nameSc + dy, 0xFF000000u);   // 11/24: top edge
+						}
 				}
 		}
 	}
@@ -658,12 +670,15 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 	if (!ticker.empty())
 	{
 		// 11/21 (owner): 2x
-		int tw = (int) ticker.size() * 16, by = H - 20;
+		// 11/24: the text can change (stage / area / players): it is taken at the start of each pass and kept to its end
+		static std::string pass; static unsigned passStart = 0;
+		if (pass.empty() || m_satFrame - passStart >= (unsigned) (W + (int) pass.size() * 16)) { pass = ticker; passStart = m_satFrame; }
+		int by = H - 20;
 		for (int y = by - 2; y < by + 18; y++)
 			for (int x = 0; x < W; x++)
 				put(x, y, 0x90000000u);
-		int x = W - (int) (m_satFrame % (unsigned) (W + tw));
-		textC(ticker, x, by, 2, 0);
+		int x = W - (int) (m_satFrame - passStart);
+		textC(pass, x, by, 2, 0);
 	}
 	// 11/21 (owner): LOADING... in the middle, white, 4x (a join / an area or stage change)
 	if (inGame && hud && hud->valid && hud->loading)

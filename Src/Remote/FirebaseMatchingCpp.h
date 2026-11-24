@@ -63,6 +63,7 @@ struct LobbyHostCpp
         std::string player;
         bool locked = false;     // SV-18: the host has a room password
         bool netlink = false;    // 11/23: "mode":"netlink" - played from the player's own ROM (link data, no video)
+        bool remote = false;     // 11/24: "mode":"auto" - a REMOTE slot: the player picks STREAM (video) or NETLINK
     } slots[9];                  // 1..8
     bool locked = false;         // any slot locked
     std::string sess;            // 11/17: games in the link, "stage,area,players;..." (GAME A first)
@@ -96,6 +97,8 @@ public:
     // 11/23 netlink: the slot is written with "mode":"netlink" (the lobby starts the player's own ROM for it). Only
     // written when set, so video slots work with older database rules. Set before RegisterHost.
     void SetNetlink(bool netlink) { m_netlink = netlink; }
+    // 11/24: a REMOTE slot, written with "mode":"auto" (needs the database rule to allow 'auto')
+    void SetRemote(bool remote) { m_remote = remote; }
 
     bool RegisterHost(const std::string &externalIp,
                       const bool availableSlots[9],   // index 1..8
@@ -178,6 +181,7 @@ private:
     std::string m_currentHostId;
     bool m_locked = false;
     bool m_netlink = false;   // 11/23
+    bool m_remote = false;    // 11/24
     std::string m_sessionFile;   // 11/16: "" = do not keep the session (the lobby)
 
     // Heartbeat thread

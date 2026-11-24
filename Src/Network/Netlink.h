@@ -59,9 +59,17 @@ bool NetlinkClientWaitSettings(const std::string &host, int port, int timeoutMs,
 // as chunks: u32 packed size + one zlib stream (Z_SYNC_FLUSH each) of u8 type (0 bytes, 1 XOR with the last
 // frame) + payload - about 0.13 Mbps for an 8-link instead of 11.3.
 void NetlinkSetIdentity(const std::string &game, const std::vector<std::pair<const uint8_t *, size_t>> &romParts);
+// 11/24 (owner): the joining timeline - "[NLT hh:mm:ss.mmm +<ms since this process started>] text" to the log
+// (and the console). Host and client logs line up by the wall clock.
+void NetlinkTime(const char *fmt, ...);
 
 bool NetlinkHostStart(int port, const std::string &settings);
-void NetlinkHostStop();
+// 11/23 (owner): the satellite outside the ring. A node with ini NetlinkWatchPort > 0 also serves its link data on
+// that TCP port to one spectator clone (09: ini SatelliteConnect = host:port) - this PC / the home network only, no
+// inputs, no room session. Same wire as a client: hello, settings, state, ring frames. The ring is 01..08 only, so
+// 09 can start late and close any time; it switches between the nodes from the link data, as before (no new state).
+bool NetlinkWatchStart(int port, const std::string &settings);
+void NetlinkHostStop();                           // (both channels)
 // Every ready frame, after the ring loop and before the bank swap: commRAM = the net board's bank (slot j at
 // 0x100 + j * segSize, 0 = ours going out, 1..N received), node = our 1-based index.
 void NetlinkHostFrame(const uint8_t *commRAM, int numMachines, int node, int segSize);
@@ -101,3 +109,6 @@ void NetlinkLatencyMarkInput(uint32_t buttons, uint8_t hat);
 void NetlinkLatencyInputPlayed(uint32_t sig);
 bool NetlinkClientOn();
 void NetlinkClientSendInput(const NetlinkInputMsg &m);
+// 11/23: the client is the satellite (SatelliteConnect): it sends no inputs. Set before NetlinkClientStart.
+void NetlinkClientSetWatch(bool watch);
+bool NetlinkClientIsWatch();

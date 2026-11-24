@@ -22,6 +22,25 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <cstdarg>
+#include "OSD/Logger.h"
+
+// 11/24 NetlinkTime: process start = static initialisation of this file (before main)
+static const std::chrono::steady_clock::time_point s_nltStart = std::chrono::steady_clock::now();
+
+void NetlinkTime(const char *fmt, ...)
+{
+  char text[512];
+  va_list vl;
+  va_start(vl, fmt);
+  vsnprintf(text, sizeof(text), fmt, vl);
+  va_end(vl);
+  SYSTEMTIME lt;
+  GetLocalTime(&lt);
+  const long long ms = (long long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - s_nltStart).count();
+  printf("[NLT %02d:%02d:%02d.%03d +%lldms] %s\n", lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds, ms, text);
+  InfoLog("[NLT %02d:%02d:%02d.%03d +%lldms] %s", lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds, ms, text);
+}
 
 namespace
 {
@@ -262,20 +281,29 @@ namespace
   }
 
   // ---- Host ----
-  std::thread s_hostThread;
-  std::atomic<bool> s_hostDrop{ false };        // phase 3: the room session of our client ended (Main.cpp)
+  // 11/23 (owner): two channels on the host node - [0] the NETLINK player (NetlinkServe, slot base + 2) and [1] the
+  // satellite (NetlinkWatchPort: a spectator clone outside the ring, this PC / the home network only, no inputs).
+  // Each has its own queue and gets its own state when it connects; one save serves the channels asking that frame.
+  struct HostChan
+  {
+    bool watch = false;
+    std::thread thread;
+    std::atomic<bool> streaming{ false };       // a client has its header: frames are queued
+    std::atomic<bool> overflow{ false };
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::vector<char>> queue;
+    std::atomic<bool> wantState{ false };       // thread -> net board: save at the end of the next frame
+    std::atomic<bool> awaitState{ false };      // net board: this channel's save is under way
+    std::atomic<bool> stateReady{ false };      // Main.cpp -> thread
+    std::vector<char> state;                    // (under mutex)
+  };
+  HostChan s_chan[2];
+  std::atomic<bool> s_hostDrop{ false };        // phase 3: the room session of our client ended (Main.cpp) - channel 0
   std::atomic<bool> s_hostRun{ false };
-  std::atomic<bool> s_hostStreaming{ false };   // a client has its header: frames are queued
-  std::atomic<bool> s_hostOverflow{ false };
   std::atomic<bool> s_hostBroken{ false };
   std::atomic<int> s_hostN{ 0 }, s_hostNode{ 0 };
-  std::mutex s_hostMutex;
-  std::condition_variable s_hostCv;
-  std::deque<std::vector<char>> s_hostQueue;
-  std::atomic<bool> s_hostWantState{ false };   // thread -> net board: save at the end of the next frame
   std::atomic<bool> s_hostSaveNow{ false };     // net board -> Main.cpp
-  std::atomic<bool> s_hostStateReady{ false };  // Main.cpp -> thread
-  std::vector<char> s_hostState;                // (under s_hostMutex)
 
   void HostInput(const NetlinkInputMsg &m)
   {
@@ -309,8 +337,10 @@ namespace
     return std::string();
   }
 
-  void HostThread(int port)
+  void HostThread(int port, int ci)
   {
+    HostChan &ch = s_chan[ci];
+    const char *who = ch.watch ? "satellite" : "client";
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
     SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -320,12 +350,12 @@ namespace
     la.sin_addr.s_addr = htonl(INADDR_ANY);
     if (ls == INVALID_SOCKET || bind(ls, (sockaddr *) &la, sizeof(la)) != 0 || listen(ls, 1) != 0)
     {
-      printf("[Netlink] Host: cannot listen on TCP %d (%d)\n", port, WSAGetLastError());
+      printf("[Netlink] Host: cannot listen on TCP %d for the %s (%d)\n", port, who, WSAGetLastError());
       if (ls != INVALID_SOCKET) closesocket(ls);
       WSACleanup();
       return;
     }
-    printf("[Netlink] Host: listening on TCP %d\n", port);
+    printf("[Netlink] Host: listening on TCP %d (%s)\n", port, who);
 
     while (s_hostRun.load())
     {
@@ -352,8 +382,9 @@ namespace
       setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char *) &one, sizeof(one));
       char ip[64] = "?";
       inet_ntop(AF_INET, &ca.sin_addr, ip, sizeof(ip));
-      printf("[Netlink] Host: client %s connected\n", ip);
-      s_hostDrop.store(false);
+      NetlinkTime("host: %s %s connected", who, ip);
+      if (!ch.watch)
+        s_hostDrop.store(false);
       bool sessionMode = false;
 
       // 2. who it is (10 s), then our game settings at once (it waits for them before it loads the game)
@@ -370,8 +401,10 @@ namespace
         std::string why = HostCheckHello(hello);
         // phase 3: with the room's session running here (a NETLINK slot), only its client - same IP, its session
         // key from WELCOME - gets the link data; without one (a test on this PC / the home network) no outsider
-        sessionMode = StreamProto::HasMediaHelloValidator();
-        if (why.empty() && sessionMode)
+        sessionMode = !ch.watch && StreamProto::HasMediaHelloValidator();
+        if (why.empty() && ch.watch && !IsLocalOrPrivate(ca))
+          why = "the satellite port is for this PC / the home network only";
+        else if (why.empty() && sessionMode)
         {
           StreamProto::Header mh;
           StreamProto::FillHeader(mh, StreamProto::T_MEDIA_HELLO, (uint32_t) strtoul(Field(hello, "key").c_str(), nullptr, 10));
@@ -392,6 +425,7 @@ namespace
           closesocket(c);
           continue;
         }
+        NetlinkTime("host: settings sent to the %s", who);
       }
 
       // 3. wait for the link (N and our node are known once the ring is ready); our state at the end of frame F
@@ -402,25 +436,27 @@ namespace
       if (ok)
       {
         {
-          std::lock_guard<std::mutex> lk(s_hostMutex);
-          s_hostQueue.clear();
-          s_hostOverflow.store(false);
-          s_hostState.clear();
-          s_hostStateReady.store(false);
+          std::lock_guard<std::mutex> lk(ch.mutex);
+          ch.queue.clear();
+          ch.overflow.store(false);
+          ch.state.clear();
+          ch.stateReady.store(false);
         }
-        s_hostWantState.store(true);
+        ch.wantState.store(true);
+        NetlinkTime("host: save state asked for (the %s)", who);
         auto t0 = std::chrono::steady_clock::now();
-        while (s_hostRun.load() && !s_hostStateReady.load() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(15))
+        while (s_hostRun.load() && !ch.stateReady.load() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(15))
           Sleep(5);
         std::vector<char> st;
         {
-          std::lock_guard<std::mutex> lk(s_hostMutex);
-          st.swap(s_hostState);
+          std::lock_guard<std::mutex> lk(ch.mutex);
+          st.swap(ch.state);
         }
-        s_hostWantState.store(false);
-        if (!s_hostStateReady.load() || st.empty())
+        ch.wantState.store(false);
+        NetlinkTime("host: save state ready (%u bytes)", (unsigned) st.size());
+        if (!ch.stateReady.load() || st.empty())
         {
-          printf("[Netlink] Host: no save state for the client, dropped\n");
+          printf("[Netlink] Host: no save state for the %s, dropped\n", who);
           ok = false;
         }
         else
@@ -432,8 +468,9 @@ namespace
           else
           {
             uint32_t sizes[2] = { (uint32_t) packedSize, (uint32_t) st.size() };
+            NetlinkTime("host: save state packed (%u -> %u bytes)", sizes[1], sizes[0]);
             ok = SendAll(c, kStateMagic, 4) && SendAll(c, (const char *) sizes, 8) && SendAll(c, packed.data(), packedSize);
-            printf("[Netlink] Host: save state sent (%u bytes, %u packed)\n", sizes[1], sizes[0]);
+            NetlinkTime("host: save state sent to the %s (%u bytes, %u packed)", who, sizes[1], sizes[0]);
           }
         }
       }
@@ -449,7 +486,7 @@ namespace
         PutMsg(head, &idx, 1);
         PutMsg(head, &others, 1);
         ok = pk.ok && SendChunk(c, pk, head, prev, false);
-        printf("[Netlink] Host: link of %d machines, we are node %d\n", s_hostN.load(), s_hostNode.load());
+        printf("[Netlink] Host: link of %d machines, we are node %d (%s)\n", s_hostN.load(), s_hostNode.load(), who);
       }
       std::vector<char> in;
       uint64_t frames = 0;
@@ -457,9 +494,9 @@ namespace
       {
         std::deque<std::vector<char>> batch;
         {
-          std::unique_lock<std::mutex> lk(s_hostMutex);
-          s_hostCv.wait_for(lk, std::chrono::milliseconds(5), [] { return !s_hostQueue.empty() || !s_hostRun.load(); });
-          batch.swap(s_hostQueue);
+          std::unique_lock<std::mutex> lk(ch.mutex);
+          ch.cv.wait_for(lk, std::chrono::milliseconds(5), [&ch] { return !ch.queue.empty() || !s_hostRun.load(); });
+          batch.swap(ch.queue);
         }
         for (auto &f : batch)
         {
@@ -468,19 +505,19 @@ namespace
         }
         if (!ok)
           break;
-        if (s_hostOverflow.load())
+        if (ch.overflow.load())
         {
-          printf("[Netlink] Host: client too slow (%zu frames behind), dropped\n", kMaxQueue);
+          printf("[Netlink] Host: %s too slow (%zu frames behind), dropped\n", who, kMaxQueue);
           break;
         }
         if (s_hostBroken.load())
         {
           std::vector<char> zero(4, 0);           // "link broken", as on the ring
           SendChunk(c, pk, zero, prev, false);
-          printf("[Netlink] Host: the link is broken, client told\n");
+          printf("[Netlink] Host: the link is broken, %s told\n", who);
           break;
         }
-        if (s_hostDrop.load())
+        if (!ch.watch && s_hostDrop.load())
         {
           printf("[Netlink] Host: the client's room session ended\n");
           break;
@@ -509,7 +546,7 @@ namespace
             break;
           // inputs on this socket only without a room session (a home test); with one they come over UDP to the
           // SessionServer (idle kick and all)
-          if (!sessionMode && len == (int) sizeof(NetlinkInputMsg) && memcmp(in.data() + pos + 4, "NLI1", 4) == 0)
+          if (!ch.watch && !sessionMode && len == (int) sizeof(NetlinkInputMsg) && memcmp(in.data() + pos + 4, "NLI1", 4) == 0)
           {
             NetlinkInputMsg m;
             memcpy(&m, in.data() + pos + 4, sizeof(m));
@@ -519,15 +556,15 @@ namespace
         }
         in.erase(in.begin(), in.begin() + pos);
       }
-      s_hostStreaming.store(false);
+      ch.streaming.store(false);
       {
-        std::lock_guard<std::mutex> lk(s_hostMutex);
-        s_hostQueue.clear();
+        std::lock_guard<std::mutex> lk(ch.mutex);
+        ch.queue.clear();
       }
-      if (!sessionMode)
+      if (!ch.watch && !sessionMode)
         HostClear();                              // (with a session the SessionServer clears the input)
       closesocket(c);
-      printf("[Netlink] Host: client %s gone after %llu frames\n", ip, (unsigned long long) frames);
+      printf("[Netlink] Host: %s %s gone after %llu frames\n", who, ip, (unsigned long long) frames);
     }
     closesocket(ls);
     WSACleanup();
@@ -549,6 +586,7 @@ namespace
   std::vector<char> s_clientState;              // the host's save state, waiting for Main.cpp
   bool s_clientStateHave = false;
   std::atomic<bool> s_clientStateLoaded{ false };
+  std::atomic<bool> s_clientWatch{ false };     // 11/23: a satellite (spectator) - no inputs, no room session
 
   void ClientFail(const std::string &why)
   {
@@ -859,7 +897,7 @@ namespace
     if (s_sess.want)
     {
       std::string why;
-      printf("[Netlink] Client: joining slot %d of %s\n", s_sess.slot, host.c_str());
+      NetlinkTime("client: joining slot %d of %s", s_sess.slot, host.c_str());
       if (!SessionHandshake(host, why))
       {
         ClientFail(why);
@@ -870,10 +908,10 @@ namespace
       s_sess.up.store(true);
       s_sess.run.store(true);
       s_sess.thread = std::thread(SessionThread);
-      printf("[Netlink] Client: in the room (slot %d)\n", s_sess.slot);
+      NetlinkTime("client: in the room (slot %d)", s_sess.slot);
     }
 
-    printf("[Netlink] Client: connecting to %s:%d\n", host.c_str(), port);
+    NetlinkTime("client: connecting to %s:%d", host.c_str(), port);
     uint64_t connectStart = GetTickCount64();
     while (s_clientRun.load())
     {
@@ -908,7 +946,7 @@ namespace
     }
     int one = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *) &one, sizeof(one));
-    printf("[Netlink] Client: connected\n");
+    NetlinkTime("client: connected");
 
     auto quit = [&](const std::string &why)
     {
@@ -939,6 +977,7 @@ namespace
         s_clientSettingsHave = true;
       }
       s_clientSettingsCv.notify_all();
+      NetlinkTime("client: host settings received");
     }
 
     // then the host's save state (packed); the link data only once Main.cpp has loaded it
@@ -957,6 +996,7 @@ namespace
       {
         packed.resize(sizes[0]);
         ok = RecvAll(s, packed.data(), sizes[0], s_clientRun);
+        NetlinkTime("client: state downloaded (%u bytes packed)", sizes[0]);
       }
       if (ok)
       {
@@ -966,7 +1006,7 @@ namespace
       }
       if (!ok)
         return quit("no state from the host");
-      printf("[Netlink] Client: state received (%u bytes, %u packed)\n", sizes[1], sizes[0]);
+      NetlinkTime("client: state unpacked (%u bytes, %u packed)", sizes[1], sizes[0]);
       s_clientStateLoaded.store(false);
       {
         std::lock_guard<std::mutex> lk(s_clientStateMutex);
@@ -1073,21 +1113,35 @@ void NetlinkSetIdentity(const std::string &game, const std::vector<std::pair<con
 
 bool NetlinkHostStart(int port, const std::string &settings)
 {
-  if (s_hostThread.joinable())
+  if (s_chan[0].thread.joinable())
     return true;
   s_hostSettings = settings;
   s_hostRun.store(true);
-  s_hostThread = std::thread(HostThread, port);
+  s_chan[0].watch = false;
+  s_chan[0].thread = std::thread(HostThread, port, 0);
+  return true;
+}
+
+bool NetlinkWatchStart(int port, const std::string &settings)
+{
+  if (s_chan[1].thread.joinable())
+    return true;
+  s_hostSettings = settings;
+  s_hostRun.store(true);
+  s_chan[1].watch = true;
+  s_chan[1].thread = std::thread(HostThread, port, 1);
   return true;
 }
 
 void NetlinkHostStop()
 {
-  if (!s_hostThread.joinable())
-    return;
   s_hostRun.store(false);
-  s_hostCv.notify_all();
-  s_hostThread.join();
+  for (auto &ch : s_chan)
+  {
+    ch.cv.notify_all();
+    if (ch.thread.joinable())
+      ch.thread.join();
+  }
 }
 
 void NetlinkHostFrame(const uint8_t *commRAM, int numMachines, int node, int segSize)
@@ -1095,14 +1149,25 @@ void NetlinkHostFrame(const uint8_t *commRAM, int numMachines, int node, int seg
   s_hostN.store(numMachines);
   s_hostNode.store(node);
   s_hostBroken.store(false);
-  if (numMachines >= 2 && segSize > 0 && s_hostWantState.exchange(false))
-  {
-    // frame F: the state is saved after it (Main.cpp), the client gets F+1 on
-    s_hostSaveNow.store(true);
-    s_hostStreaming.store(true);
+  if (numMachines < 2 || segSize <= 0)
     return;
+  // a channel that asks for a state this frame F: it is saved after F (Main.cpp), the channel gets F+1 on
+  bool anyStreaming = false;
+  bool armed[2] = {};
+  for (int c = 0; c < 2; c++)
+  {
+    HostChan &ch = s_chan[c];
+    if (ch.wantState.exchange(false))
+    {
+      ch.awaitState.store(true);
+      ch.streaming.store(true);
+      s_hostSaveNow.store(true);
+      armed[c] = true;
+    }
+    else if (ch.streaming.load())
+      anyStreaming = true;
   }
-  if (!s_hostStreaming.load() || numMachines < 2 || segSize <= 0)
+  if (!anyStreaming)
     return;
   // segs[i] = node (N - i), as 08 sends them: our slot j holds node ((k - 1 - j) mod N) + 1, so that is
   // slot (k + i) mod N (slot N, the copy of our own that came round, for 0)
@@ -1115,16 +1180,22 @@ void NetlinkHostFrame(const uint8_t *commRAM, int numMachines, int node, int seg
       j = numMachines;
     PutMsg(f, commRAM + 0x100 + j * segSize, segSize);
   }
+  for (int c = 0; c < 2; c++)
   {
-    std::lock_guard<std::mutex> lk(s_hostMutex);
-    if (s_hostQueue.size() >= kMaxQueue)
+    HostChan &ch = s_chan[c];
+    if (armed[c] || !ch.streaming.load())
+      continue;
     {
-      s_hostOverflow.store(true);
-      return;
+      std::lock_guard<std::mutex> lk(ch.mutex);
+      if (ch.queue.size() >= kMaxQueue)
+      {
+        ch.overflow.store(true);
+        continue;
+      }
+      ch.queue.push_back(f);
     }
-    s_hostQueue.push_back(std::move(f));
+    ch.cv.notify_all();
   }
-  s_hostCv.notify_all();
 }
 
 bool NetlinkHostTakeSaveRequest()
@@ -1134,9 +1205,14 @@ bool NetlinkHostTakeSaveRequest()
 
 void NetlinkHostSetState(std::vector<char> &&st)
 {
-  std::lock_guard<std::mutex> lk(s_hostMutex);
-  s_hostState = std::move(st);
-  s_hostStateReady.store(true);
+  for (auto &ch : s_chan)
+  {
+    if (!ch.awaitState.exchange(false))
+      continue;
+    std::lock_guard<std::mutex> lk(ch.mutex);
+    ch.state = st;                              // (a copy: both channels may have asked in the same frame)
+    ch.stateReady.store(true);
+  }
 }
 
 void NetlinkHostBroken()
@@ -1308,8 +1384,20 @@ bool NetlinkClientOn()
   return s_clientOn.load();
 }
 
+void NetlinkClientSetWatch(bool watch)
+{
+  s_clientWatch.store(watch);
+}
+
+bool NetlinkClientIsWatch()
+{
+  return s_clientWatch.load();
+}
+
 void NetlinkClientSendInput(const NetlinkInputMsg &m)
 {
+  if (s_clientWatch.load())
+    return;                                     // a satellite only watches
   // phase 3: in a room, the input goes to the SessionServer over UDP (as the video client's does)
   if (s_sess.want)
   {

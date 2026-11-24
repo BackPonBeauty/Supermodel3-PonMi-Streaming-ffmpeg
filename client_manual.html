@@ -81,7 +81,7 @@ a { color: var(--accent) }
 <header class="top">
   <h1>CLIENT <span class="slash">//</span> クライアントの接続のしかた</h1>
   <p class="lead">ほかの人が立てたホストに入って、Spikeout Final Edition のリンク対戦に参加する手順です。ゲームはホストの PC で動いていて、あなたの PC には画面と音が届き、あなたのパッドの入力がホストに送られます。</p>
-  <div class="meta"><span>build 20261122</span><span>Windows 10 / 11 64bit</span></div>
+  <div class="meta"><span>build 20261125</span><span>Windows 10 / 11 64bit</span></div>
 </header>
 
 <nav class="toc" aria-label="目次">
@@ -94,7 +94,7 @@ a { color: var(--accent) }
     <li><a href="#pad">パッドを選ぶ</a></li>
     <li><a href="#join">ホストに入る</a></li>
     <li><a href="#play">遊んでいる間</a></li>
-    <li><a href="#direct">直接つなぐ（同じ家の中）</a></li>
+    <li><a href="#direct">同じ PC・同じ家の中のホスト</a></li>
     <li><a href="#trouble">困ったとき</a></li>
   </ol>
 </nav>
@@ -109,7 +109,7 @@ a { color: var(--accent) }
       <tr><td>PC</td><td>Windows 10 / 11（64bit）。映像は CPU で再生するので、GPU はどれでも大丈夫です</td></tr>
       <tr><td>パッド</td><td>パッド（Xbox 系、DirectInput のスティックなど）かキーボード。ボタンの割り当ては、自分の <code>Config\Supermodel.ini</code> で決められます（→ <a href="#pad">5</a>）</td></tr>
       <tr><td>Discord</td><td>指定の Discord サーバーのメンバーであること（<a href="https://discord.com/invite/zpKBFDA52f">招待リンク</a>）。インターネット越しにつなぐときに必要です</td></tr>
-      <tr><td>ROM</td><td>自分で持っている Spikeout Final Edition の ROM。ロビーは、このゲームを選んだときに開きます</td></tr>
+      <tr><td>ROM</td><td>自分で持っている Spikeout Final Edition の ROM。NETLINK のスロット（青。水色の REMOTE で NETLINK を選ぶときも）と、<code>-lobby</code> を付けずに起動して 1 人で遊ぶときに要ります。配信のスロット（緑）は ROM が無くても遊べます</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -127,17 +127,17 @@ a { color: var(--accent) }
 <section id="lobby">
   <h2><span class="no">3</span>ロビーを開く</h2>
   <ol class="steps">
-    <li><div><code>PonMi\00\supermodel.exe</code> を起動します。SmartScreen の警告が出たら「詳細情報 → 実行」を押してください。</div></li>
-    <li><div>設定の画面で <b>Spikeout Final Edition</b> を選び、<span class="ctl">LAUNCH</span> を押します。</div></li>
-    <li><div>「SPIKEOUT FINAL EDITION - STREAMING LOBBY」の画面が開きます。</div></li>
+    <li><div><code>PonMi\00\supermodel.exe</code> を、うしろに <code>-lobby</code> を付けて起動します。かんたんなのは、<code>supermodel.exe</code> のショートカットを作り、プロパティの「リンク先」の最後に <code> -lobby</code>（前に半角スペース）を足すやり方です。SmartScreen の警告が出たら「詳細情報 → 実行」を押してください。</div></li>
+    <li><div>すぐに「SPIKEOUT FE　ONLINE LOBBY」の画面が開きます。閉じるときは左下の <span class="ctl">EXIT</span> です。</div></li>
   </ol>
+  <div class="note info"><p><code>-lobby</code> を付けずに起動すると、設定の画面が開きます（見出しの右に、いまの版の <b>BUILD</b> 番号が出ます）。そこで Spikeout Final Edition を選んで <span class="ctl">LAUNCH</span> を押すと、ロビーには行かずに、そのまま 1 人でゲームが始まります。</p></div>
 </section>
 
 <section id="login">
   <h2><span class="no">4</span>Discord にログイン</h2>
   <ol class="steps">
-    <li><div>ロビーの上の <span class="ctl">Discord</span> の行で <span class="ctl">LOGIN</span> を押します。ブラウザで Discord のログイン画面が開くので、許可します。</div></li>
-    <li><div>ロビーに戻ると、名前が緑色で出ます。次からはログインしたままです（やめるときは <span class="ctl">LOGOUT</span>）。</div></li>
+    <li><div>ロビーの右上の <span class="ctl">LOGIN</span> を押します。ブラウザで Discord のログイン画面が開くので、許可します。</div></li>
+    <li><div>ロビーに戻ると、右上の枠に Discord の名前が出ます。次からはログインしたままです（やめるときは <span class="ctl">LOGOUT</span>）。</div></li>
   </ol>
   <div class="note info"><p>Discord のトークンはホストには送られません。小さなサーバーがメンバーかどうかを確かめて、そのホストとスロットだけに使える、1 回きりの「入場券」を渡します。</p></div>
 </section>
@@ -181,8 +181,9 @@ a { color: var(--accent) }
 <section id="join">
   <h2><span class="no">6</span>ホストに入る</h2>
   <ol class="steps">
-    <li><div><span class="ctl">Hosts</span> に、いま立っているホストが並びます（出てこないときは <span class="ctl">REFRESH</span>）。ゲームが進んでいるホストには「GAME A：STAGE・エリア・人数」が出ます。</div></li>
-    <li><div>スロットの欄の <b class="ok">緑のスロット（空き）</b>を押します。使用中のスロットには、マウスを乗せると遊んでいる人の名前が出ます。</div></li>
+    <li><div><span class="ctl">Hosts</span> に、いま立っているホストが並びます（10 秒ごとに更新。すぐ見たいときは <span class="ctl">REFRESH</span>）。ゲームが進んでいるホストには「GAME A：STAGE・エリア・人数」が出ます。</div></li>
+    <li><div>サーバー名の右の数字は、そのホストまでの <b>ping</b>（往復の時間、ms）です。60 未満は緑、120 未満は黄、それより遅いと赤。<code>-</code> は返事が無い（ホストが古い版など）ときです。</div></li>
+    <li><div>スロットの欄の空きスロットを押します。<b class="ok">緑</b>＝配信（STREAM、ROM 不要）、<b>青</b>＝NETLINK（自分の ROM で動かす）、<b>水色</b>＝REMOTE（押すと「JOIN AS」の箱が出て、STREAM か NETLINK を選べます）。使用中のスロットには、マウスを乗せると遊んでいる人の名前が出ます。</div></li>
     <li><div>つながると、ゲームの画面が出ます。<b>START</b> でゲームに入ります。もうゲームが進んでいるときは、途中参加で <b>GAME A</b> に入ります。</div></li>
   </ol>
 </section>
@@ -208,13 +209,9 @@ a { color: var(--accent) }
 </section>
 
 <section id="direct">
-  <h2><span class="no">8</span>直接つなぐ（同じ PC・同じ家の中）</h2>
-  <p>ホストが同じ PC か、同じ家のネットワークにあるときは、Discord にログインしなくても、ロビーの下の <span class="ctl">Connect directly</span> でつなげます。</p>
-  <ol class="steps">
-    <li><div><span class="ctl">Host IP</span> にホストの PC の IP アドレス（同じ PC なら <code>127.0.0.1</code>）を入れます。</div></li>
-    <li><div><span class="ctl">Slot</span> でスロットの番号を選び、<span class="ctl">Your name</span> に名前を入れて、<span class="ctl">CONNECT</span> を押します。</div></li>
-  </ol>
-  <p><span class="ctl">SKIP (PLAY LOCALLY)</span> を押すと、つながずにこの PC だけで遊べます。</p>
+  <h2><span class="no">8</span>同じ PC・同じ家の中のホスト</h2>
+  <p>ホストが同じ PC か、同じ家のネットワークにあるときも、ほかのホストと同じく <span class="ctl">Hosts</span> の一覧から入ります。ロビーが自動で家の中のアドレスを使います。この場合は Discord にログインしていなくても入れます。</p>
+  <p>つながずに 1 人で遊ぶときは、<code>-lobby</code> を付けずに起動して、設定の画面の <span class="ctl">LAUNCH</span> を押します（→ <a href="#lobby">3</a>）。</p>
 </section>
 
 <section id="trouble">
@@ -229,6 +226,7 @@ a { color: var(--accent) }
       <tr><td>That slot is in use</td><td>ほかの人が先に入りました。別のスロットを選んでください</td></tr>
       <tr><td>already connected to another slot</td><td>同じアカウントで、ほかのスロットに入っています。そちらを切断してから</td></tr>
       <tr><td>entry-ticket server could not check</td><td>入場券のサーバーが一時的に使えません。少し待ってから、もう一度</td></tr>
+      <tr><td>ping が <code>-</code> のまま</td><td>ホストが古い版か、ルーターなどで返事がふさがれています。入れるかどうかには関係ありません</td></tr>
       <tr><td>Hosts が空</td><td>いま立っているホストがありません。<span class="ctl">REFRESH</span> を押すか、Discord のチャンネルで様子を見てください</td></tr>
       <tr><td>つながらない（何も出ない）</td><td>ホスト側のルーターやファイアウォールの設定かもしれません。ホストの人に伝えてください</td></tr>
       <tr><td>ボタンが効かない・ちがう</td><td>ロビーの <span class="ctl">Pad</span> で正しいパッドを選んでいるか。<code>Config\Supermodel.ini</code> の割り当て（<a href="#pad">5</a>）。割り当てを変えたら、つなぎ直す。キーボードは、ウィンドウが前に出ているときだけ</td></tr>

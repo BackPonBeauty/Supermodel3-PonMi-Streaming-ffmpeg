@@ -40,6 +40,7 @@ extern "C" {
 #include <string>
 #include <thread>
 #include <vector>
+#include "OSD/SDL/PonUI.h"
 
 using namespace StreamProto;
 
@@ -972,6 +973,7 @@ StreamClientExit RunStreamClient(const StreamConnectRequest &req, std::string &m
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGui::GetIO().IniFilename = nullptr;
+  PonUI::AddWindowsFont(16.0f);   // 11/24 (owner): the stream client's text in a Windows font
   ImGui_ImplSDL2_InitForOpenGL(window, gl);
   ImGui_ImplOpenGL3_Init("#version 150");
 

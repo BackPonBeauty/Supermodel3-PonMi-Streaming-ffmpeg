@@ -840,6 +840,6 @@ void SuperAA::UpdateFrameRingBuffer()
         m_preEncodeCallback(m_fbo2.GetFBOID(), m_width, m_height);
 
     // Encode
-    if (m_streamingEnabled && m_encoder)
+    if (m_streamingEnabled && m_encoder && m_encodeOn.load())   // 11/24: off on a REMOTE slot without a stream client
         m_encoder->EncodeFrame(m_fbo2.GetTextureID());
 }
