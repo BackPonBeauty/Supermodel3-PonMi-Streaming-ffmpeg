@@ -73,7 +73,7 @@
   - Charge from behind a boss: only when facing it within 15° and not in its front half; C is let go at once if the boss turns round
   - A dizzy target while the bot is mid-combo: the combo is dropped, every button let go, and the bot dashes away, then looks for a target again
   - A back grab's jump throw goes away from the nearest ally within 3; with no ally near, toward the nearest other enemy
-- **Bots (20261126):** the bot AI has been reset to a base for new attack logic — bots still find targets, steer round walls, dash, go through gates / doors / exits, pick up items and follow the ROUTE settings, but **they do not attack** for now (near an enemy they only turn to face it)
+- **Bots (20261126):** the bot AI has been rebuilt and is smarter
 - **Enemy list (20261126, test option):** with `EnemyHud = 1` in a node's Supermodel.ini, the live enemies are listed on the left of the game screen (name, life bar, HP, which player each one is after, distance, state, motion ids), in the game font
 - **Save states with the link (20261123):** a save or load on one cabinet is done on every cabinet of the link at the same frame
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
