@@ -3696,9 +3696,7 @@ int main(int argc, char **argv)
     // 11/16 (owner): only one client per PC. A start without a ROM (settings GUI -> lobby -> stream client) takes a
     // named mutex; servers started by the launcher with a ROM never get here, so they stay multi-instance.
     // Checked after the HideCMD relaunch (the first process exits there). (Distribution build: a player must not take
-    // several slots.) 11/24 (owner): ini Admin = 1 (PonLuncher's DEVELOP > ADMIN, written to the PonMi node folders
-    // at LUNCH) lifts it - several clients on one PC for testing.
-    if (!fConfig2["Admin"].ValueAsDefault<bool>(false))
+    // several slots.) (11/24 ini Admin = 1 lifted it; removed 11/26, owner.)
     {
       // 11/23: a client that has just closed (and started us again: back to the lobby) may still hold it for a
       // moment while it exits - look again for up to 3 s before saying another client runs
