@@ -110,6 +110,40 @@ struct SatHud
   bool bossMvAtk[4] = {};
 };
 
+// 11/25 (owner): every enemy on the field, live, in one column on the left of the game screen (ini EnemyHud = 1, any
+// cabinet). Model3.cpp fills it from the game's RAM in SyncGPUs; Render2D::RenderEnemyOverlay draws it. Display only.
+struct EnemyHudRow
+{
+  int slot = 0;                             // Rob slot (enemies start at the player count)
+  char name[16] = {};                       // the game's name table, index Rob +0x15C
+  int nameIdx = 0;                          // Rob +0x15C
+  int hp = 0, hpMax = 0;                    // Rob +0x3F02 / +0x3F04
+  int obj = 0, cls = 0, chr = 0;            // Rob +0x72 object no., +0x73 class (4+ = boss), +0x3F00 type
+  uint32_t act = 0;                         // Rob +0x38 action
+  int mot = 0;                              // Rob +0x3C motion no.
+  uint32_t k1 = 0, k2 = 0;                  // Rob +0x44 mot_kind, +0x48 mot_kind2
+  int aiAct = 0, aiStep = 0;                // Rob +0x22C2 its AI's action, +0x227A the input step (0xFF = done)
+  int target = -1;                          // the player slot it goes for (Rob +0x32E4), -1 none
+  int inv = 0;                              // Rob +0x3F22 invincibility timer
+  float dist = 0.0f, dy = 0.0f;             // from our own player: across, height (its Rob y - ours)
+  // 11/25 (owner): its move now, as the satellite shows a boss's (SatHud bossMv*): the action number (+0x22C2), its input
+  // steps (+0x227C.., pad bits B 01 C 02 S 04 J 08 down 10 up 20 right 40 left 80), the step it is on (+0x227A; -1 = all
+  // fed) and its attack bit. mvN 0 = nothing shown.
+  int mvAct = 0, mvN = 0, mvStep = -1;
+  uint8_t mvSeq[16] = {};
+  bool mvAtk = false;
+};
+struct EnemyHud
+{
+  bool valid = false;
+  int self = 0;                             // our node (1-8)
+  int n = 0;
+  int stage = -1, area = -1;                // 11/25: shown on the top line
+  EnemyHudRow e[12];
+};
+extern EnemyHud g_enemyHud;
+extern bool g_enemyHudOn;                   // ini EnemyHud
+
 struct SatViewState
 {
   bool on = false;                          // this is the clone (spikeofe, SatelliteClone = 1)

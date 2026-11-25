@@ -178,6 +178,11 @@ void CTileGen::SatOverlay(bool inGame, const std::string &title, const std::stri
 	Render2D->RenderSatelliteOverlay(m_vramP, m_pal[0], inGame, title, ticker, hud);
 }
 
+void CTileGen::EnemyOverlay(const EnemyHud *hud, int x0)
+{
+	Render2D->RenderEnemyOverlay(m_vramP, m_pal[0], hud, x0);
+}
+
 void CTileGen::EndFrame(void)
 {
 	Render2D->EndFrame();

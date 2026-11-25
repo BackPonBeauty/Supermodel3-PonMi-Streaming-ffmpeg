@@ -88,6 +88,7 @@ public:
 	 * game's HUD (top surface, x 40-96 y 8-24) below it while in a game, and a line scrolling at the bottom.
 	 */
 	void RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pal, bool inGame, const std::string &title, const std::string &ticker, const struct SatHud *hud = nullptr);
+	void RenderEnemyOverlay(const uint32_t *vramP, const uint32_t *pal, const struct EnemyHud *hud, int x0);   // 11/25 ini EnemyHud
 
 	/*
 	 * EndFrame(void):
@@ -221,6 +222,8 @@ private:
 	GLuint m_satTex = 0;
 	std::vector<uint32_t> m_satBuf;
 	unsigned m_satFrame = 0;
+	GLuint m_enemyTex = 0;                   // 11/25: the enemy list layer (RenderEnemyOverlay)
+	std::vector<uint32_t> m_enemyBuf;
 };
 
 

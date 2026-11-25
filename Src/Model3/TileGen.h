@@ -46,6 +46,7 @@ public:
 	const UINT32 *SatRegs(void) const { return m_regs; }
 	const UINT32 *SatPal(int i) const { return m_pal[i]; }
 	void SatOverlay(bool inGame, const std::string &title, const std::string &ticker, const struct SatHud *hud = nullptr);
+	void EnemyOverlay(const struct EnemyHud *hud, int x0);   // 11/25 ini EnemyHud
 	/*
 	 * SaveState(SaveState):
 	 *

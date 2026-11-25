@@ -4156,7 +4156,12 @@ int main(int argc, char **argv)
   // 11/24 (owner): a bot node (Spikeout, AIPlayer = 1, not a STREAM / NETLINK slot or a netlink / satellite client)
   // ignores this PC's keyboard and pads for the game: every game control is unmapped at run time (the bot puts its own
   // presses into the inputs). The UI keys (ESC, save / load ...) stay. Not stored: the ini keeps its mapping.
+  // 11/25 (owner): ini BotControl = 1 keeps them all (the ini's mapping: start, lever, buttons, save / load ...) - the local
+  // presses then go in together with the bot's (Model3 ORs both into the inputs).
   if (game.name == "spikeofe" && s_runtime_config["AIPlayer"].ValueAsDefault<bool>(false) &&
+      s_runtime_config["BotControl"].ValueAsDefault<bool>(false))
+    InfoLog("Bot node, BotControl = 1: the local keyboard and pads work too.");
+  else if (game.name == "spikeofe" && s_runtime_config["AIPlayer"].ValueAsDefault<bool>(false) &&
       !s_runtime_config["Streaming"].ValueAsDefault<bool>(false) && !s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) &&
       !s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false))
   {

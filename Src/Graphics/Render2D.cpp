@@ -695,6 +695,164 @@ void CRender2D::RenderSatelliteOverlay(const uint32_t *vramP, const uint32_t *pa
 	DrawSurface(m_satTex);
 }
 
+// 11/25 (owner): every enemy on the field, live, in one column on the left (as the satellite's ally list): two lines each -
+//   1: slot, name, life bar, hp/max, the player it goes for (>P n, ">ME" in red = us), distance, its state words
+//   2: object no. (OB), class, type (Rob +0x3F00), action (+0x38), motion (+0x3C), its AI action:step (+0x22C2 / +0x227A), height
+// The game's 8x8 font (VRAM tiles 0x20-0x7E, palette set 0), a copy taken in plain play as the satellite does.
+void CRender2D::RenderEnemyOverlay(const uint32_t *vramP, const uint32_t *pal, const EnemyHud *hud, int x0)
+{
+	const int W = 496, H = 384;
+	if (!vramP || !pal || !hud || !hud->valid)
+		return;
+	if (!m_enemyTex)
+	{
+		glGenTextures(1, &m_enemyTex);
+		glBindTexture(GL_TEXTURE_2D, m_enemyTex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_upscaleMode == UpscaleMode::Nearest ? GL_NEAREST : GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_upscaleMode == UpscaleMode::Nearest ? GL_NEAREST : GL_LINEAR);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	}
+	m_enemyBuf.assign(W * H, 0);
+	{
+		static uint32_t fontCopy[0x800], palCopy[256]; static bool haveFont = false;
+		if (!haveFont && hud->n > 0 && (vramP['A' * 16] | vramP['A' * 16 + 4] | vramP['A' * 16 + 8]))
+		{
+			memcpy(fontCopy, vramP, sizeof(fontCopy));
+			memcpy(palCopy, pal, sizeof(palCopy));
+			haveFont = true;
+		}
+		if (haveFont) { vramP = fontCopy; pal = palCopy; }
+	}
+	auto put = [&](int x, int y, uint32_t c) { if (x >= 0 && x < W && y >= 0 && y < H) m_enemyBuf[y * W + x] = c; };
+	// text in colour col (the font's dark edge stays dark), with the black top edge the tiles lack; returns the end x
+	auto textC = [&](const std::string &t, int x0_, int y0, uint32_t col) -> int
+	{
+		for (size_t i = 0; i < t.size(); i++)
+		{
+			int ch = (unsigned char) t[i];
+			if (ch >= 'a' && ch <= 'z') ch -= 32;
+			if (ch <= 0x20 || ch >= 0x7F) continue;
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+				{
+					uint32_t w = vramP[ch * 16 + y * 2 + x / 4];
+					uint32_t c = pal[(w >> ((3 - (x % 4)) * 8)) & 0xFF];
+					if (c < 0x1000000) continue;
+					int lum = (int) (c & 0xFF) + (int) ((c >> 8) & 0xFF) + (int) ((c >> 16) & 0xFF);
+					put(x0_ + (int) i * 8 + x, y0 + y, lum < 200 ? 0xFF000000u : col);
+					if (y == 0) put(x0_ + (int) i * 8 + x, y0 - 1, 0xFF000000u);
+				}
+		}
+		return x0_ + (int) t.size() * 8;
+	};
+	auto bar = [&](int bx, int by, int w, int h, int v, int vMax, uint32_t fill)
+	{
+		if (vMax <= 0)
+			return;
+		int f = (int) ((long long) (v < 0 ? 0 : v > vMax ? vMax : v) * (w - 2) / vMax);
+		for (int y = by; y < by + h; y++)
+			for (int x = bx; x < bx + w; x++)
+			{
+				bool edge = y == by || y == by + h - 1 || x == bx || x == bx + w - 1;
+				put(x, y, edge ? 0xFFD8D8D8u : (x - bx - 1 < f ? fill : 0xC0000000u));
+			}
+	};
+	// colours 0xAABBGGRR
+	const uint32_t WHITE = 0xFFFFFFFFu, GREY = 0xFFB0B0B0u, RED = 0xFF3030F0u, YELLOW = 0xFF20E0FFu, ORANGE = 0xFF2058F0u,
+	               CYAN = 0xFFF0D040u, PURPLE = 0xFFF060C0u, MAGENTA = 0xFFC040F0u, GREEN = 0xFF40E040u, BLUE = 0xFFF0A060u;
+	const int rowH = 20, top = 94;   // below the game's own SPECIAL ATTACK line and its special stock marks
+	char buf[96];
+	int yNext = top;
+	// 11/25 (owner): the stage and area on the top line
+	if (hud->stage >= 0 && hud->area >= 0)
+	{
+		snprintf(buf, sizeof(buf), "STAGE %d  AREA %d", hud->stage, hud->area);
+		textC(buf, x0, yNext, CYAN);
+		yNext += 12;
+	}
+	for (int i = 0; i < hud->n && i < 12; i++)
+	{
+		const EnemyHudRow &e = hud->e[i];
+		const int nMv = e.mvN < 0 ? 0 : e.mvN > 16 ? 16 : e.mvN;
+		const int y = yNext;
+		yNext += rowH + (nMv > 0 ? 9 : 0);   // 11/25: a 3rd line while it has a move on
+		if (y + 17 >= H) break;
+		// line 1
+		snprintf(buf, sizeof(buf), "%02d", e.slot);
+		int x = textC(buf, x0, y, GREY) + 8;
+		std::string nm = e.name[0] ? e.name : "?";
+		if (nm.size() > 10) nm.resize(10);
+		textC(nm, x, y, e.cls >= 4 ? ORANGE : WHITE);
+		x = x0 + 14 * 8;
+		const int r = e.hpMax > 0 ? e.hp * 100 / e.hpMax : 0;
+		bar(x, y + 1, 56, 6, e.hp, e.hpMax, e.cls >= 4 ? ORANGE : (r > 50 ? GREEN : r > 25 ? YELLOW : RED));
+		x += 56 + 4;
+		snprintf(buf, sizeof(buf), "%d/%d", e.hp, e.hpMax);
+		x = textC(buf, x, y, WHITE) + 8;
+		if (e.target >= 0)
+		{
+			const bool me = hud->self >= 1 && e.target == hud->self - 1;
+			if (me) snprintf(buf, sizeof(buf), ">ME");
+			else snprintf(buf, sizeof(buf), ">P%d", e.target + 1);
+			x = textC(buf, x, y, me ? RED : WHITE) + 8;
+		}
+		snprintf(buf, sizeof(buf), "D%.1f", e.dist);
+		x = textC(buf, x, y, GREY) + 8;
+		struct St { uint32_t bit; bool k2; const char *w; uint32_t col; };
+		static const St st[] = {
+			{ 0x00800000u, false, "ATK", 0 }, { 0x00040000u, false, "GRD", 0 }, { 0x00004000u, false, "YAR", 0 },
+			{ 0x00000800u, false, "PIYO", 0 }, { 0x00020000u, false, "DOWN", 0 }, { 0x00008000u, false, "LIE", 0 },
+			{ 0x00010000u, false, "RISE", 0 }, { 0x00080000u, false, "JMP", 0 }, { 0x08000000u, false, "AIR", 0 },
+			{ 0x00000001u, false, "MUT", 0 }, { 0x00400000u, false, "KAM", 0 },
+			{ 0x00100000u, true, "HELD", 0 }, { 0x00200000u, true, "HOLD", 0 },
+		};
+		for (const St &s : st)
+		{
+			if (!((s.k2 ? e.k2 : e.k1) & s.bit)) continue;
+			uint32_t c = s.bit == 0x00800000u && !s.k2 ? RED : s.bit == 0x00040000u ? CYAN : s.bit == 0x00004000u ? YELLOW :
+			             s.bit == 0x00000800u ? YELLOW : s.k2 ? MAGENTA : s.bit == 0x00000001u ? PURPLE :
+			             s.bit == 0x00400000u ? GREY : BLUE;
+			x = textC(s.w, x, y, c) + 8;
+		}
+		if (e.inv > 0) { snprintf(buf, sizeof(buf), "INV%d", e.inv); x = textC(buf, x, y, PURPLE) + 8; }
+		// line 2
+		char step[8];
+		if (e.aiStep == 0xFF) snprintf(step, sizeof(step), "--"); else snprintf(step, sizeof(step), "%02X", (unsigned) e.aiStep & 0xFF);
+		snprintf(buf, sizeof(buf), "OB%d C%d T%02X A%08X M%d AI%02X:%s H%+.1f", e.obj, e.cls, (unsigned) e.chr & 0xFF, (unsigned) e.act,
+		         e.mot, (unsigned) e.aiAct & 0xFF, step, e.dy);
+		textC(buf, x0 + 3 * 8, y + 9, GREY);
+		// line 3 (11/25, owner: as the satellite's boss line): its move - the action number, then its steps (^ v < > for the
+		// lever, then +B +C +S +J; "-" = let go). The step it is on in yellow; the rest white, red while its attack is out.
+		if (nMv > 0 && y + 26 < H)
+		{
+			char an[8]; snprintf(an, sizeof(an), "%02X ", (unsigned) e.mvAct & 0xFF);
+			int mx = textC(an, x0 + 3 * 8, y + 18, GREY);
+			const uint32_t base = e.mvAtk ? RED : WHITE;
+			for (int k = 0; k < nMv; k++)
+			{
+				const uint8_t v = e.mvSeq[k];
+				std::string s;
+				if (v & 0x20) s += '^';
+				if (v & 0x10) s += 'v';
+				if (v & 0x80) s += '<';
+				if (v & 0x40) s += '>';
+				static const char *bn[4] = { "B", "C", "S", "J" };
+				for (int q = 0; q < 4; q++) if (v & (1 << q)) { if (!s.empty()) s += '+'; s += bn[q]; }
+				if (s.empty()) s = "-";
+				if (k) mx = textC(",", mx, y + 18, GREY);
+				mx = textC(s, mx, y + 18, k == e.mvStep ? YELLOW : base);
+			}
+		}
+	}
+	glBindTexture(GL_TEXTURE_2D, m_enemyTex);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, m_enemyBuf.data());
+	Setup2D(false);
+	DrawSurface(m_enemyTex);
+}
+
 void CRender2D::EndFrame(void)
 {
 }
@@ -794,5 +952,9 @@ CRender2D::~CRender2D(void)
 	if (m_satTex) {
 		glDeleteTextures(1, &m_satTex);
 		m_satTex = 0;
+	}
+	if (m_enemyTex) {
+		glDeleteTextures(1, &m_enemyTex);
+		m_enemyTex = 0;
 	}
 }

@@ -249,11 +249,12 @@ Result CSimNetBoard::Init(uint8_t* netRAMPtr, uint8_t* netBufferPtr)
 		g_satView.overlay = m_config["SatelliteOverlay"].ValueAsDefault<int>(1);
 		g_satView.title = m_config["SatelliteTitle"].ValueAsDefault<std::string>(g_satView.title);
 		g_satView.ticker = m_config["SatelliteTicker"].ValueAsDefault<std::string>(g_satView.ticker);
-		extern float g_satCamDist, g_satCamHeight, g_satCamLook;
+		extern float g_satCamDist, g_satCamHeight, g_satCamLook, g_satCamDown;
 		extern int g_satCamAxis;
 		g_satCamDist = m_config["SatelliteCamDist"].ValueAsDefault<float>(3.5f);
 		g_satCamHeight = m_config["SatelliteCamHeight"].ValueAsDefault<float>(1.5f);
 		g_satCamLook = m_config["SatelliteCamLook"].ValueAsDefault<float>(0.6f);
+		g_satCamDown = m_config["SatelliteCamDown"].ValueAsDefault<float>(0.8f);   // 11/25 (owner): the eye this much lower than the game camera
 		g_satCamAxis = m_config["SatelliteCamAxis"].ValueAsDefault<int>(1);
 		g_satClone.mirror = m_config["SatelliteMirror"].ValueAsDefault<int>(0);
 		if (m_config["SatelliteSegDump"].ValueAsDefault<int>(0))
