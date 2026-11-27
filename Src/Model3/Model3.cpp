@@ -8779,6 +8779,30 @@ EnemyHud g_enemyHud;
 // (default 0) - downlog.txt, every frame, every live enemy that is flying / hit / down / getting up (mot_kind air
 // 0x08000000, yarare 0x00004000, down 0x00020000, down_pose 0x00008000, rise 0x00010000): action +0x38, motion +0x3C,
 // mot_kind +0x44 / +0x48, y +0x384, Vy +0x20, the motion's root height +0x2408 (what EnemyBounceMul scales).
+// 11/27 (owner: NORAH's "ballerina throw" - how an enemy's hold plays out): HoldLog=1 (default 0) - holdlog.txt, every
+// frame, every live Rob (players too) whose mot_kind2 +0x48 has a hold bit (0x00100000 held, 0x00200000 holding,
+// 0x40000000) or whose AI rule +0x22BC is a hold rule: action, motion, +0x44/+0x48, the AI rule +0x22BC, the AI action
+// +0x22C2 / step +0x227A and the target +0x32E4.
+static bool g_holdLogOn = false;
+static void HoldLogUpdate(const UINT8 *ram)
+{
+  static FILE *f = NULL; static UINT32 n = 0; static bool was[20];
+  if (!f) { f = fopen("holdlog.txt", "w"); if (!f) return; }
+  n++;
+  for (unsigned e = 0; e < 20; e++)
+  {
+    const UINT32 er = 0x1A0000 + e * 0x4000;
+    const UINT32 k2 = *(const UINT32 *) &ram[er + 0x48];
+    const UINT32 rule = *(const UINT32 *) &ram[er + 0x22BC];
+    const bool on = (*(const UINT32 *) &ram[er] & 1) && ((k2 & 0x40300000u) || (rule >= 0x72200 && rule < 0x72640));
+    if (on || was[e])
+      fprintf(f, "n=%u %c%u act=%u mot=%d mk=%08X mk2=%08X rule=%05X ai=%02X step=%02X tgt=%06X hp=%d%s\n", n, e < 8 ? 'P' : 'E', e,
+              (unsigned) ram[(er + 0x38) ^ 3], (int) (short) *(const UINT16 *) &ram[(er + 0x3C) ^ 2], *(const UINT32 *) &ram[er + 0x44],
+              k2, rule & 0xFFFFF, (unsigned) *(const UINT16 *) &ram[(er + 0x22C2) ^ 2] & 0xFF, (unsigned) ram[(er + 0x227A) ^ 3],
+              *(const UINT32 *) &ram[er + 0x32E4] & 0xFFFFFF, (int) (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2], on ? "" : " (end)");
+    was[e] = on;
+  }
+}
 static bool g_downLogOn = false;
 static void DownLogUpdate(const UINT8 *ram)
 {
@@ -8932,6 +8956,7 @@ void CModel3::SyncGPUs(void)
   if (g_satView.on) SatelliteHudUpdate(ram, crom);
   if (g_enemyHudOn) EnemyHudUpdate(ram, crom);
   if (g_downLogOn) DownLogUpdate(ram);
+  if (g_holdLogOn) HoldLogUpdate(ram);
 
   timings.syncSize = GPU.SyncSnapshots() + TileGen.SyncSnapshots();
   gpusReady = true;
@@ -9809,7 +9834,8 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_spikeoutAIProfile = (game.name == "spikeofe" && m_config["AIProfile"].ValueAsDefault<bool>(false));   // 11/23
   g_spikeoutCpicLog = (game.name == "spikeofe" && m_config["CpicLog"].ValueAsDefault<bool>(false));
   g_spikeoutAITargetMarker = (game.name == "spikeofe" && m_config["AITargetMarker"].ValueAsDefault<bool>(false));
-  g_downLogOn = (game.name == "spikeofe" && m_config["DownLog"].ValueAsDefault<bool>(false));   // 11/26: downlog.txt
+  g_downLogOn = (game.name == "spikeofe" && m_config["DownLog"].ValueAsDefault<bool>(false));
+  g_holdLogOn = (game.name == "spikeofe" && m_config["HoldLog"].ValueAsDefault<bool>(false));   // 11/27: holdlog.txt   // 11/26: downlog.txt
   g_enemyHudOn = (game.name == "spikeofe" && m_config["EnemyHud"].ValueAsDefault<bool>(false));   // 11/25: the enemy list on screen
   g_spikeoutBotCanOpenGate = m_config["BotCanOpenGate"].ValueAsDefault<bool>(true);
   if (game.name == "spikeofe" && !g_spikeoutBotCanOpenGate) InfoLog("BotCanOpenGate = 0: the bots do not break gates.");
@@ -10336,6 +10362,44 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
       };
       if (bounceMul != 1.0f && applyPatches("SpikeoutEnemyBounceWall", wallPatches, sizeof(wallPatches) / sizeof(wallPatches[0])))
         InfoLog("SpikeoutEnemyBounceWall: enemies bounce off walls, e = %.2f.", wallE - 1.0f);
+    }
+    // 11/27 (owner: NORAH's "ballerina throw", seen only by players who made NORAH their own character with a cheat):
+    // when a boss holds a player from the front (Rob +0x48 0x00100000), the AI rule 0x7239C presses B again and again
+    // (action 0x49 = knees) until the hold ends - the throw is never chosen. NorahBallerina = N (percent, default 10 = like her rarest move group,
+    // 0 = the original): on the hold's first frame, for NORAH only (her AI table Rob +0x22A8 = 0xFFF6CBD0, "BBF"), the
+    // game's own random number (0x371E8, so every cabinet decides the same) picks action 0x27 (forward + B+C+S, then
+    // forward 30 frames) with N% instead of the knees. The rest of the rule (0x723B8: knees again while she still holds)
+    // is unchanged. Code at 0x1210 (inside the 0x1200 exception vector, after its first word; never run).
+    {
+      const int ballerinaPct = std::max(0, std::min(100, m_config["NorahBallerina"].ValueAsDefault<int>(10)));
+      if (ballerinaPct > 0)
+      {
+        const UINT32 thr = (UINT32) (ballerinaPct * 32768 / 100);   // random 0..32767 below this -> the throw
+        const Spikeout8LinkPatch ballerinaPatches[] =
+        {
+          { 0x7239C, 0x3B400000, 0x4BF8EE74 },  // li r26,0 -> b 0x1210
+          { 0x01210, 0x00000000, 0x3B400000 },  // li    r26,0             (as the rule did)
+          { 0x01214, 0x00000000, 0x635A0020 },  // ori   r26,r26,0x20
+          { 0x01218, 0x00000000, 0x3BA00049 },  // li    r29,0x49          knees
+          { 0x0121C, 0x00000000, 0x806E22A8 },  // lwz   r3,0x22A8(r14)    AI table
+          { 0x01220, 0x00000000, 0x3C80FFF6 },  // lis   r4,0xFFF6
+          { 0x01224, 0x00000000, 0x6084CBD0 },  // ori   r4,r4,0xCBD0      NORAH's
+          { 0x01228, 0x00000000, 0x7C032000 },  // cmpw  r3,r4
+          { 0x0122C, 0x00000000, 0x4082001C },  // bne   0x1248
+          { 0x01230, 0x00000000, 0x7C8802A6 },  // mflr  r4
+          { 0x01234, 0x00000000, 0x48035FB5 },  // bl    0x371E8           random 0..32767 (uses r2, r3)
+          { 0x01238, 0x00000000, 0x7C8803A6 },  // mtlr  r4
+          { 0x0123C, 0x00000000, 0x28030000 | thr },  // cmplwi r3,thr
+          { 0x01240, 0x00000000, 0x40800008 },  // bge   0x1248
+          { 0x01244, 0x00000000, 0x3BA00027 },  // li    r29,0x27          the ballerina throw
+          { 0x01248, 0x00000000, 0x3C000007 },  // lis   r0,7
+          { 0x0124C, 0x00000000, 0x300023B8 },  // addic r0,r0,0x23B8      next frames: 0x723B8 (as the rule did)
+          { 0x01250, 0x00000000, 0x900E22BC },  // stw   r0,0x22BC(r14)
+          { 0x01254, 0x00000000, 0x48064104 },  // b     0x65358
+        };
+        if (applyPatches("NorahBallerina", ballerinaPatches, sizeof(ballerinaPatches) / sizeof(ballerinaPatches[0])))
+          InfoLog("NorahBallerina: NORAH's front hold ends in the ballerina throw %d%% of the time.", ballerinaPct);
+      }
     }
     // 11/23 (owner): InfiniteSpecial=1 - the special attack does not use up the lightning (SP, Rob +0x3F25). The only
     // place that takes one away is 0x21FBC..0x21FC8 in the motion-command loop (SP - 1, unless SDA -0x4000 & 0x3000
