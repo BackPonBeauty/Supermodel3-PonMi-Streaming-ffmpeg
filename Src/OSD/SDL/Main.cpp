@@ -914,6 +914,7 @@ static void NetlinkReturnToLobby(const std::string &why)
 }
 // 11/23 main6: save / load on the same frame on every linked node (Network/SimNetBoard.cpp)
 extern bool g_netStateSyncOn;
+extern bool g_skipTileDraw;   // Model3.cpp, 11/27: no 2D line drawing when Headless
 extern int g_netStateReq, g_netStateReqSlot;
 extern int g_netStateDo, g_netStateDoSlot;
 
@@ -4032,6 +4033,7 @@ int main(int argc, char **argv)
   // a STREAM slot never (its picture is the stream)
   s_headless = s_runtime_config["Headless"].ValueAsDefault<bool>(false) &&
                (!s_runtime_config["Streaming"].ValueAsDefault<bool>(false) || s_runtime_config["NetlinkServe"].ValueAsDefault<int>(0) == 1);   // 11/24: not a REMOTE slot (2)
+  g_skipTileDraw = s_headless;
   if (s_headless)
     printf("Headless: the window is hidden and nothing is drawn.\n");
   s_bootTime = s_runtime_config["SatelliteClone"].ValueAsDefault<bool>(false) || s_runtime_config["BootTimeLog"].ValueAsDefault<bool>(false);

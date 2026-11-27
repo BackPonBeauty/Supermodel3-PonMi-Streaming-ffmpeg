@@ -668,8 +668,48 @@ const UINT32* CNew3D::TranslateModelAddress(UINT32 modelAddr)
 	}
 }
 
+// 11/26 (owner: the life-up cross to green): ini ModelColorLog = 1 (set by Model3.cpp) -> modellog.txt: every model
+// address the first time it is drawn, with its polygons: how many, textured, and each different colour (r g b,
+// "i" = colour table index instead). Debug only.
+} bool g_modelColorLog = false; namespace New3D {   // global (Model3.cpp sets it)
+static void ModelColorLog(UINT32 addr, const UINT32 *data, const UINT32 *polyRAM, UINT32 colorTableAddr, int offX, int offY, int page)
+{
+	static std::unordered_map<UINT32, bool> seen;
+	static FILE *f = nullptr;
+	if (!data || seen.count(addr)) return;
+	seen[addr] = true;
+	if (!f) f = fopen("modellog.txt", "w");
+	if (!f) return;
+	PolyHeader ph(const_cast<UINT32*>(data));
+	int n = 0, tex = 0;
+	std::unordered_map<UINT32, int> cols;
+	std::unordered_map<UINT64, int> rects;
+	do {
+		if (ph.header[6] == 0) break;
+		n++;
+		const bool t = ph.TexEnabled();
+		if (t) tex++;
+		UINT32 c;
+		if (ph.PolyColor()) c = (ph.header[4] >> 8) & 0xFFFFFF;
+		else c = 0x80000000u | (UINT32)ph.ColorIndex();
+		cols[c | (t ? 0x40000000u : 0)]++;
+		if (t) rects[((UINT64)ph.X() << 48) | ((UINT64)ph.Y() << 32) | ((UINT64)ph.TexWidth() << 20) | ((UINT64)ph.TexHeight() << 8) | ((UINT64)ph.Page() << 4) | (UINT64)ph.TexFormat()]++;
+	} while (ph.NextPoly() && n < 4096);
+	fprintf(f, "%06X polys=%d textured=%d nodeoff=%d,%d p%d", addr, n, tex, offX, offY, page);
+	for (auto &kv : rects)
+		fprintf(f, " tex(x%u y%u %ux%u p%u fmt%u)*%d", (unsigned)(kv.first >> 48), (unsigned)((kv.first >> 32) & 0xFFFF),
+			(unsigned)((kv.first >> 20) & 0xFFF), (unsigned)((kv.first >> 8) & 0xFFF), (unsigned)((kv.first >> 4) & 0xF), (unsigned)(kv.first & 0xF), kv.second);
+	for (auto &kv : cols) {
+		if (kv.first & 0x80000000u) fprintf(f, " i%03X%s*%d", kv.first & 0xFFF, (kv.first & 0x40000000u) ? "t" : "", kv.second);
+		else fprintf(f, " %02X%02X%02X%s*%d", (kv.first >> 16) & 0xFF, (kv.first >> 8) & 0xFF, kv.first & 0xFF, (kv.first & 0x40000000u) ? "t" : "", kv.second);
+	}
+	fprintf(f, "\n");
+	fflush(f);
+}
+
 bool CNew3D::DrawModel(UINT32 modelAddr)
 {
+	if (g_modelColorLog) ModelColorLog(modelAddr & 0xFFFFFF, TranslateModelAddress(modelAddr), m_polyRAM, m_colorTableAddr, m_nodeAttribs.currentTexOffsetX, m_nodeAttribs.currentTexOffsetY, m_nodeAttribs.currentPage);
 	bool cached = false;
 
 	const UINT32* const modelAddress = TranslateModelAddress(modelAddr);

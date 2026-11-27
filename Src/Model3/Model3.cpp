@@ -270,6 +270,9 @@ static unsigned char g_taskSeen[0x20000];  // dedup by PC>>2 (PC < 0x80000); log
 // keyed on the accessing instruction (PC -> which array). fa_player = *(0x104114) & 0x7FFFFF.
 bool g_spikeofe8task = false;
 static bool g_spikeoutIdleLog = false;   // 11/13 IdleSkipLog=1 -> idlelog.txt
+// 11/27 Headless (Main.cpp sets it): the tile generator's 2D layers are not drawn line by line (about 19% of the
+// PPC thread). Nothing in the game reads them; only the window (and the satellite HUD, never headless) uses them.
+bool g_skipTileDraw = false;
 
 // Spikeout AI player (prototype): when AIPlayer=1, this cabinet's local player (node 0x10065B)
 // is driven by a simple heuristic instead of the human controls - it steers toward the nearest
@@ -278,6 +281,7 @@ static bool g_spikeoutIdleLog = false;   // 11/13 IdleSkipLog=1 -> idlelog.txt
 // player input, so no ROM change and no desync. Robs: 0x1A0000+slot*0x4000, pos floats at +0x380
 // (x) / +0x388 (z), active = flags(+0x00) bit0; players are slots 0-7, enemies 8+.
 static bool g_spikeoutP1Invincible = false; // P1Invincible=1: keep player 1 invincible, to record waypoints (must be set on every cabinet)
+static float g_spikeoutJumpMul = 1.0f;       // 11/26 PlayerJumpMul=X (1.0-6.0): players jump X times as high (must be the same on every cabinet)
 static bool g_spikeoutSpikeJr = false;      // 11/23 SpikeJr=1: players who picked Spike play Spike Jr (character 4; must be set on every cabinet)
 static bool g_spikeoutTimerStop = false;    // 11/17 TimerStop=1: hold the countdown timers at 99 with 4 or fewer players too (5+ always hold; must be set on every cabinet)
 static bool g_spikeoutAI = false;
@@ -2550,6 +2554,8 @@ static void SpikeoutWpKickLoad()
 	printf("[WPKICK] %u spot(s) loaded, area 44 route %u point(s)\n", (unsigned) v.size(), (unsigned) g_r44.size());
 }
 
+// 11/26 (owner): area 40 marathon mode - see the target search in SpikeoutAIInputBits.
+static bool g_marOn = false; static float g_marX = 0.0f, g_marZ = 0.0f;
 static int g_aiLogA75 = 0;   // for ai.txt: 0 none, 2..5 start-room Door#2..5, 9 going to the area's exit (ROM table), 10 at it
 static int g_aiLogEhp = -1;
 static UINT32 g_aiLogArflg = 0;   // for ai.txt: area flags (0x60 = gate open)   // for ai.txt: enemy slot assigned to this bot (-1 = none: shares its nearest)
@@ -2883,6 +2889,126 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 		}
 		tSlot = mine;
 		g_aiLogTarget = mine;
+		// 11/26 (owner): area 40 only (2nd-4th: and areas 27 / 29 / 43, each its own route) - marathon mode. Neither our HP going down nor one of our attacks landing for 15 s while
+		// we have a target: stop the enemy search and run the area 40 points (hard-coded below) - first the nearest point, then
+		// the next one in file order on each arrival (within 1.5), and from the last one back the other way (and so on, to and
+		// fro). Hit by an enemy (our HP goes down) on the way: marathon over, the search and the fight again (the 15 s count
+		// starts over). Also over: out of area 40, dead, or no live enemy left (the gate handling takes over then).
+		// "An attack landed" = a live enemy within 3 of us (height within 2) lost HP while we were attacking (mot_kind attack
+		// 0x00800000 within the last 30 frames). a75 = 190.
+		{
+			static UINT32 mLastF = ~0u, mStillF = 0, mAtkF = 0; static int mPrevHp = -1, mEnHp[20], mIdx = -1, mDir = 1, mArrived = 0; static bool mEnInit = false, mResume = false;
+			if (g_ppcTraceFrame != mLastF)
+			{
+				mLastF = g_ppcTraceFrame;
+				// 11/26 (owner, 2nd): areas 27 and 40 (each its own route). An area change ends a marathon and forgets the route.
+				static unsigned mArea = 0;
+				const unsigned curAm = ram[0x10402D ^ 3];
+				const bool areaChanged = curAm != mArea; mArea = curAm;
+				const bool inA40 = (curAm == 40 || curAm == 27 || curAm == 29 || curAm == 43) && (pflags & 1) && !areaChanged;
+				const int hpMe = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
+				const float myYm = *(const float *) &ram[rob + 0x384];
+				if (*(const UINT32 *) &ram[rob + 0x44] & 0x00800000u) mAtkF = g_ppcTraceFrame;
+				bool landed = false;
+				for (unsigned e = estart; e < 20; e++)
+				{
+					const UINT32 er = 0x1A0000 + e * 0x4000;
+					const bool act = (*(const UINT32 *) &ram[er] & 1) != 0;
+					const int h = act ? (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2] : -1;
+					if (mEnInit && act && mEnHp[e] > 0 && h < mEnHp[e] && g_ppcTraceFrame - mAtkF <= 30u)
+					{
+						const float qx = *(const float *) &ram[er + 0x380] - px, qz = *(const float *) &ram[er + 0x388] - pz;
+						if (qx * qx + qz * qz < 9.0f && fabsf(*(const float *) &ram[er + 0x384] - myYm) < 2.0f) landed = true;
+					}
+					mEnHp[e] = h;
+				}
+				mEnInit = true;
+				const bool hurt = mPrevHp > 0 && hpMe < mPrevHp;
+				mPrevHp = hpMe;
+				// 11/26 (owner): the route is hard-coded - the area 40 lines of bin64\PonMi\waypoints.txt (10:15), in that order
+				// (all at y -12.2..-12.5). The file is no longer read for it.
+				static const std::pair<float, float> wp40[] = {
+					{ -45.987f, -68.199f }, { -40.067f, -63.224f }, { -24.450f, -62.765f }, {  -2.331f, -63.872f }, {  -1.237f, -38.291f },
+					{ -14.530f, -43.011f }, { -12.744f, -21.818f }, { -58.968f, -24.974f }, { -53.977f, -42.138f }, { -15.597f, -42.982f },
+				};
+				// 11/26 (owner, 2nd): area 27 - the area 27 lines of bin64\PonMi\waypoints.txt (12:24), in that order (y -12.2..-12.5).
+				static const std::pair<float, float> wp27[] = {
+					{ -22.413f, -43.293f }, { -36.805f, -43.316f }, { -59.670f, -43.351f }, { -59.355f, -63.191f }, { -31.577f, -62.822f },
+					{  -2.666f, -62.789f },
+				};
+				// 11/26 (owner, 3rd): area 29 - the area 29 lines of bin64\PonMi\waypoints.txt (13:05), in that order (y -4.8..-4.9).
+				static const std::pair<float, float> wp29[] = {
+					{ 103.099f, -38.508f }, { 115.604f, -37.572f }, { 115.519f,  -0.178f }, {  91.589f,   0.162f }, {  91.039f,  10.267f },
+					{ 116.420f,  10.794f },
+				};
+				// 11/26 (owner, 4th): area 43 - the area 43 lines of bin64\PonMi\waypoints.txt (13:18), in that order (y 9.1..9.2).
+				static const std::pair<float, float> wp43[] = { { -29.401f, -34.864f }, { -29.238f, -46.644f }, { -51.599f, -44.680f } };
+				const std::pair<float, float> *wp = curAm == 27 ? wp27 : curAm == 29 ? wp29 : curAm == 43 ? wp43 : wp40;
+				const int nWp = curAm == 27 ? (int) (sizeof(wp27) / sizeof(wp27[0])) : curAm == 29 ? (int) (sizeof(wp29) / sizeof(wp29[0])) : curAm == 43 ? 3
+				                                                                                   : (int) (sizeof(wp40) / sizeof(wp40[0]));
+				if (!inA40 || hpMe <= 0 || nWp == 0)
+				{
+					if (g_marOn) SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: over (%s)\n", node, !inA40 ? "left the area" : hpMe <= 0 ? "dead" : "no waypoints");
+					g_marOn = false; mStillF = g_ppcTraceFrame; mResume = false;
+				}
+				else if (g_marOn)
+				{
+					if (hurt || ne == 0)
+					{
+						SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: over (%s) at (%.2f,%.2f)\n", node, hurt ? "hit by an enemy" : "no live enemy left", px, pz);
+						g_marOn = false; mStillF = g_ppcTraceFrame; mResume = false;
+					}
+					else
+					{
+						if (mIdx >= nWp) mIdx = nWp - 1;
+						const float dx = wp[mIdx].first - px, dz = wp[mIdx].second - pz;
+						if (dx * dx + dz * dz < 2.25f)
+						{
+							// 11/26 (owner, 2nd/3rd): the enemy search again at a point - but not at the first point of this run:
+							// from the 2nd point reached on (marathon over, the 15 s count starts over). The next marathon in this
+							// area goes on to the next point (mResume), not the nearest one.
+							int nx = mIdx;
+							if (nWp > 1) { nx = mIdx + mDir; if (nx < 0 || nx >= nWp) { mDir = -mDir; nx = mIdx + mDir; } }
+							mArrived++;
+							if (mArrived >= 2)
+							{
+								SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: at point %d (%d reached) - searching again (next point %d)\n", node, mIdx + 1, mArrived, nx + 1);
+								mIdx = nx; mResume = true;
+								g_marOn = false; mStillF = g_ppcTraceFrame;
+							}
+							else
+							{
+								SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: at point %d (1st of this run) -> %d\n", node, mIdx + 1, nx + 1);
+								mIdx = nx;
+							}
+						}
+					}
+				}
+				else
+				{
+					if (hurt || landed || mine < 0) mStillF = g_ppcTraceFrame;
+					else if (g_ppcTraceFrame - mStillF >= 863u)   // 15 s (57.5 fps)
+					{
+						float bd2 = 1e30f;
+						if (!mResume || mIdx < 0 || mIdx >= nWp) { mResume = false; mIdx = 0; mDir = 1; }
+						for (int k = 0; k < nWp && !mResume; k++)
+						{
+							const float dx = wp[k].first - px, dz = wp[k].second - pz;
+							if (dx * dx + dz * dz < bd2) { bd2 = dx * dx + dz * dz; mIdx = k; }
+						}
+						mResume = false; mArrived = 0;
+						g_marOn = true;
+						SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: 15 s with no hit either way - running, point %d of %d first (me (%.2f,%.2f))\n", node, mIdx + 1, nWp, px, pz);
+					}
+				}
+				if (g_marOn) { g_marX = wp[mIdx].first; g_marZ = wp[mIdx].second; }
+			}
+			if (g_marOn)
+			{
+				found = 0; tSlot = -1; g_aiLogTarget = -1;
+				g_aiTgtOnMe = false; g_aiDnKeep = false; g_aiBossDownWait = false;
+			}
+		}
 	}
 	const UINT8 UP = 0x20, DOWN = 0x10, LEFT = 0x80, RIGHT = 0x40, BEAT = 0x01;
 	UINT8 bits = 0;
@@ -3512,7 +3638,14 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				if (l < 1e-4f) { evX = -nx; evZ = -nz; l = sqrtf(evX * evX + evZ * evZ); }   // they cancel out: away from the nearest
 				if (l > 1e-4f) { evX /= l; evZ /= l; } else { evX = 1.0f; evZ = 0.0f; }
 			}
-			if (a75On && (!found || g_aiLogA75 >= 2))                // in Area 75 start room: exit room first; otherwise if no enemies, head to Area 75 gate
+			if (g_marOn)                                             // 11/26 (owner): area 40 marathon - to the next waypoint
+			{
+				mode = 2; if (prevMode != 2) fstate = 0;
+				tx = g_marX; tz = g_marZ; followMode = 1;
+				dashMode = (g_marX - px) * (g_marX - px) + (g_marZ - pz) * (g_marZ - pz) > 16.0f;
+				g_aiLogA75 = 190;
+			}
+			else if (a75On && (!found || g_aiLogA75 >= 2))           // in Area 75 start room: exit room first; otherwise if no enemies, head to Area 75 gate
 			{
 				mode = 2; if (prevMode != 2) fstate = 0;
 				tx = a75x; tz = a75z; followMode = 1;
@@ -3750,7 +3883,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				if (hpMe > 0 && hpMax > 0 && hpMe * 2 < hpMax) wantBits |= 0x31;
 				if (ram[(rob + 0x3F25) ^ 3] <= 4) wantBits |= 0x04;
 				static UINT32 nearSince = 0; static int nearIdx = -1;
-				if (AI_ITEM_SEEK && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)
+				if (AI_ITEM_SEEK && !g_marOn && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/26: not in the marathon
 				{
 					int cnt = *(const UINT16 *) &ram[(mgr + 0x10) ^ 2];
 					if (cnt > 0x106) cnt = 0x106;
@@ -3798,7 +3931,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				// and no target within 2.5; within 0.8: B+C (4 on / 8 off, below via g_aiWeaponPress). 4 s without
 				// getting it: leave it for 10 s. a75 = 92.
 				g_aiWeaponPress = false;
-				if (AI_ITEM_SEEK && seekIdx < 0 && !teOn && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/18: not on the way to the gate; 11/23: nor while guarding
+				if (AI_ITEM_SEEK && seekIdx < 0 && !teOn && !g_marOn && hpMe > 0 && mgr >= 0x100000 && mgr < 0x7FF000)   // 11/18: not on the way to the gate; 11/23: nor while guarding
 				{
 					static const UINT32 s_holdDefs[] = { 0xFFF6F3EC, 0xFFF6F574, 0xFFF6F880, 0xFFF6F904, 0xFFF6FB24,
 					                                     0xFFF701C8, 0xFFF7026C, 0xFFF7068C, 0xFFF6FCB4 };
@@ -5962,7 +6095,9 @@ UINT8 CModel3::ReadInputs(unsigned reg)
       // 11/16 (owner): Shift + Beat + Charge + Jump held with Start opens the 3-minute mode (outside the link session).
       // While all four are held, Start does not reach the game. Fixed rule, no ini switch. Shift + Start (ally stats)
       // and every other use of Start are untouched.
-      if ((m_game.inputs & Game::INPUT_SPIKEOUT) && Inputs->shift->value && Inputs->beat->value &&
+      // 11/27 (owner): not on a single cabinet (Network = 0, LINKS 1 - no net board running): there the 3-minute mode is
+      // allowed again.
+      if ((m_game.inputs & Game::INPUT_SPIKEOUT) && m_runNetBoard && Inputs->shift->value && Inputs->beat->value &&
           Inputs->charge->value && Inputs->jump->value)
         data |= 0x10;
       data = ApplyTestInputs(0x04, data);
@@ -8056,6 +8191,27 @@ void CModel3::RunMainBoardFrame(void)
 				ram[(r + 0x3F00) ^ 3] = 4;
 		}
 	}
+	// 11/26 (owner): PlayerJumpMul=X (1.0-6.0, 11/26 owner: was 1.0-2.0) - the players jump X times as high. A jump is velocity-driven (DownLog,
+	// motion 622: Vy +0x20 0.131 on the first frame, - 0.005 a frame, y up 1.77), so on the frame a player's mot_kind
+	// has jump 0x00080000 and Vy turns > 0 (the take-off), Vy is multiplied by sqrt(X) once (height ~ Vy^2). "Was going up" is kept in
+	// the game's RAM (0xDC0 + slot, in the unused trace vector), so a save state / netlink state carries it and every
+	// cabinet does it on the same frame. All player slots (the same on every cabinet): MUST be the same everywhere.
+	if (g_spikeoutJumpMul != 1.0f && !SpikeoutAttract(ram))
+	{
+		const unsigned pc = ram[0x10065A ^ 3];
+		const unsigned np = (pc >= 1 && pc <= 8) ? pc : 4;
+		for (unsigned s = 0; s < np; s++)
+		{
+			const UINT32 r = 0x1A0000 + s * 0x4000;
+			// the take-off: in a jump and moving up, the first such frame (the jump bit is on already in the crouch before it,
+			// motion 1063 with Vy 0, so its own edge is too early)
+			float *vy = (float *) &ram[r + 0x20];
+			const bool up = (*(const UINT32 *) &ram[r] & 1) && (*(const UINT32 *) &ram[r + 0x44] & 0x00080000u) && *vy > 0.0f;
+			UINT8 &was = ram[(0xDC0 + s) ^ 3];
+			if (up && !was) *vy *= sqrtf(g_spikeoutJumpMul);
+			was = up ? 1 : 0;
+		}
+	}
 	// Per-player timers (time-out = game over): 0x1062B0 (4 players) / 0x106E00 with the 8-player patch (T8 in
 	// phase2.py), ticked once a frame at 0x5B604, shown as value>>6 seconds, 0x18FF = 99 (0x5CB64), link-synced.
 	// The FixTimer ini switch was removed on 11/16. 11/16 later (owner): with 5 or more players in the game the timers
@@ -8198,7 +8354,8 @@ void CModel3::RunMainBoardFrame(void)
             IRQ.Assert(0x02);       // irq2 is asserted at the start of the last line on system24 (as apposed to the end). Lost world won't work without this, the game soft locks. We assume the same here
         }
 
-        TileGen.DrawLine(i);
+        if (!g_skipTileDraw)
+          TileGen.DrawLine(i);
         ppc_execute(lineCycles);
     }
 
@@ -8618,6 +8775,48 @@ static void SatelliteHudUpdate(const UINT8 *ram, const UINT8 *crom)
 // 11/25 (owner): the enemy list (ini EnemyHud = 1): every enemy Rob on the field (Rob +0 bit 1), from the first enemy slot
 // (the player count) to 19, read once a frame here (display only). Shown in RenderFrame by Render2D::RenderEnemyOverlay.
 EnemyHud g_enemyHud;
+// 11/26 (owner: "they bounce off the back only, not when they land on the chest / head" - to find out why): DownLog=1
+// (default 0) - downlog.txt, every frame, every live enemy that is flying / hit / down / getting up (mot_kind air
+// 0x08000000, yarare 0x00004000, down 0x00020000, down_pose 0x00008000, rise 0x00010000): action +0x38, motion +0x3C,
+// mot_kind +0x44 / +0x48, y +0x384, Vy +0x20, the motion's root height +0x2408 (what EnemyBounceMul scales).
+static bool g_downLogOn = false;
+static void DownLogUpdate(const UINT8 *ram)
+{
+  static FILE *f = NULL; static UINT32 n = 0; static bool was[20];
+  if (!f) { f = fopen("downlog.txt", "w"); if (!f) return; }
+  n++;
+  const unsigned pc = ram[0x10065A ^ 3];
+  const unsigned es = (pc >= 1 && pc <= 8) ? pc : 4;
+  for (unsigned e = es; e < 20; e++)
+  {
+    const UINT32 er = 0x1A0000 + e * 0x4000;
+    const UINT32 k = *(const UINT32 *) &ram[er + 0x44];
+    const bool on = (*(const UINT32 *) &ram[er] & 1) && (k & 0x0803C000u);
+    if (on || was[e])
+      fprintf(f, "n=%u E%u act=%u mot=%d mk=%08X mk2=%08X y=%.3f vy=%.3f root=%.3f hp=%d%s\n", n, e, (unsigned) ram[(er + 0x38) ^ 3],
+              (int) (short) *(const UINT16 *) &ram[(er + 0x3C) ^ 2], k, *(const UINT32 *) &ram[er + 0x48],
+              *(const float *) &ram[er + 0x384], *(const float *) &ram[er + 0x20], *(const float *) &ram[er + 0x2408],
+              (int) (short) *(const UINT16 *) &ram[(er + 0x3F02) ^ 2], on ? "" : " (end)");
+    was[e] = on;
+  }
+  // 11/26 (owner: player jump x1.0-2.0 - how a jump is made): the players in a jump (mot_kind jump 0x00080000), with the
+  // other velocity set too (+0x84 / +0x88 / +0x8C, the one the hit physics writes)
+  static bool pwas[8];
+  for (unsigned p = 0; p < es && p < 8; p++)
+  {
+    const UINT32 pr = 0x1A0000 + p * 0x4000;
+    const UINT32 k = *(const UINT32 *) &ram[pr + 0x44];
+    const bool on = (*(const UINT32 *) &ram[pr] & 1) && (k & 0x08080000u);
+    if (on || pwas[p])
+      fprintf(f, "n=%u P%u act=%u mot=%d mk=%08X y=%.3f v=(%.3f,%.3f,%.3f) v2=(%.3f,%.3f,%.3f) root=%.3f%s\n", n, p, (unsigned) ram[(pr + 0x38) ^ 3],
+              (int) (short) *(const UINT16 *) &ram[(pr + 0x3C) ^ 2], k, *(const float *) &ram[pr + 0x384],
+              *(const float *) &ram[pr + 0x1C], *(const float *) &ram[pr + 0x20], *(const float *) &ram[pr + 0x24],
+              *(const float *) &ram[pr + 0x84], *(const float *) &ram[pr + 0x88], *(const float *) &ram[pr + 0x8C],
+              *(const float *) &ram[pr + 0x2408], on ? "" : " (end)");
+    pwas[p] = on;
+  }
+  if ((n & 63) == 0) fflush(f);
+}
 bool g_enemyHudOn = false;
 static void EnemyHudUpdate(const UINT8 *ram, const UINT8 *crom)
 {
@@ -8732,6 +8931,7 @@ void CModel3::SyncGPUs(void)
   if (g_satView.on) SatelliteCamUpdate(ram);
   if (g_satView.on) SatelliteHudUpdate(ram, crom);
   if (g_enemyHudOn) EnemyHudUpdate(ram, crom);
+  if (g_downLogOn) DownLogUpdate(ram);
 
   timings.syncSize = GPU.SyncSnapshots() + TileGen.SyncSnapshots();
   gpusReady = true;
@@ -9570,6 +9770,9 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_spikeoutP1Invincible = (game.name == "spikeofe" && m_config["P1Invincible"].ValueAsDefault<bool>(false));
   g_spikeoutTimerStop = (game.name == "spikeofe" && m_config["TimerStop"].ValueAsDefault<bool>(false));
   g_spikeoutSpikeJr = (game.name == "spikeofe" && m_config["SpikeJr"].ValueAsDefault<bool>(false));
+  g_spikeoutJumpMul = game.name == "spikeofe" ? m_config["PlayerJumpMul"].ValueAsDefault<float>(1.0f) : 1.0f;   // 11/26
+  if (!(g_spikeoutJumpMul >= 1.0f && g_spikeoutJumpMul <= 6.0f)) g_spikeoutJumpMul = 1.0f;
+  if (g_spikeoutJumpMul != 1.0f) InfoLog("PlayerJumpMul: players jump x%.2f as high.", g_spikeoutJumpMul);
   g_spikeoutFontDump = game.name == "spikeofe";   // 11/25: Saves/font.st for the launcher / PonUI font
   { extern bool g_costumeSpikeJr; g_costumeSpikeJr = g_spikeoutSpikeJr; }   // 11/23: Real3D CostumeSwap leaves Spike (Jr) in colour 0
   if (g_spikeoutSpikeJr) InfoLog("SpikeJr: players who pick Spike play Spike Jr (character 4).");
@@ -9606,6 +9809,7 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   g_spikeoutAIProfile = (game.name == "spikeofe" && m_config["AIProfile"].ValueAsDefault<bool>(false));   // 11/23
   g_spikeoutCpicLog = (game.name == "spikeofe" && m_config["CpicLog"].ValueAsDefault<bool>(false));
   g_spikeoutAITargetMarker = (game.name == "spikeofe" && m_config["AITargetMarker"].ValueAsDefault<bool>(false));
+  g_downLogOn = (game.name == "spikeofe" && m_config["DownLog"].ValueAsDefault<bool>(false));   // 11/26: downlog.txt
   g_enemyHudOn = (game.name == "spikeofe" && m_config["EnemyHud"].ValueAsDefault<bool>(false));   // 11/25: the enemy list on screen
   g_spikeoutBotCanOpenGate = m_config["BotCanOpenGate"].ValueAsDefault<bool>(true);
   if (game.name == "spikeofe" && !g_spikeoutBotCanOpenGate) InfoLog("BotCanOpenGate = 0: the bots do not break gates.");
@@ -9613,6 +9817,43 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   {
     extern bool g_texLog;   // Graphics/New3D/R3DShader.cpp (11/15): textures the meshes use in the costume areas -> texlog.txt
     g_texLog = (game.name == "spikeofe" && m_config["TexLog"].ValueAsDefault<bool>(false));
+    extern bool g_modelColorLog;   // Graphics/New3D/New3D.cpp (11/26): models and their polygon colours -> modellog.txt
+    g_modelColorLog = (game.name == "spikeofe" && m_config["ModelColorLog"].ValueAsDefault<bool>(false));
+    // 11/26 (owner): the floating life-up cross (VROM model 0x5A510A: 15 polygons, front FD0000, sides 99/66/4C 0000)
+    // drawn green instead of red - its red polygon colours get red and green swapped as the ROM is loaded (ini
+    // LifeUpGreen, default on). Only the picture: the CPU never reads VROM. Also the first-aid box on the ground
+    // (0x63DA89: 67 polygons, white / grey / blue and the cross FF0000 x10).
+    if (game.name == "spikeofe" && m_config["LifeUpGreen"].ValueAsDefault<bool>(true))
+    {
+      // word addresses in VROM: the box, and the bigger box (0x5AAEE8, the same 67 polygons - 01's save state 11/26 12:43)
+      // (11/26 owner: the floating cross 0x5A510A back to red)
+      static const uint32_t kModels[] = { 0x63DA89, 0x5AAEE8 };
+      for (uint32_t kModel : kModels)
+      {
+      uint32_t *w = reinterpret_cast<uint32_t *>(vrom) + kModel;
+      const uint32_t *end = reinterpret_cast<uint32_t *>(vrom) + 0x4000000 / 4;
+      int polys = 0, changed = 0;
+      while (w + 7 <= end && w[6] != 0 && polys < 256)
+      {
+        polys++;
+        if (w[1] & 2)   // colour in the header (not the colour table)
+        {
+          const uint32_t r = w[4] >> 24, g = (w[4] >> 16) & 0xFF, b = (w[4] >> 8) & 0xFF;
+          if (r >= 0x30 && g <= r / 4 && b <= r / 4)
+          {
+            w[4] = (g << 24) | (r << 16) | (b << 8) | (w[4] & 0xFF);
+            changed++;
+          }
+        }
+        if (w[1] & 4) break;   // last polygon
+        const int verts = (w[0] & 0x40) ? 4 : 3;
+        int shared = 0;
+        for (int i = 0; i < 4; i++) shared += (w[0] >> i) & 1;
+        w += 7 + (verts - shared) * 4;
+      }
+      InfoLog("LifeUpGreen: model %06X: %d of %d polygons made green.", kModel, changed, polys);
+      }
+    }
   }
   g_spikeoutAICalib = (game.name == "spikeofe" && m_config["AICalib"].ValueAsDefault<bool>(false));
   g_taskArrayLog = m_config["TaskArrayLog"].ValueAsDefault<bool>(false);
@@ -9628,6 +9869,15 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   {
     m_watchStart = watchStart;
     m_watchEnd = watchStart + watchLen;
+  }
+  // 11/27 fast RAM path in the PPC core (ppc.cpp): only when no RAM hook above is on (they need every access)
+  {
+    extern UINT8 *g_ppcFastRam;
+    extern const unsigned char *g_ppcFastTaskPc;
+    bool ramHooks = g_taskArrayLog || g_ppcStateTrace || m_traceEnemyCreate || m_watchEnd > m_watchStart;
+    g_ppcFastRam = (ramHooks || !m_config["FastRam"].ValueAsDefault<bool>(true)) ? nullptr : ram;
+    g_ppcFastTaskPc = g_spikeofe8task ? g_taskPcBase : nullptr;
+    printf("FastRam: %s\n", g_ppcFastRam ? "on" : "off (a RAM hook is on, or FastRam = 0)");
   }
 
   // Spikeout Final Edition 8-cabinet link patches (see Spikeout8Link.h)
@@ -9928,6 +10178,164 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
       };
       if (applyPatches("SpikeoutEnemyKnockMul", knockPatches, sizeof(knockPatches) / sizeof(knockPatches[0])))
         InfoLog("SpikeoutEnemyKnockMul: enemies knocked up x%.2f, sideways x%.2f.", knockMulY, knockMulXZ);
+    }
+    // 11/26 (owner: "enemies bounce when they hit the ground - make them bounce higher"): EnemyBounceMul=X (float,
+    // default 1.0 = off). The bounce is not velocity (Vy is 0 on the ground): it is the down motion's own root height
+    // (Rob +0x2408, local, e.g. motion 0946 lies at 0.12 and bounces to 0.90 / 0.65 / 0.30; the Rob's y is the ground
+    // + this). It is stored at 0x63570 and 0x65CC8 (stfs f16,0x2408(r14), right after the root is worked out by
+    // 0x6392C); both become bl 0xA04. For an enemy (slot +0x72 >= player count) in a motion-driven action (+0x38 = 7)
+    // with down (mot_kind 0x00020000), the lowest root height of this motion so far (kept per slot at 0xB04 + slot x 8:
+    // +0 float, +4 motion number; -1 = none) is the floor, and the height above it is multiplied by X:
+    // y = min + (y - min) x X. So it never pops at the start (a fall from standing starts high) and lands where it
+    // did. r0 / r3 / r4 / f0-f2 are free at both sites (written before read after them; LR is kept in r2 there).
+    // The code and the table sit in the unused reserved exception vectors 0xA00 / 0xB00. MUST be the same on all
+    // cabinets.
+    float bounceMul = m_config["EnemyBounceMul"].ValueAsDefault<float>(1.0f);
+    if (!(bounceMul > 0.0f && bounceMul <= 20.0f)) bounceMul = 1.0f;
+    // 11/26 (owner): EnemyBounceMulChest=Xs (float) - the chest / head landings' multiplier (see below); left out (or out of
+    // 0..40): 1 + (X - 1) x 5. It works on its own too (EnemyBounceMul 1.0: only the chest / head landings, walls as before).
+    float smallX = m_config["EnemyBounceMulChest"].ValueAsDefault<float>(-1.0f);
+    if (!(smallX > 0.0f && smallX <= 40.0f)) smallX = bounceMul > 1.0f ? 1.0f + (bounceMul - 1.0f) * 5.0f : bounceMul;
+    if (linkApplied && (bounceMul != 1.0f || smallX != 1.0f))
+    {
+      UINT32 bounceBits; memcpy(&bounceBits, &bounceMul, 4);
+      const float wallE = 1.0f + (bounceMul > 1.0f ? bounceMul - 1.0f : 0.0f);   // 1 + e
+      UINT32 wallBits; memcpy(&wallBits, &wallE, 4);
+      // 11/26 (owner: "they bounce off the back, not off the chest / head" - DownLog, run00 area 75): two other landings.
+      // (a) still in the flying motion (action 6: 411, 150) the enemy hits the floor and bounces a little (0.13 -> 0.30);
+      // only action 7 was scaled. Now these two motions (action 6, down) too, but only from the frame their root height is
+      // between 0.05 and 0.3 (on the floor; the flight's own arc, 0.76 -> 1.22 in 411, is left alone). By motion number:
+      // other action 6 motions are launches from the floor (1076 / 1092 / 1662 start at 0.12 and fly to 4-13 when scaled).
+      // (b) the landing motions 407 / 415 bounce only ~0.1 (0.14 -> 0.24), so x X hardly shows. These two kinds get
+      // Xs = EnemyBounceMulChest, else 1 + (X - 1) x 5 (X 2.0 -> 6.0: 0.1 -> 0.6, the back landing 2374's 0.78 -> 1.56). Marked in the upper half
+      // of the record's +4 (the motion is compared on the lower half now). Code at 0xD04 (the trace vector, unused).
+      const float touchHi = 0.3f, touchLo = 0.05f;
+      UINT32 smallBits, touchHiBits, touchLoBits;
+      memcpy(&smallBits, &smallX, 4); memcpy(&touchHiBits, &touchHi, 4); memcpy(&touchLoBits, &touchLo, 4);
+      const Spikeout8LinkPatch bouncePatches[] =
+      {
+        { 0x63570, 0xD20E2408, 0x4BF9D495 },  // stfs f16,0x2408(r14) -> bl 0xA04
+        { 0x65CC8, 0xD20E2408, 0x4BF9AD3D },  // stfs f16,0x2408(r14) -> bl 0xA04
+        { 0x00A04, 0x00000000, 0x3C600010 },  // lis   r3,0x10
+        { 0x00A08, 0x00000000, 0x8863065A },  // lbz   r3,0x65A(r3)      player count
+        { 0x00A0C, 0x00000000, 0x880E0072 },  // lbz   r0,0x72(r14)      slot
+        { 0x00A10, 0x00000000, 0x7C001800 },  // cmpw  r0,r3
+        { 0x00A14, 0x00000000, 0x41800064 },  // blt   0xA78             a player: as is
+        { 0x00A18, 0x00000000, 0x54031838 },  // slwi  r3,r0,3
+        { 0x00A1C, 0x00000000, 0x38630B04 },  // addi  r3,r3,0xB04       this slot's record
+        { 0x00A20, 0x00000000, 0x880E0038 },  // lbz   r0,0x38(r14)      action
+        { 0x00A24, 0x00000000, 0x2C000007 },  // cmpwi r0,7              motion-driven?
+        { 0x00A28, 0x00000000, 0x408202DC },  // bne   0xD04             (11/26: not 7 -> the action 6 check, was bne 0xA70)
+        { 0x00A2C, 0x00000000, 0x800E0044 },  // lwz   r0,0x44(r14)      mot_kind
+        { 0x00A30, 0x00000000, 0x74000002 },  // andis. r0,r0,2          down?
+        { 0x00A34, 0x00000000, 0x4182003C },  // beq   0xA70
+        { 0x00A38, 0x00000000, 0xA00E003C },  // lhz   r0,0x3C(r14)      motion
+        { 0x00A3C, 0x00000000, 0xA0830006 },  // lhz   r4,6(r3)          (11/26: the motion, lower half - was lwz r4,4(r3))
+        { 0x00A40, 0x00000000, 0x7C002000 },  // cmpw  r0,r4
+        { 0x00A44, 0x00000000, 0x4182000C },  // beq   0xA50
+        { 0x00A48, 0x00000000, 0x48000314 },  // b     0xD5C             a new motion (11/26: was stw r0,4(r3); 0xD5C stores it, min, mark)
+        { 0x00A4C, 0x00000000, 0xD2030000 },  // stfs  f16,0(r3)         min = y
+        { 0x00A50, 0x00000000, 0xC0030000 },  // lfs   f0,0(r3)
+        { 0x00A54, 0x00000000, 0xEC300028 },  // fsubs f1,f16,f0
+        { 0x00A58, 0x00000000, 0xFC01802E },  // fsel  f0,f1,f0,f16      min = min(min, y)
+        { 0x00A5C, 0x00000000, 0xD0030000 },  // stfs  f0,0(r3)
+        { 0x00A60, 0x00000000, 0xEC300028 },  // fsubs f1,f16,f0         y - min
+        { 0x00A64, 0x00000000, 0x4800031C },  // b     0xD80             X or Xs (11/26: was lfs f2,0xA80(0))
+        { 0x00A68, 0x00000000, 0xEE0100BA },  // fmadds f16,f1,f2,f0     y = min + (y - min) x X
+        { 0x00A6C, 0x00000000, 0x4800000C },  // b     0xA78
+        { 0x00A70, 0x00000000, 0x3800FFFF },  // li    r0,-1             not bouncing: forget the motion
+        { 0x00A74, 0x00000000, 0x90030004 },  // stw   r0,4(r3)
+        { 0x00A78, 0x00000000, 0xD20E2408 },  // stfs  f16,0x2408(r14)   (the replaced instruction)
+        { 0x00A7C, 0x00000000, 0x4E800020 },  // blr
+        { 0x00A80, 0x00000000, bounceBits },  // .float X
+        // 11/26: chest / head landings (see smallX above)
+        { 0x00D04, 0x00000000, 0x2C000006 },  // cmpwi r0,6              flying (action 6)?
+        { 0x00D08, 0x00000000, 0x4082FD68 },  // bne   0xA70             no: forget the motion
+        { 0x00D0C, 0x00000000, 0x800E0044 },  // lwz   r0,0x44(r14)      mot_kind
+        { 0x00D10, 0x00000000, 0x74000002 },  // andis. r0,r0,2          down?
+        { 0x00D14, 0x00000000, 0x4182FD5C },  // beq   0xA70
+        { 0x00D18, 0x00000000, 0xA00E003C },  // lhz   r0,0x3C(r14)      motion
+        { 0x00D1C, 0x00000000, 0x2C00019B },  // cmpwi r0,411            only the flights that land and bounce in themselves: 411 / 150
+        { 0x00D20, 0x00000000, 0x4182000C },  // beq   0xD2C
+        { 0x00D24, 0x00000000, 0x2C000096 },  // cmpwi r0,150
+        { 0x00D28, 0x00000000, 0x4082FD48 },  // bne   0xA70             (a launch from the floor, 1076 / 1092 / 1662, must not be scaled)
+        { 0x00D2C, 0x00000000, 0xA0830006 },  // lhz   r4,6(r3)
+        { 0x00D30, 0x00000000, 0x7C002000 },  // cmpw  r0,r4
+        { 0x00D34, 0x00000000, 0x4182FD1C },  // beq   0xA50             on the floor already in this motion: scale
+        { 0x00D38, 0x00000000, 0xC0000DA4 },  // lfs   f0,0xDA4(0)       0.3
+        { 0x00D3C, 0x00000000, 0xFC100000 },  // fcmpu cr0,f16,f0
+        { 0x00D40, 0x00000000, 0x4080FD30 },  // bge   0xA70             still in the air
+        { 0x00D44, 0x00000000, 0xC0000DA8 },  // lfs   f0,0xDA8(0)       0.05
+        { 0x00D48, 0x00000000, 0xFC100000 },  // fcmpu cr0,f16,f0
+        { 0x00D4C, 0x00000000, 0x4180FD24 },  // blt   0xA70             below the floor line (a one-frame dip): not yet
+        { 0x00D50, 0x00000000, 0x90030004 },  // stw   r0,4(r3)          touched down: min = y, small-bounce mark
+        { 0x00D54, 0x00000000, 0xD2030000 },  // stfs  f16,0(r3)
+        { 0x00D58, 0x00000000, 0x4800001C },  // b     0xD74
+        { 0x00D5C, 0x00000000, 0x90030004 },  // stw   r0,4(r3)          (from 0xA48) a new landing motion: min = y
+        { 0x00D60, 0x00000000, 0xD2030000 },  // stfs  f16,0(r3)
+        { 0x00D64, 0x00000000, 0x2C000197 },  // cmpwi r0,407            the small-bounce landings 407 / 415
+        { 0x00D68, 0x00000000, 0x4182000C },  // beq   0xD74
+        { 0x00D6C, 0x00000000, 0x2C00019F },  // cmpwi r0,415
+        { 0x00D70, 0x00000000, 0x4082FCE0 },  // bne   0xA50
+        { 0x00D74, 0x00000000, 0x38000001 },  // li    r0,1
+        { 0x00D78, 0x00000000, 0xB0030004 },  // sth   r0,4(r3)          small-bounce mark (upper half of +4)
+        { 0x00D7C, 0x00000000, 0x4BFFFCD4 },  // b     0xA50
+        { 0x00D80, 0x00000000, 0xA0830004 },  // lhz   r4,4(r3)          (from 0xA64) the mark
+        { 0x00D84, 0x00000000, 0xC0400A80 },  // lfs   f2,0xA80(0)       X
+        { 0x00D88, 0x00000000, 0x2C040000 },  // cmpwi r4,0
+        { 0x00D8C, 0x00000000, 0x4182FCDC },  // beq   0xA68
+        { 0x00D90, 0x00000000, 0xC0400DA0 },  // lfs   f2,0xDA0(0)       small bounce: Xs
+        { 0x00D94, 0x00000000, 0x4BFFFCD4 },  // b     0xA68
+        { 0x00DA0, 0x00000000, smallBits },   // .float Xs
+        { 0x00DA4, 0x00000000, touchHiBits }, // .float 0.3
+        { 0x00DA8, 0x00000000, touchLoBits }, // .float 0.05
+      };
+      if (applyPatches("SpikeoutEnemyBounceMul", bouncePatches, sizeof(bouncePatches) / sizeof(bouncePatches[0])))
+        InfoLog("SpikeoutEnemyBounceMul: enemies bounce x%.2f (chest / head landings x%.2f).", bounceMul, smallX);
+      // the walls only with EnemyBounceMul (11/26: split out so EnemyBounceMulChest alone leaves the walls as they were)
+      const Spikeout8LinkPatch wallPatches[] =
+      {
+        // 11/26 (owner: "they bounce on the floor but not when the head hits a wall - bounce off the wall too"): a flying
+        // Rob that touches a wall goes through 0x50594 once per flight (+0x48 bit 31): head or back to the wall -> a
+        // wall-hit motion (0x404F / 0x4096 / 0x4097, it sticks and slides down), else Vx / Vz x 0.4. For an enemy moving
+        // into the wall, the horizontal velocity is reflected instead, v -= (1 + e) (v.p / p.p) p with p the push-out
+        // from the wall (+0x1D28 / +0x1D2C, worked out at 0x51150) and e = X - 1 (2.0: as fast as it came, 1.5: half),
+        // and the wall-hit motion is skipped (on to 0x5070C, r31 stays 0, so the flight goes on; also when it is not
+        // moving into the wall, e.g. sliding along it: no reflection then, but no sticking either). r0 / r3 / f0-f7 are
+        // free there (the callers 0x200D0 / 0x20104 / 0x20758 use no FP register after it).
+        { 0x50608, 0x56009801, 0x4BFB047C },  // rlwinm. r0,r16,19,0,0 -> b 0xA84   (11/26 wall)
+        { 0x00A84, 0x00000000, 0x3C600010 },  // lis r3, 0x10
+        { 0x00A88, 0x00000000, 0x8863065A },  // lbz r3, 0x65a(r3)
+        { 0x00A8C, 0x00000000, 0x880E0072 },  // lbz r0, 0x72(r14)
+        { 0x00A90, 0x00000000, 0x7C001800 },  // cmpw r0, r3
+        { 0x00A94, 0x00000000, 0x41800058 },  // blt 0xaec               a player: as is
+        { 0x00A98, 0x00000000, 0xC02E1D28 },  // lfs f1, 0x1d28(r14)
+        { 0x00A9C, 0x00000000, 0xC04E1D2C },  // lfs f2, 0x1d2c(r14)
+        { 0x00AA0, 0x00000000, 0xEC610072 },  // fmuls f3, f1, f1        p.p (p = the push-out from the wall, +0x1D28 / +0x1D2C)
+        { 0x00AA4, 0x00000000, 0xEC6218BA },  // fmadds f3, f2, f2, f3
+        { 0x00AA8, 0x00000000, 0xC0001500 },  // lfs f0, 0x1500(0)
+        { 0x00AAC, 0x00000000, 0xFC030000 },  // fcmpu cr0, f3, f0
+        { 0x00AB0, 0x00000000, 0x4081003C },  // ble 0xaec               no push-out: as is
+        { 0x00AB4, 0x00000000, 0xC08E001C },  // lfs f4, 0x1c(r14)
+        { 0x00AB8, 0x00000000, 0xC0AE0024 },  // lfs f5, 0x24(r14)
+        { 0x00ABC, 0x00000000, 0xECC40072 },  // fmuls f6, f4, f1        v.p (v = Vx / Vz, +0x1C / +0x24)
+        { 0x00AC0, 0x00000000, 0xECC530BA },  // fmadds f6, f5, f2, f6
+        { 0x00AC4, 0x00000000, 0xFC060000 },  // fcmpu cr0, f6, f0
+        { 0x00AC8, 0x00000000, 0x40800020 },  // bge 0xae8               not moving into the wall: no reflection, but no wall-hit motion either
+        { 0x00ACC, 0x00000000, 0xECC61824 },  // fdivs f6, f6, f3
+        { 0x00AD0, 0x00000000, 0xC0E00AF4 },  // lfs f7, 0xaf4(0)        1 + e
+        { 0x00AD4, 0x00000000, 0xECC601F2 },  // fmuls f6, f6, f7
+        { 0x00AD8, 0x00000000, 0xEC86207C },  // fnmsubs f4, f6, f1, f4  v -= (1 + e) (v.p / p.p) p
+        { 0x00ADC, 0x00000000, 0xECA628BC },  // fnmsubs f5, f6, f2, f5
+        { 0x00AE0, 0x00000000, 0xD08E001C },  // stfs f4, 0x1c(r14)
+        { 0x00AE4, 0x00000000, 0xD0AE0024 },  // stfs f5, 0x24(r14)
+        { 0x00AE8, 0x00000000, 0x4804FC24 },  // b 0x5070c               past the wall-hit motion (r31 stays 0)
+        { 0x00AEC, 0x00000000, 0x56009801 },  // rlwinm. r0, r16, 0x13, 0, 0(the replaced instruction)
+        { 0x00AF0, 0x00000000, 0x4804FB1C },  // b 0x5060c
+        { 0x00AF4, 0x00000000, wallBits },  // .float 1 + e
+      };
+      if (bounceMul != 1.0f && applyPatches("SpikeoutEnemyBounceWall", wallPatches, sizeof(wallPatches) / sizeof(wallPatches[0])))
+        InfoLog("SpikeoutEnemyBounceWall: enemies bounce off walls, e = %.2f.", wallE - 1.0f);
     }
     // 11/23 (owner): InfiniteSpecial=1 - the special attack does not use up the lightning (SP, Rob +0x3F25). The only
     // place that takes one away is 0x21FBC..0x21FC8 in the motion-command loop (SP - 1, unless SDA -0x4000 & 0x3000

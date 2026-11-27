@@ -317,43 +317,67 @@ static void ppc_change_pc(UINT32 newpc)
 	ppc.fatalError = true;
 }
 
+/*
+ * 11/27 fast RAM path: main RAM (below 0x800000) is read and written here directly instead of through the
+ * Model 3 bus (a virtual call, then the bus checks its debug hooks). CModel3 sets g_ppcFastRam only when none of
+ * its RAM hooks (WatchWrite, StateTrace, TaskArrayLog, TraceEnemyCreate) is on; NULL = always the bus.
+ * g_ppcFastTaskPc (Spikeout 8 players): PCs whose RAM accesses may hit a shadowed task-array slot
+ * (TASK_SHADOW_OFF in Model3.cpp) still go through the bus. The result is the same as the bus would give.
+ */
+UINT8 *g_ppcFastRam = NULL;
+const unsigned char *g_ppcFastTaskPc = NULL;
+
+static inline bool FastRam(UINT32 address)
+{
+	return address < 0x00800000 && g_ppcFastRam != NULL &&
+	       (g_ppcFastTaskPc == NULL || g_ppcFastTaskPc[(ppc.pc >> 2) & 0x1FFFF] == 0);
+}
+
 static inline UINT8 READ8(UINT32 address)
 {
+	if (FastRam(address)) return g_ppcFastRam[address ^ 3];
 	return Bus->Read8(address);
 }
 
 static inline UINT16 READ16(UINT32 address)
 {
+	if (!(address & 1) && FastRam(address)) return *(UINT16 *) &g_ppcFastRam[address ^ 2];
 	return Bus->Read16(address);
 }
 
 static inline UINT32 READ32(UINT32 address)
 {
+	if (!(address & 3) && FastRam(address)) return *(UINT32 *) &g_ppcFastRam[address];
 	return Bus->Read32(address);
 }
 
 static inline UINT64 READ64(UINT32 address)
 {
+	if (g_ppcFastRam != NULL) return ((UINT64) READ32(address) << 32) | READ32(address + 4);	// = CModel3::Read64
 	return Bus->Read64(address);
 }
 
 static inline void WRITE8(UINT32 address, UINT8 data)
 {
+	if (FastRam(address)) { g_ppcFastRam[address ^ 3] = data; return; }
 	Bus->Write8(address,data);
 }
 
 static inline void WRITE16(UINT32 address, UINT16 data)
 {
+	if (!(address & 1) && FastRam(address)) { *(UINT16 *) &g_ppcFastRam[address ^ 2] = data; return; }
 	Bus->Write16(address,data);
 }
 
 static inline void WRITE32(UINT32 address, UINT32 data)
 {
+	if (!(address & 3) && FastRam(address)) { *(UINT32 *) &g_ppcFastRam[address] = data; return; }
 	Bus->Write32(address,data);
 }
 
 static inline void WRITE64(UINT32 address, UINT64 data)
 {
+	if (g_ppcFastRam != NULL) { WRITE32(address, (UINT32) (data >> 32)); WRITE32(address + 4, (UINT32) data); return; }	// = CModel3::Write64
 	Bus->Write64(address,data);
 }
 

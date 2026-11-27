@@ -47,6 +47,7 @@
  * At the start of vblank any buffered data is written and synced to the correct memory locations.
  */
 
+#include <set>
 #include "Real3D.h"
 
 #include "Supermodel.h"
@@ -350,6 +351,15 @@ void CReal3D::SyncBufferedMem(UpdateBlock* updateBlock, uint32_t* updateBuffer, 
     }
 }
 
+// 11/26 (owner: find the life-up texture): ini VromTexLog = 1 -> vromtex.txt, every different texture upload once
+// (VROM ones: word address and header; FIFO ones: header, the last DMA, data into vromtex.bin as u32 header,
+// u32 words, words). Debug only.
+static FILE *s_vromTexLog = nullptr;
+static bool s_vromTexLogOn = false;
+static std::set<uint64_t> s_vromTexSeen;
+static FILE *s_texBin = nullptr;
+static uint32_t s_lastDmaSrc = 0, s_lastDmaDst = 0, s_lastDmaLen = 0;
+
 void CReal3D::FlushTextures()
 {
     // Upload textures (if any)
@@ -368,6 +378,28 @@ void CReal3D::FlushTextures()
                 break;
             }
 
+            if (s_vromTexLogOn)
+            {
+              uint64_t h = 1469598103934665603ull;
+              for (uint32_t k = 0; k < size; k++) { h ^= textureFIFO[i + k]; h *= 1099511628211ull; }
+              if (s_vromTexSeen.insert(h).second)
+              {
+                if (!s_vromTexLog) s_vromTexLog = fopen("vromtex.txt", "w");
+                if (!s_texBin) s_texBin = fopen("vromtex.bin", "wb");
+                if (s_vromTexLog)
+                {
+                  fprintf(s_vromTexLog, "fifo header=%08X words=%u dma=%08X->%08X len=%X\n", header, size,
+                    s_lastDmaSrc, s_lastDmaDst, s_lastDmaLen * 4);
+                  fflush(s_vromTexLog);
+                }
+                if (s_texBin)
+                {
+                  uint32_t n = size - 2;
+                  fwrite(&header, 4, 1, s_texBin); fwrite(&n, 4, 1, s_texBin); fwrite(&textureFIFO[i + 2], 4, n, s_texBin);
+                  fflush(s_texBin);
+                }
+              }
+            }
             UploadTexture(header, (uint16_t*)&textureFIFO[i + 2]);
             DebugLog("Real3D: Texture upload completed: %X bytes (%X)\n", size * 4, textureFIFO[i + 0]);
 
@@ -947,6 +979,7 @@ void CReal3D::UploadTexture(uint32_t header, const uint16_t *texData)
 
 void CReal3D::DMACopy(void)
 {
+  s_lastDmaSrc = dmaSrc; s_lastDmaDst = dmaDest; s_lastDmaLen = dmaLength;
   DebugLog("Real3D DMA copy (PC=%08X, LR=%08X): %08X -> %08X, %X %s\n", ppc_get_pc(), ppc_get_lr(), dmaSrc, dmaDest, dmaLength*4, (dmaConfig&0x80)?"(byte reversed)":"");
   //printf("Real3D DMA copy (PC=%08X, LR=%08X): %08X -> %08X, %X %s\n", ppc_get_pc(), ppc_get_lr(), dmaSrc, dmaDest, dmaLength*4, (dmaConfig&0x80)?"(byte reversed)":"");
   if ((dmaConfig&0x80)) // reverse bytes
@@ -1105,6 +1138,7 @@ void CReal3D::WriteTextureFIFO(uint32_t data)
     textureFIFO[fifoIdx++] = data;
 }
 
+
 void CReal3D::WriteTexturePort(unsigned reg, uint32_t data)
 {
   if (step == 0x10)
@@ -1128,6 +1162,18 @@ void CReal3D::WriteTexturePort(unsigned reg, uint32_t data)
 
       // first 4 MB maps to polygon RAM rather than VROM
       // Daytona 2 PE uses zeroed data to replace unused Dreamcast logo textures
+      if (s_vromTexLogOn && s_vromTexSeen.insert(((uint64_t)addr << 32) | header).second)
+      {
+        if (!s_vromTexLog) s_vromTexLog = fopen("vromtex.txt", "w");
+        if (s_vromTexLog)
+        {
+          fprintf(s_vromTexLog, "addr=%06X header=%08X x=%u y=%u page=%u w=%u h=%u type=%02X bits=%u lsb=%u msb=%u\n",
+            addr & 0xFFFFFF, header, 32 * (header & 0x3F), 32 * ((header >> 7) & 0x1F), (header >> 20) & 1,
+            32u << ((header >> 14) & 7), 32u << ((header >> 17) & 7), header >> 24, ((header >> 23) & 1) ? 16 : 8,
+            (header >> 21) & 1, (header >> 22) & 1);
+          fflush(s_vromTexLog);
+        }
+      }
       if (addr < 0x100000)
         UploadTexture(header, (const uint16_t*)&polyRAM[addr & 0xFFFFFF]);
       else
@@ -1407,6 +1453,8 @@ Result CReal3D::Init(const uint8_t *vromPtr, IBus *BusObjectPtr, CIRQ *IRQObject
 {
   uint32_t memSize = (m_gpuMultiThreaded ? MEMORY_POOL_SIZE : MEM_POOL_SIZE_RW);
   float  memSizeMB = (float)memSize/(float)0x100000;
+
+  s_vromTexLogOn = m_config["VromTexLog"].ValueAsDefault<bool>(false);
 
   // IRQ and bus objects
   Bus = BusObjectPtr;
