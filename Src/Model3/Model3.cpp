@@ -10455,6 +10455,22 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
         }
       }
     }
+    // 11/27 (owner: "area 4's garage shutter opens when the boss comes and stays open, but with 5 or more links it
+    // closes and the minions that come out later are shut in - it is the held timer"): area 4's loop script opens the
+    // shutters 0 / 1 (the garage, x 57-61 z -8.7) with command 02 03 08 08 when NORAH comes, waits (timer 0x40 and
+    // command g1 0F), closes them (08 09, at 0xA865C / 0xA8664), waits for NORAH (g1 0F 01 1CB) and opens them again.
+    // A4ShutterOpen = 1 (default; 0 = the original): that close is made an open (08 09 -> 08 08), so once open the
+    // garage stays open. The close after the fight (0xA87E8 / 0xA87F0) is left. MUST be the same on all cabinets.
+    if (m_config["A4ShutterOpen"].ValueAsDefault<bool>(true))
+    {
+      const Spikeout8LinkPatch a4Patches[] =
+      {
+        { 0xA865C, 0x02030809, 0x02030808 },  // shutter 0: close -> open
+        { 0xA8664, 0x02030809, 0x02030808 },  // shutter 1: close -> open
+      };
+      if (applyPatches("A4ShutterOpen", a4Patches, sizeof(a4Patches) / sizeof(a4Patches[0])))
+        InfoLog("A4ShutterOpen: area 4's garage shutter stays open once NORAH has opened it.");
+    }
     // 11/23 (owner): InfiniteSpecial=1 - the special attack does not use up the lightning (SP, Rob +0x3F25). The only
     // place that takes one away is 0x21FBC..0x21FC8 in the motion-command loop (SP - 1, unless SDA -0x4000 & 0x3000
     // or SP is 0); its store is made a nop. SP is kept per Rob on each cabinet, so it MUST be the same on all cabinets.

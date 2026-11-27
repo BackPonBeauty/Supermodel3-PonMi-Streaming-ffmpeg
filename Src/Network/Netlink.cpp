@@ -1081,7 +1081,7 @@ namespace
 
 const char *const kNetlinkGameKeys[] = {
   "PowerPCFrequency", "IdleSkip", "P1Invincible", "TimerStop", "SpikeJr", "Spikeout8Link", "Spikeout8Players",
-  "SameStart", "BossHPx1", "PlayerAttackMul", "EnemyKnockMul", "EnemyKnockMulY", "EnemyKnockMulXZ", "EnemyBounceMul", "EnemyBounceMulChest", "PlayerJumpMul", "NorahBallerina", "InfiniteSpecial",
+  "SameStart", "BossHPx1", "PlayerAttackMul", "EnemyKnockMul", "EnemyKnockMulY", "EnemyKnockMulXZ", "EnemyBounceMul", "EnemyBounceMulChest", "PlayerJumpMul", "NorahBallerina", "A4ShutterOpen", "InfiniteSpecial",
   "StartStage", "StartArea", "StageTestMenu",
   "NetlinkBuffer" };   // 11/23 (owner): not a game value - the host's launcher picks how many frames the client keeps in hand
 const int kNetlinkGameKeyCount = (int) (sizeof(kNetlinkGameKeys) / sizeof(kNetlinkGameKeys[0]));
