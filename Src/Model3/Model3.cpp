@@ -283,6 +283,8 @@ bool g_skipTileDraw = false;
 static bool g_spikeoutP1Invincible = false; // P1Invincible=1: keep player 1 invincible, to record waypoints (must be set on every cabinet)
 static float g_spikeoutJumpMul = 1.0f;       // 11/26 PlayerJumpMul=X (1.0-6.0): players jump X times as high (must be the same on every cabinet)
 static bool g_spikeoutSpikeJr = false;      // 11/23 SpikeJr=1: players who picked Spike play Spike Jr (character 4; must be set on every cabinet)
+static UINT8 g_spikeoutJrChar = 4;          // 11/27 (owner, for one test): SpikeJrChar = the character Spike becomes (4 Jr, 33 NORAH)
+static UINT8 g_spikeoutForceCharP1 = 0;     // 11/27 (owner, one test): ForceCharP1 = N - the owner's cheat, player 1 Rob +0x3F00 word = (N << 24) | 450 every frame
 static bool g_spikeoutTimerStop = false;    // 11/17 TimerStop=1: hold the countdown timers at 99 with 4 or fewer players too (5+ always hold; must be set on every cabinet)
 static bool g_spikeoutAI = false;
 #include <atomic>
@@ -7914,7 +7916,11 @@ void CModel3::LoadState(CBlockFile *SaveState)
       if (p.addr + 4 > 0x800000) continue;
       UINT32 *w = (UINT32 *) &ram[p.addr];
       if (*w == p.newValue) continue;
-      if (*w == p.oldValue) { *w = p.newValue; put++; }
+      // 11/27: the first NorahBallerina (b 0x1210 at 0x7239C) is gone; a state saved with it gets the original back
+      if (p.addr == 0x01210 && *(UINT32 *) &ram[0x7239C] == 0x4BF8EE74u) *(UINT32 *) &ram[0x7239C] = 0x3B400000u;
+      // 11/27: a word that was 0 in the ROM is our own code / data in an unused area (an older exe may have put
+      // another version of it there, e.g. NorahBallerina 0x27 -> 0x12); the game never writes there, so always ours
+      if (*w == p.oldValue || p.oldValue == 0) { *w = p.newValue; put++; }
       else other++;
     }
     if (put || other)
@@ -8182,13 +8188,47 @@ void CModel3::RunMainBoardFrame(void)
 	// word 0x000001C2 Spike -> 0x040001C2 Jr), but only the character byte is changed, not the HP. Every live player
 	// slot 0-7 (Rob 0x1A0000 + slot x 0x4000) with character 0 gets 4, once a frame, outside the demo. Every cabinet
 	// sets all 8 slots in its own RAM, so it MUST be on on all cabinets (Jr moves differently: inputs would desync).
+	// 11/27 (owner: "with Spike's HP 450 kept, write NORAH's number into the HP address during the game" = their cheat):
+	// ForceCharP1 = N (0 = off; NORAH = 94 = 0x5E, the cheat value 1577058754 = 0x5E0001C2): player 1 (Rob 0x1A0000)
+	// +0x3F00 = (N << 24) | 0x1C2 - the character byte N and HP 450. For one cabinet alone (00): others would differ.
+	// 11/27 (owner: "wait until the character appears, wait until an enemy hits you"): the writing starts only after
+	// player 1 is on the field and its HP has gone down once (the first hit); it stops when player 1 leaves the field.
+	if (g_spikeoutForceCharP1)
+	{
+		static bool s_forceOn = false;
+		const bool live = !SpikeoutAttract(ram) && (*(const UINT32 *) &ram[0x1A0000] & 1);
+		if (!live) s_forceOn = false;
+		else
+		{
+			// 11/27 (owner: "write it now"): a file forcechar_now.txt in the working folder = write it on this frame
+			// (checked every 15 frames, the file is deleted), whether or not the hit has come
+			static unsigned s_nowTick = 0;
+			if (++s_nowTick % 15 == 0)
+			{
+				if (FILE *nf = fopen("forcechar_now.txt", "r"))
+				{
+					fclose(nf); remove("forcechar_now.txt");
+					*(UINT32 *) &ram[0x1A3F00] = ((UINT32) g_spikeoutForceCharP1 << 24) | 0x1C2;
+					s_forceOn = true;
+					printf("ForceCharP1: written now (%08X)\n", ((UINT32) g_spikeoutForceCharP1 << 24) | 0x1C2);
+				}
+			}
+			const int hp = (short) *(const UINT16 *) &ram[(0x1A0000 + 0x3F02) ^ 2];
+			// once (owner: "no need to write every frame"): on the first hit, then not again until player 1 leaves
+			if (!s_forceOn && hp > 0 && hp < 0x1C2)
+			{
+				s_forceOn = true;
+				*(UINT32 *) &ram[0x1A3F00] = ((UINT32) g_spikeoutForceCharP1 << 24) | 0x1C2;
+			}
+		}
+	}
 	if (g_spikeoutSpikeJr && !SpikeoutAttract(ram))
 	{
 		for (unsigned s = 0; s < 8; s++)
 		{
 			const UINT32 r = 0x1A0000 + s * 0x4000;
 			if ((*(const UINT32 *) &ram[r] & 1) && ram[(r + 0x3F00) ^ 3] == 0)
-				ram[(r + 0x3F00) ^ 3] = 4;
+				ram[(r + 0x3F00) ^ 3] = g_spikeoutJrChar;
 		}
 	}
 	// 11/26 (owner): PlayerJumpMul=X (1.0-6.0, 11/26 owner: was 1.0-2.0) - the players jump X times as high. A jump is velocity-driven (DownLog,
@@ -9800,7 +9840,10 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
   if (g_spikeoutJumpMul != 1.0f) InfoLog("PlayerJumpMul: players jump x%.2f as high.", g_spikeoutJumpMul);
   g_spikeoutFontDump = game.name == "spikeofe";   // 11/25: Saves/font.st for the launcher / PonUI font
   { extern bool g_costumeSpikeJr; g_costumeSpikeJr = g_spikeoutSpikeJr; }   // 11/23: Real3D CostumeSwap leaves Spike (Jr) in colour 0
-  if (g_spikeoutSpikeJr) InfoLog("SpikeJr: players who pick Spike play Spike Jr (character 4).");
+  g_spikeoutForceCharP1 = (UINT8) std::max(0, std::min(127, m_config["ForceCharP1"].ValueAsDefault<int>(0)));
+  if (g_spikeoutForceCharP1) InfoLog("ForceCharP1: player 1 is character %u with HP 450 every frame.", (unsigned) g_spikeoutForceCharP1);
+  g_spikeoutJrChar = (UINT8) std::max(1, std::min(127, m_config["SpikeJrChar"].ValueAsDefault<int>(4)));   // 11/27: 33 = NORAH (the owner's cheat ID)
+  if (g_spikeoutSpikeJr) InfoLog("SpikeJr: players who pick Spike play character %u (4 = Spike Jr).", (unsigned) g_spikeoutJrChar);
   if (g_spikeoutTimerStop) InfoLog("TimerStop: countdown timers held at 33 with 1-4 players too (5+ always).");
   g_spikeoutAI = (game.name == "spikeofe" && m_config["AIPlayer"].ValueAsDefault<bool>(false));
   g_spikeoutInputLog = (game.name == "spikeofe" && !g_spikeoutAI && m_config["InputLog"].ValueAsDefault<bool>(false));
@@ -10363,42 +10406,53 @@ Result CModel3::LoadGame(const Game &game, const ROMSet &rom_set)
       if (bounceMul != 1.0f && applyPatches("SpikeoutEnemyBounceWall", wallPatches, sizeof(wallPatches) / sizeof(wallPatches[0])))
         InfoLog("SpikeoutEnemyBounceWall: enemies bounce off walls, e = %.2f.", wallE - 1.0f);
     }
-    // 11/27 (owner: NORAH's "ballerina throw", seen only by players who made NORAH their own character with a cheat):
-    // when a boss holds a player from the front (Rob +0x48 0x00100000), the AI rule 0x7239C presses B again and again
-    // (action 0x49 = knees) until the hold ends - the throw is never chosen. NorahBallerina = N (percent, default 10 = like her rarest move group,
-    // 0 = the original): on the hold's first frame, for NORAH only (her AI table Rob +0x22A8 = 0xFFF6CBD0, "BBF"), the
-    // game's own random number (0x371E8, so every cabinet decides the same) picks action 0x27 (forward + B+C+S, then
-    // forward 30 frames) with N% instead of the knees. The rest of the rule (0x723B8: knees again while she still holds)
-    // is unchanged. Code at 0x1210 (inside the 0x1200 exception vector, after its first word; never run).
+    // 11/27 (owner: NORAH's "ballerina throw" = hold a player from the front, then B+C+J - only seen by players who
+    // made NORAH their own character with a cheat). Rob +0x48: 0x00200000 = holding, 0x00100000 = held. While an enemy
+    // holds a player (motion 1118, the same front hold as a player's), the AI rule 0x72318 -> 0x72330 asks 0x65AC4 for
+    // a follow-up: rand(0..32767) <= table 0xA5670 [class][4] x 30 (x 2 for a boss) - 0 for classes 0-6, so ~1/32768 a
+    // frame - then a move from the enemy's AI table's hold group (+8 count; 0x45E = 1118 and any other motion use it):
+    // B (02) or C (03) for most enemies, only B for NORAH. B+C+J in 1118 gives motion 1477 (the script at 0xFFF14FE7).
+    // NorahBallerina = 1 (default; 0 = the original), NORAH only (AI table +0x22A8 = 0xFFF6CBD0, "BBF"):
+    //  - the chance is that of class 7 (80 x 2 x 30 = 4800 / 32768 a frame) instead of 0 (0x65AF0 -> 0x1210)
+    //  - her hold group is B / C / B+C+J (one each): her table's list is copied to RAM 0x1280 with the group made
+    //    02 03 12, the table's pointer and group count are changed in the CROM image (action 0x12 = B+C+J, inputs at
+    //    0x1270 / 0x1274; it was CS,C,C,C, used by no enemy table and set nowhere in the code).
+    // (The first version of this, 11/27, hooked the rule 0x7239C - that is NORAH being held, not holding: removed.)
     {
-      const int ballerinaPct = std::max(0, std::min(100, m_config["NorahBallerina"].ValueAsDefault<int>(10)));
-      if (ballerinaPct > 0)
+      const int ballerinaOn = m_config["NorahBallerina"].ValueAsDefault<int>(1);
+      UINT32 *listPtr = (UINT32 *) &crom[0x76CBD0];         // NORAH's AI table: +0 the list, +8 the hold group's count
+      UINT8 &groupCount = crom[0x76CBD8 ^ 3];
+      if (ballerinaOn > 0 && *listPtr == 0xFFF6CBDCu && groupCount == 1)
       {
-        const UINT32 thr = (UINT32) (ballerinaPct * 32768 / 100);   // random 0..32767 below this -> the throw
-        const Spikeout8LinkPatch ballerinaPatches[] =
+        const UINT32 keys = (UINT32) std::strtoul(m_config["NorahBallerinaKeys"].ValueAsDefault<std::string>("0B").c_str(), nullptr, 16) & 0xFF;
+        const UINT32 keyFrames = (UINT32) std::max(1, std::min(60, m_config["NorahBallerinaFrames"].ValueAsDefault<int>(1)));
+        // her list: groups 0-3 (2+3+12+4) as in the ROM, then the hold groups 02 03 12 | 02 | 02
+        static const UINT16 list[26] = { 0x14, 0x0F, 0x04, 0x0D, 0x1B, 0x17, 0x17, 0x17, 0x17, 0x39, 0x39, 0x39, 0x39,
+                                         0x3D, 0x3E, 0x43, 0x40, 0x3D, 0x3E, 0x43, 0x40, 0x02, 0x03, 0x12, 0x02, 0x02 };
+        std::vector<Spikeout8LinkPatch> pt =
         {
-          { 0x7239C, 0x3B400000, 0x4BF8EE74 },  // li r26,0 -> b 0x1210
-          { 0x01210, 0x00000000, 0x3B400000 },  // li    r26,0             (as the rule did)
-          { 0x01214, 0x00000000, 0x635A0020 },  // ori   r26,r26,0x20
-          { 0x01218, 0x00000000, 0x3BA00049 },  // li    r29,0x49          knees
-          { 0x0121C, 0x00000000, 0x806E22A8 },  // lwz   r3,0x22A8(r14)    AI table
-          { 0x01220, 0x00000000, 0x3C80FFF6 },  // lis   r4,0xFFF6
-          { 0x01224, 0x00000000, 0x6084CBD0 },  // ori   r4,r4,0xCBD0      NORAH's
-          { 0x01228, 0x00000000, 0x7C032000 },  // cmpw  r3,r4
-          { 0x0122C, 0x00000000, 0x4082001C },  // bne   0x1248
-          { 0x01230, 0x00000000, 0x7C8802A6 },  // mflr  r4
-          { 0x01234, 0x00000000, 0x48035FB5 },  // bl    0x371E8           random 0..32767 (uses r2, r3)
-          { 0x01238, 0x00000000, 0x7C8803A6 },  // mtlr  r4
-          { 0x0123C, 0x00000000, 0x28030000 | thr },  // cmplwi r3,thr
-          { 0x01240, 0x00000000, 0x40800008 },  // bge   0x1248
-          { 0x01244, 0x00000000, 0x3BA00027 },  // li    r29,0x27          the ballerina throw
-          { 0x01248, 0x00000000, 0x3C000007 },  // lis   r0,7
-          { 0x0124C, 0x00000000, 0x300023B8 },  // addic r0,r0,0x23B8      next frames: 0x723B8 (as the rule did)
-          { 0x01250, 0x00000000, 0x900E22BC },  // stw   r0,0x22BC(r14)
-          { 0x01254, 0x00000000, 0x48064104 },  // b     0x65358
+          { 0x65AF0, 0x1C83001E, 0x4BF9B721 },  // mulli r4,r3,30 -> bl 0x1210
+          { 0x01210, 0x00000000, 0x1C83001E },  // mulli r4,r3,30          (as it was)
+          { 0x01214, 0x00000000, 0x80AE22A8 },  // lwz   r5,0x22A8(r14)    AI table
+          { 0x01218, 0x00000000, 0x3CC0FFF6 },  // lis   r6,0xFFF6
+          { 0x0121C, 0x00000000, 0x60C6CBD0 },  // ori   r6,r6,0xCBD0      NORAH's
+          { 0x01220, 0x00000000, 0x7C053000 },  // cmpw  r5,r6
+          { 0x01224, 0x00000000, 0x4C820020 },  // bnelr
+          { 0x01228, 0x00000000, 0x388012C0 },  // li    r4,4800           class 7's chance
+          { 0x0122C, 0x00000000, 0x4E800020 },  // blr
+          { 0x01270, 0x00000000, (keys << 24) | 0x00FF0000 },  // action 0x12's inputs: B+C+J, end
+          { 0x01274, 0x00000000, keyFrames << 24 },            // frames
+          { 0x8C0D4, 0x000A56F2, 0x00001270 },  // action 0x12's inputs -> 0x1270
+          { 0x8C29C, 0x000A5930, 0x00001274 },  // action 0x12's frames -> 0x1274
         };
-        if (applyPatches("NorahBallerina", ballerinaPatches, sizeof(ballerinaPatches) / sizeof(ballerinaPatches[0])))
-          InfoLog("NorahBallerina: NORAH's front hold ends in the ballerina throw %d%% of the time.", ballerinaPct);
+        for (int k = 0; k < 13; k++)
+          pt.push_back({ (UINT32) (0x1280 + 4 * k), 0x00000000, ((UINT32) list[2 * k] << 16) | list[2 * k + 1] });
+        if (applyPatches("NorahBallerina", pt.data(), pt.size()))
+        {
+          *listPtr = 0x00001280;   // CROM image (not RAM, not in save states): read straight from the ROM by 0x65B80
+          groupCount = 3;
+          InfoLog("NorahBallerina: when NORAH holds a player from the front she follows up like a class 7 enemy, with B, C or B+C+J (%02X).", keys);
+        }
       }
     }
     // 11/23 (owner): InfiniteSpecial=1 - the special attack does not use up the lightning (SP, Rob +0x3F25). The only
