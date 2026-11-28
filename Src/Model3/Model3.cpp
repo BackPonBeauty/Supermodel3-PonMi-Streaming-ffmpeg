@@ -2913,6 +2913,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				const bool inA40 = (curAm == 40 || curAm == 27 || curAm == 29 || curAm == 43 || curAm == 6 || curAm == 47 || curAm == 41) && (pflags & 1) && !areaChanged;
 				const int hpMe = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
 				const float myYm = *(const float *) &ram[rob + 0x384];
+				static UINT32 mNoTgtF = 0;                                                // 11/28: areas 47 / 41, the last frame with a target
 				if (*(const UINT32 *) &ram[rob + 0x44] & 0x00800000u) mAtkF = g_ppcTraceFrame;
 				bool landed = false;
 				for (unsigned e = estart; e < 20; e++)
@@ -2985,7 +2986,9 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 							int nx = mIdx;
 							if (nWp > 1) { nx = mIdx + mDir; if (nx < 0 || nx >= nWp) { mDir = -mDir; nx = mIdx + mDir; } }
 							mArrived++;
-							if (mArrived >= 2)
+							// 11/28 (owner): areas 47 / 41 kept running without a search for a while (2nd: taken back; 3rd: back in -
+							// they run on from point to point; the other areas search again after 2 points).
+							if (mArrived >= 2 && !a47)
 							{
 								SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: at point %d (%d reached) - searching again (next point %d)\n", node, mIdx + 1, mArrived, nx + 1);
 								mIdx = nx; mResume = true;
@@ -3001,9 +3004,16 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				}
 				else
 				{
+					const bool still15 = !(hurt || landed || mine < 0) && g_ppcTraceFrame - mStillF >= 863u;   // 15 s (57.5 fps)
 					if (hurt || landed || mine < 0) mStillF = g_ppcTraceFrame;
-					else if (g_ppcTraceFrame - mStillF >= 863u)   // 15 s (57.5 fps)
+					// 11/28 (owner): areas 47 / 41 - a 2nd way in: no target for 15 s while a live enemy is there (the enemies of
+					// that room stay on another level, so the bots there have no target and the way above never counts).
+					if (!a47 || mine >= 0 || ne == 0) mNoTgtF = g_ppcTraceFrame;
+					const bool noTgt15 = a47 && g_ppcTraceFrame - mNoTgtF >= 863u;
+					if (still15 || noTgt15)
 					{
+						mNoTgtF = g_ppcTraceFrame;
+						if (noTgt15) SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: no target for 15 s (area %u)\n", node, curAm);
 						float bd2 = 1e30f;
 						if (!mResume || mIdx < 0 || mIdx >= nWp) { mResume = false; mIdx = 0; mDir = 1; }
 						for (int k = 0; k < nWp && !mResume; k++)
@@ -3013,9 +3023,11 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 						}
 						mResume = false; mArrived = 0;
 						g_marOn = true;
-						SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: 15 s with no hit either way - running, point %d of %d first (me (%.2f,%.2f))\n", node, mIdx + 1, nWp, px, pz);
+						SpikeoutGateNote(g_ppcTraceFrame, "[MARATHON] node %u: %s - running, point %d of %d first (me (%.2f,%.2f))\n", node,
+						                 noTgt15 ? "15 s with no target" : "15 s with no hit either way", mIdx + 1, nWp, px, pz);
 					}
 				}
+				if (g_marOn || !inA40) mNoTgtF = g_ppcTraceFrame;   // the no-target count starts over after a marathon / outside
 				if (g_marOn) { g_marX = wp[mIdx].first; g_marZ = wp[mIdx].second; }
 			}
 			if (g_marOn)
