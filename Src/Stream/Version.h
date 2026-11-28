@@ -17,7 +17,7 @@
 
 namespace StreamVersion
 {
-  constexpr long long kBuild = 20261126;   // 11/23: release 20261123 (netlink); 11/23 night: release 20261124 (bots); 11/24: 20261125; 11/26: 20261126
+  constexpr long long kBuild = 20261127;   // 11/23: release 20261123 (netlink); 11/23 night: release 20261124 (bots); 11/24: 20261125; 11/26: 20261126; 11/28: 20261127
   constexpr const char *kDefaultDownloadUrl = "https://github.com/BackPonBeauty/Supermodel3-PonMi-Streaming-ffmpeg/releases";
 }
 

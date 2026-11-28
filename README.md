@@ -7,7 +7,7 @@
 **Start a host in the launcher, pick a slot in the lobby, and play.**
 **StreamReceiver, XinputReceiver and ViGEmBus are no longer needed.**
 
-> Build 20261126 / PonLuncher 3.0.1
+> Build 20261127 / PonLuncher 3.0.2
 
 ---
 
@@ -74,6 +74,11 @@
   - A dizzy target while the bot is mid-combo: the combo is dropped, every button let go, and the bot dashes away, then looks for a target again
   - A back grab's jump throw goes away from the nearest ally within 3; with no ally near, toward the nearest other enemy
 - **Bots (20261126):** the bot AI has been rebuilt and is smarter
+- **Bots (20261127):** marathon mode in areas 6, 27, 29, 40, 41, 43 and 47 — a bot that has a target but neither takes nor lands a hit for 15 seconds (in areas 41 / 47: has no target for 15 seconds) runs a fixed route through the room instead of standing by; being hit ends it
+- **DEVELOP options (20261127):** MOON SOMERSAULT / MOON SOMERSAULT (CHEST) (how high a downed enemy bounces), PLAYER JUMP (1.0–6.0), BALLERINA THROW (NORAH) (NORAH can follow her front hold with the ballerina throw, which the enemy NORAH never used), FIRST AID CROSS (RED / GREEN)
+- **Area 4 garage (20261127):** the shutters stay open during the fight, so enemies that appear later are no longer shut in with 5 or more players
+- **Single cabinet (20261127):** with LINKS 1 (or the single player folder 00) Shift + Beat + Charge + Jump + Start enters the 3-minute mode again; it stays blocked on linked cabinets
+- **Headless cabinets run faster (20261127):** no 2D drawing on a headless node, and a faster RAM path in the CPU core
 - **Enemy list (20261126, test option):** with `EnemyHud = 1` in a node's Supermodel.ini, the live enemies are listed on the left of the game screen (name, life bar, HP, which player each one is after, distance, state, motion ids), in the game font
 - **Save states with the link (20261123):** a save or load on one cabinet is done on every cabinet of the link at the same frame
 - **BOSS HP x1** also keeps the damage players receive at x1 (it normally grows with the number of players)
@@ -185,7 +190,7 @@ Allow `supermodel.exe` on both private and public networks.
 
 Put the ROM file (`spikeofe.zip` etc.) in `PonMi/Roms/`.
 
-### 3. Start PonLuncher (3.0.1)
+### 3. Start PonLuncher (3.0.2)
 
 PonLuncher opens full screen. Its tabs (CONTROLS, GRAPHICS and AUDIO are greyed out for now):
 
