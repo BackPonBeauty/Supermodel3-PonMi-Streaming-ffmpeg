@@ -2481,8 +2481,11 @@ static UINT32 g_aiHeightExclUntil[20];
 static bool g_aiOtherLevelOnly = false;
 struct SpikeoutWaitSpot { unsigned area; float x, z; };
 static const SpikeoutWaitSpot s_waitSpots[] = {
-	{ 47, -49.557f, -66.624f },   // waypoint recorded 11/11 (y -5.87)
-	{ 41, -49.557f, -66.624f },   // 11/15: area 41 = the same room as 47 (same scripts 0xBCD4C / 0xBCE20)
+	// 11/28 (owner): the area 47 wait spot (-49.557, -66.624, recorded 11/11, y -5.87) is removed - area 47 now runs the
+	// marathon route instead, and the two collided.
+	// 11/28 (owner): area 41 (the same room as 47, same scripts 0xBCD4C / 0xBCE20) too - its wait spot is removed, it runs
+	// the area 47 marathon route. No wait spot is left; the entry below matches no area (keeps the table non-empty).
+	{ 0xFFFFu, 0.0f, 0.0f },
 };
 static float g_aiLogDy = 0.0f;
 static float g_aiLogPy = 0.0f;      // ai.txt py=: own height
@@ -2907,7 +2910,7 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				static unsigned mArea = 0;
 				const unsigned curAm = ram[0x10402D ^ 3];
 				const bool areaChanged = curAm != mArea; mArea = curAm;
-				const bool inA40 = (curAm == 40 || curAm == 27 || curAm == 29 || curAm == 43) && (pflags & 1) && !areaChanged;
+				const bool inA40 = (curAm == 40 || curAm == 27 || curAm == 29 || curAm == 43 || curAm == 6 || curAm == 47 || curAm == 41) && (pflags & 1) && !areaChanged;
 				const int hpMe = (short) *(const UINT16 *) &ram[(rob + 0x3F02) ^ 2];
 				const float myYm = *(const float *) &ram[rob + 0x384];
 				if (*(const UINT32 *) &ram[rob + 0x44] & 0x00800000u) mAtkF = g_ppcTraceFrame;
@@ -2945,8 +2948,18 @@ static UINT8 SpikeoutAIInputBits(const UINT8 *ram)   // returns active-high bits
 				};
 				// 11/26 (owner, 4th): area 43 - the area 43 lines of bin64\PonMi\waypoints.txt (13:18), in that order (y 9.1..9.2).
 				static const std::pair<float, float> wp43[] = { { -29.401f, -34.864f }, { -29.238f, -46.644f }, { -51.599f, -44.680f } };
-				const std::pair<float, float> *wp = curAm == 27 ? wp27 : curAm == 29 ? wp29 : curAm == 43 ? wp43 : wp40;
+				// 11/28 (owner, 5th): area 6 - the area 6 lines of bin64\PonMi\waypoints.txt (11/28 11:22), in that order (y 0.3).
+				static const std::pair<float, float> wp6[] = { { 18.068f, 24.176f }, { 46.445f, 23.964f } };
+				// 11/28 (owner, 6th): area 47 - the area 47 lines of bin64\PonMi\waypoints.txt (11/28 11:49), in that order (y -7.5).
+				static const std::pair<float, float> wp47[] = {
+					{ -41.393f, -72.974f }, { -47.681f, -75.295f }, { -54.672f, -73.967f }, { -55.597f, -65.591f }, { -50.523f, -59.231f },
+					{ -42.116f, -60.104f }, { -40.933f, -71.666f },
+				};
+				// 11/28 (owner): area 41 = the same room as 47 - the same route.
+				const bool a47 = curAm == 47 || curAm == 41;
+				const std::pair<float, float> *wp = curAm == 27 ? wp27 : curAm == 29 ? wp29 : curAm == 43 ? wp43 : curAm == 6 ? wp6 : a47 ? wp47 : wp40;
 				const int nWp = curAm == 27 ? (int) (sizeof(wp27) / sizeof(wp27[0])) : curAm == 29 ? (int) (sizeof(wp29) / sizeof(wp29[0])) : curAm == 43 ? 3
+				                                                                                   : curAm == 6 ? 2 : a47 ? (int) (sizeof(wp47) / sizeof(wp47[0]))
 				                                                                                   : (int) (sizeof(wp40) / sizeof(wp40[0]));
 				if (!inA40 || hpMe <= 0 || nWp == 0)
 				{
